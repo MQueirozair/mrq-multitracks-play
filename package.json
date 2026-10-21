@@ -90,7 +90,8 @@
     "publish": {
       "provider": "github",
       "owner": "MQueirozair",
-      "repo": "mrq-multitracks-play"
+      "repo": "mrq-multitracks-play",
+      "releaseType": "release"
     }
   }
 }

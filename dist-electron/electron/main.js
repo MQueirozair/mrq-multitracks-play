@@ -13,12 +13,6 @@ const electron_updater_1 = require("electron-updater");
 const types_1 = require("../shared/types");
 const remoteServer_1 = require("./remoteServer");
 const isDev = !electron_1.app.isPackaged;
-// Token de leitura (somente "Contents: Read-only") do repositório PRIVADO que
-// hospeda as releases do app. Usado apenas para o electron-updater conseguir
-// listar/baixar os arquivos de atualização sozinho, sem interação do usuário.
-// É intencionalmente um token de escopo mínimo (só lê esse repositório),
-// então o risco de ele estar embutido no binário é baixo.
-const UPDATE_READONLY_TOKEN = process.env.MRQ_UPDATE_TOKEN || '__MRQ_UPDATE_TOKEN__';
 const UPDATE_REPO_OWNER = 'MQueirozair';
 const UPDATE_REPO_NAME = 'mrq-multitracks-play';
 // Protocolo customizado para servir arquivos de áudio locais sem copiar nada
@@ -144,8 +138,6 @@ function setupAutoUpdater() {
             provider: 'github',
             owner: UPDATE_REPO_OWNER,
             repo: UPDATE_REPO_NAME,
-            private: true,
-            token: UPDATE_READONLY_TOKEN,
         });
     }
     catch (err) {
