@@ -4,11 +4,21 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import Store from 'electron-store';
+import { autoUpdater } from 'electron-updater';
 import type { AppSettings, Library } from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/types';
 import { RemoteServer } from './remoteServer';
 
 const isDev = !app.isPackaged;
+
+// Token de leitura (somente "Contents: Read-only") do repositório PRIVADO que
+// hospeda as releases do app. Usado apenas para o electron-updater conseguir
+// listar/baixar os arquivos de atualização sozinho, sem interação do usuário.
+// É intencionalmente um token de escopo mínimo (só lê esse repositório),
+// então o risco de ele estar embutido no binário é baixo.
+const UPDATE_READONLY_TOKEN = process.env.MRQ_UPDATE_TOKEN || '__MRQ_UPDATE_TOKEN__';
+const UPDATE_REPO_OWNER = 'MQueirozair';
+const UPDATE_REPO_NAME = 'mrq-multitracks-play';
 
 // Protocolo customizado para servir arquivos de áudio locais sem copiar nada
 // e sem os bloqueios de CORS/segurança do file:// puro.
@@ -121,6 +131,68 @@ function createWindow() {
   }
 }
 
+// ---------- Auto-atualização (electron-updater + GitHub Releases privado) ----------
+function sendUpdateStatus(payload: Record<string, unknown>) {
+  mainWindow?.webContents.send('update:status', payload);
+}
+
+let updaterConfigured = false;
+function setupAutoUpdater() {
+  if (isDev) {
+    appendLog('[autoUpdater] ignorado em modo dev');
+    return;
+  }
+  if (updaterConfigured) return;
+  updaterConfigured = true;
+
+  autoUpdater.logger = {
+    info: (m: unknown) => appendLog(`[autoUpdater] ${m}`),
+    warn: (m: unknown) => appendLog(`[autoUpdater][warn] ${m}`),
+    error: (m: unknown) => appendLog(`[autoUpdater][erro] ${m}`),
+    debug: () => {},
+  };
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  try {
+    autoUpdater.setFeedURL({
+      provider: 'github',
+      owner: UPDATE_REPO_OWNER,
+      repo: UPDATE_REPO_NAME,
+      private: true,
+      token: UPDATE_READONLY_TOKEN,
+    });
+  } catch (err) {
+    appendLog(`[autoUpdater] falha ao configurar feed: ${err instanceof Error ? err.stack : err}`);
+  }
+
+  autoUpdater.on('checking-for-update', () => sendUpdateStatus({ status: 'checking' }));
+  autoUpdater.on('update-available', (info) => sendUpdateStatus({ status: 'available', version: info.version }));
+  autoUpdater.on('update-not-available', (info) => sendUpdateStatus({ status: 'not-available', version: info.version }));
+  autoUpdater.on('download-progress', (p) => sendUpdateStatus({ status: 'downloading', percent: p.percent }));
+  autoUpdater.on('update-downloaded', (info) => sendUpdateStatus({ status: 'downloaded', version: info.version }));
+  autoUpdater.on('error', (err) => {
+    appendLog(`[autoUpdater] erro: ${err instanceof Error ? err.stack : err}`);
+    sendUpdateStatus({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+  });
+
+  // Checagem automática ao abrir o app, e depois a cada 4 horas.
+  autoUpdater.checkForUpdates().catch((err) => appendLog(`[autoUpdater] falha ao checar: ${err}`));
+  setInterval(() => {
+    autoUpdater.checkForUpdates().catch((err) => appendLog(`[autoUpdater] falha ao checar: ${err}`));
+  }, 4 * 60 * 60 * 1000);
+}
+
+ipcMain.handle('update:check', () => {
+  if (isDev) return { status: 'dev' };
+  return autoUpdater.checkForUpdates().then(() => ({ status: 'ok' })).catch((err) => ({ status: 'error', message: String(err) }));
+});
+ipcMain.handle('update:install', () => {
+  autoUpdater.quitAndInstall();
+  return true;
+});
+ipcMain.handle('app:getVersion', () => app.getVersion());
+
 process.on('uncaughtException', (err) => {
   appendLog(`UNCAUGHT EXCEPTION (main): ${err?.stack || err}`);
 });
@@ -147,6 +219,7 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+  setupAutoUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

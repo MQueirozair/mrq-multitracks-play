@@ -9,9 +9,18 @@ const node_fs_1 = __importDefault(require("node:fs"));
 const node_os_1 = __importDefault(require("node:os"));
 const node_url_1 = require("node:url");
 const electron_store_1 = __importDefault(require("electron-store"));
+const electron_updater_1 = require("electron-updater");
 const types_1 = require("../shared/types");
 const remoteServer_1 = require("./remoteServer");
 const isDev = !electron_1.app.isPackaged;
+// Token de leitura (somente "Contents: Read-only") do repositório PRIVADO que
+// hospeda as releases do app. Usado apenas para o electron-updater conseguir
+// listar/baixar os arquivos de atualização sozinho, sem interação do usuário.
+// É intencionalmente um token de escopo mínimo (só lê esse repositório),
+// então o risco de ele estar embutido no binário é baixo.
+const UPDATE_READONLY_TOKEN = process.env.MRQ_UPDATE_TOKEN || '__MRQ_UPDATE_TOKEN__';
+const UPDATE_REPO_OWNER = 'MQueirozair';
+const UPDATE_REPO_NAME = 'mrq-multitracks-play';
 // Protocolo customizado para servir arquivos de áudio locais sem copiar nada
 // e sem os bloqueios de CORS/segurança do file:// puro.
 electron_1.protocol.registerSchemesAsPrivileged([
@@ -109,6 +118,64 @@ function createWindow() {
         remoteServer.start().catch((err) => console.error('[remote] falha ao iniciar', err));
     }
 }
+// ---------- Auto-atualização (electron-updater + GitHub Releases privado) ----------
+function sendUpdateStatus(payload) {
+    mainWindow?.webContents.send('update:status', payload);
+}
+let updaterConfigured = false;
+function setupAutoUpdater() {
+    if (isDev) {
+        appendLog('[autoUpdater] ignorado em modo dev');
+        return;
+    }
+    if (updaterConfigured)
+        return;
+    updaterConfigured = true;
+    electron_updater_1.autoUpdater.logger = {
+        info: (m) => appendLog(`[autoUpdater] ${m}`),
+        warn: (m) => appendLog(`[autoUpdater][warn] ${m}`),
+        error: (m) => appendLog(`[autoUpdater][erro] ${m}`),
+        debug: () => { },
+    };
+    electron_updater_1.autoUpdater.autoDownload = true;
+    electron_updater_1.autoUpdater.autoInstallOnAppQuit = true;
+    try {
+        electron_updater_1.autoUpdater.setFeedURL({
+            provider: 'github',
+            owner: UPDATE_REPO_OWNER,
+            repo: UPDATE_REPO_NAME,
+            private: true,
+            token: UPDATE_READONLY_TOKEN,
+        });
+    }
+    catch (err) {
+        appendLog(`[autoUpdater] falha ao configurar feed: ${err instanceof Error ? err.stack : err}`);
+    }
+    electron_updater_1.autoUpdater.on('checking-for-update', () => sendUpdateStatus({ status: 'checking' }));
+    electron_updater_1.autoUpdater.on('update-available', (info) => sendUpdateStatus({ status: 'available', version: info.version }));
+    electron_updater_1.autoUpdater.on('update-not-available', (info) => sendUpdateStatus({ status: 'not-available', version: info.version }));
+    electron_updater_1.autoUpdater.on('download-progress', (p) => sendUpdateStatus({ status: 'downloading', percent: p.percent }));
+    electron_updater_1.autoUpdater.on('update-downloaded', (info) => sendUpdateStatus({ status: 'downloaded', version: info.version }));
+    electron_updater_1.autoUpdater.on('error', (err) => {
+        appendLog(`[autoUpdater] erro: ${err instanceof Error ? err.stack : err}`);
+        sendUpdateStatus({ status: 'error', message: err instanceof Error ? err.message : String(err) });
+    });
+    // Checagem automática ao abrir o app, e depois a cada 4 horas.
+    electron_updater_1.autoUpdater.checkForUpdates().catch((err) => appendLog(`[autoUpdater] falha ao checar: ${err}`));
+    setInterval(() => {
+        electron_updater_1.autoUpdater.checkForUpdates().catch((err) => appendLog(`[autoUpdater] falha ao checar: ${err}`));
+    }, 4 * 60 * 60 * 1000);
+}
+electron_1.ipcMain.handle('update:check', () => {
+    if (isDev)
+        return { status: 'dev' };
+    return electron_updater_1.autoUpdater.checkForUpdates().then(() => ({ status: 'ok' })).catch((err) => ({ status: 'error', message: String(err) }));
+});
+electron_1.ipcMain.handle('update:install', () => {
+    electron_updater_1.autoUpdater.quitAndInstall();
+    return true;
+});
+electron_1.ipcMain.handle('app:getVersion', () => electron_1.app.getVersion());
 process.on('uncaughtException', (err) => {
     appendLog(`UNCAUGHT EXCEPTION (main): ${err?.stack || err}`);
 });
@@ -131,6 +198,7 @@ electron_1.app.whenReady().then(() => {
         }
     });
     createWindow();
+    setupAutoUpdater();
     electron_1.app.on('activate', () => {
         if (electron_1.BrowserWindow.getAllWindows().length === 0)
             createWindow();

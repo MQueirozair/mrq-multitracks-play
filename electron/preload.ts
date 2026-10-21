@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AppSettings, Library, RemoteStateSnapshot, RemoteCommand } from '../shared/types';
 
+export interface UpdateStatusPayload {
+  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error' | 'dev' | 'ok';
+  version?: string;
+  percent?: number;
+  message?: string;
+}
+
 const api = {
   window: {
     minimize: () => ipcRenderer.send('win:minimize'),
@@ -29,6 +36,20 @@ const api = {
     reveal: (): Promise<string> => ipcRenderer.invoke('log:reveal'),
     readTail: (maxChars?: number): Promise<string> => ipcRenderer.invoke('log:readTail', maxChars),
     clear: (): Promise<boolean> => ipcRenderer.invoke('log:clear'),
+  },
+  app: {
+    getVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
+  },
+  update: {
+    check: (): Promise<UpdateStatusPayload> => ipcRenderer.invoke('update:check'),
+    install: (): Promise<boolean> => ipcRenderer.invoke('update:install'),
+    onStatus: (cb: (payload: UpdateStatusPayload) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, payload: UpdateStatusPayload) => cb(payload);
+      ipcRenderer.on('update:status', listener);
+      return () => {
+        ipcRenderer.removeListener('update:status', listener);
+      };
+    },
   },
   remote: {
     getInfo: (): Promise<{ port: number; pin: string; enabled: boolean }> => ipcRenderer.invoke('remote:getInfo'),

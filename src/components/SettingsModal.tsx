@@ -24,12 +24,22 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
   const [addresses, setAddresses] = useState<string[]>([]);
   const [qr, setQr] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState('—');
+  const [updateStatus, setUpdateStatus] = useState<{
+    status: string;
+    version?: string;
+    percent?: number;
+    message?: string;
+  }>({ status: 'idle' });
 
   useEffect(() => {
     navigator.mediaDevices?.enumerateDevices().then((devices) => {
       setOutputs(devices.filter((d) => d.kind === 'audiooutput'));
     });
     window.api.net.localAddresses().then(setAddresses);
+    window.api.app?.getVersion().then(setAppVersion);
+    const off = window.api.update?.onStatus((payload) => setUpdateStatus(payload));
+    return () => off?.();
   }, []);
 
   useEffect(() => {
@@ -283,9 +293,59 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
               <div>
                 <div className="field-row">
                   <div className="label">Versão instalada</div>
-                  <div className="hint">0.1.0</div>
+                  <div className="hint">{appVersion}</div>
                 </div>
-                <p className="hint">Verificação automática de atualização ainda não está disponível nesta versão.</p>
+
+                <div className="field-row" style={{ marginTop: 10 }}>
+                  <div>
+                    <div className="label">Atualizações</div>
+                    <div className="hint">
+                      {updateStatus.status === 'idle' && 'Verificando automaticamente em segundo plano...'}
+                      {updateStatus.status === 'checking' && 'Procurando por novas versões...'}
+                      {updateStatus.status === 'not-available' && 'Você já está na versão mais recente.'}
+                      {updateStatus.status === 'available' &&
+                        `Nova versão ${updateStatus.version} encontrada, baixando...`}
+                      {updateStatus.status === 'downloading' &&
+                        `Baixando atualização... ${Math.round(updateStatus.percent ?? 0)}%`}
+                      {updateStatus.status === 'downloaded' &&
+                        `Versão ${updateStatus.version} pronta! Clique em "Instalar e reiniciar" para aplicar.`}
+                      {updateStatus.status === 'error' && `Erro ao verificar atualização: ${updateStatus.message}`}
+                      {updateStatus.status === 'dev' && 'Checagem de atualização desativada em modo de desenvolvimento.'}
+                    </div>
+                  </div>
+                  {updateStatus.status === 'downloaded' ? (
+                    <button className="btn primary" onClick={() => window.api.update.install()}>
+                      Instalar e reiniciar
+                    </button>
+                  ) : (
+                    <button
+                      className="btn"
+                      disabled={updateStatus.status === 'checking' || updateStatus.status === 'downloading'}
+                      onClick={() => window.api.update.check()}
+                    >
+                      Verificar agora
+                    </button>
+                  )}
+                </div>
+
+                <div className="field-row" style={{ marginTop: 16, borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 16 }}>
+                  <div>
+                    <div className="label">Log de diagnóstico</div>
+                    <div className="hint">
+                      Toda vez que uma faixa não carrega, o motivo técnico fica registrado aqui. Se algo der
+                      errado, abra esta pasta e envie o arquivo "mrq-debug.log" para o suporte.
+                    </div>
+                  </div>
+                  <button
+                    className="btn"
+                    onClick={async () => {
+                      const path = await window.api.log.reveal();
+                      console.log('[log] arquivo em', path);
+                    }}
+                  >
+                    Abrir pasta de logs
+                  </button>
+                </div>
               </div>
             )}
 

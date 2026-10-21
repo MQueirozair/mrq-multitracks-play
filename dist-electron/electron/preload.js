@@ -29,6 +29,20 @@ const api = {
         readTail: (maxChars) => electron_1.ipcRenderer.invoke('log:readTail', maxChars),
         clear: () => electron_1.ipcRenderer.invoke('log:clear'),
     },
+    app: {
+        getVersion: () => electron_1.ipcRenderer.invoke('app:getVersion'),
+    },
+    update: {
+        check: () => electron_1.ipcRenderer.invoke('update:check'),
+        install: () => electron_1.ipcRenderer.invoke('update:install'),
+        onStatus: (cb) => {
+            const listener = (_e, payload) => cb(payload);
+            electron_1.ipcRenderer.on('update:status', listener);
+            return () => {
+                electron_1.ipcRenderer.removeListener('update:status', listener);
+            };
+        },
+    },
     remote: {
         getInfo: () => electron_1.ipcRenderer.invoke('remote:getInfo'),
         sendState: (snapshot) => electron_1.ipcRenderer.send('remote:state', snapshot),
