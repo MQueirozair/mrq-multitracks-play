@@ -215,7 +215,12 @@ export class AudioEngine {
         );
 
         try {
-          const buffer = await this.ctx.decodeAudioData(arrayBuffer.slice(0));
+          // Não usamos mais `arrayBuffer` depois deste ponto, então passamos
+          // ele direto para o decode em vez de duplicá-lo com slice(0) — isso
+          // evita manter 2 cópias de cada arquivo (bruto + decodificado) na
+          // memória ao mesmo tempo, o que é importante com várias faixas
+          // grandes carregadas juntas (ex: 18 faixas de uma música ao vivo).
+          const buffer = await this.ctx.decodeAudioData(arrayBuffer);
           logDiag(
             `faixa="${track.name}": OK duration=${buffer.duration.toFixed(2)}s sampleRate=${buffer.sampleRate} canais=${buffer.numberOfChannels}`
           );

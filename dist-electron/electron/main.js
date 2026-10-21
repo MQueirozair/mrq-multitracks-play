@@ -30,7 +30,31 @@ electron_1.protocol.registerSchemesAsPrivileged([
         },
     },
 ]);
-const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.flac', '.aiff', '.aif', '.ogg', '.m4a']);
+// Lista ampla de extensões de áudio reconhecidas ao escanear uma pasta de
+// multitracks. É intencionalmente generosa: preferimos mostrar a faixa na
+// mixer e, se o navegador não conseguir decodificar aquele formato
+// específico, dar um erro claro e específico (ver AudioEngine.loadSong) do
+// que simplesmente "esconder" o arquivo da lista sem nenhuma explicação.
+const AUDIO_EXTENSIONS = new Set([
+    '.wav',
+    '.wave',
+    '.mp3',
+    '.flac',
+    '.aiff',
+    '.aif',
+    '.aifc',
+    '.ogg',
+    '.oga',
+    '.opus',
+    '.m4a',
+    '.mp4',
+    '.m4b',
+    '.aac',
+    '.wma',
+    '.webm',
+    '.caf',
+    '.3gp',
+]);
 const store = new electron_store_1.default({
     defaults: {
         library: { songs: [], scenes: [] },

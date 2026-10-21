@@ -99,6 +99,55 @@ function scheduleSave(library: Library) {
   }, 400);
 }
 
+// Pastas de multitrack costumam vir nomeadas com padrões como:
+//   "Tua Alegria (Ao Vivo) - Drops - B - 130 bpm"
+//   "Sou Grato Por Seu Amor-ASI SERA-D-72.00bpm"
+// ou seja: "{Título} - {opcional: versão/seção} - {Tom} - {BPM}bpm", com "-"
+// podendo vir com ou sem espaços ao redor. Esta função tenta extrair o tom e
+// o BPM do nome da pasta, deixando o resto como título da música.
+const KEY_TOKEN_REGEX = /^[A-Ga-g](#|b|s)?m?$/;
+
+function normalizeKeyToken(token: string): string {
+  const m = token.match(/^([A-Ga-g])(#|b|s)?(m)?$/);
+  if (!m) return token;
+  const note = m[1].toUpperCase();
+  const accidental = m[2] ? (m[2].toLowerCase() === 's' ? '#' : m[2].toLowerCase()) : '';
+  const minor = m[3] ? 'm' : '';
+  return `${note}${accidental}${minor}`;
+}
+
+function parseSongFolderName(raw: string): { title: string; key: string | null; bpm: number | null } {
+  let working = raw.trim();
+  let bpm: number | null = null;
+  let key: string | null = null;
+
+  // 1) BPM: procura um número (com casas decimais opcionais) seguido de "bpm".
+  const bpmMatch = working.match(/^(.*?)[\s\-_]*([\d]{2,3}(?:[.,]\d+)?)\s*bpm\b(.*)$/i);
+  if (bpmMatch) {
+    const parsed = parseFloat(bpmMatch[2].replace(',', '.'));
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      bpm = Math.round(parsed * 100) / 100;
+      working = `${bpmMatch[1]} ${bpmMatch[3]}`.trim();
+    }
+  }
+
+  // 2) Tom: olha o último segmento separado por "-"/"_" e vê se parece um tom
+  // musical (ex: "B", "C#", "Db", "F#m", "Bbm").
+  working = working.replace(/[\s\-_]+$/, '');
+  const segments = working.split(/\s*-\s*|_/).filter((s) => s.trim().length > 0);
+  if (segments.length > 1) {
+    const last = segments[segments.length - 1].trim();
+    if (KEY_TOKEN_REGEX.test(last)) {
+      key = normalizeKeyToken(last);
+      segments.pop();
+      working = segments.join(' - ');
+    }
+  }
+
+  const title = working.trim().replace(/[\s\-_]+$/, '') || raw.trim();
+  return { title, key, bpm };
+}
+
 function guessRole(name: string): TrackRole {
   const n = name.toLowerCase();
   if (/(click|metr[oô]nomo)/.test(n)) return 'click';
@@ -191,7 +240,11 @@ export const useStore = create<StoreState>((set, get) => ({
       return;
     }
     const tracks = found.map((f) => defaultTrack(f.name, f.filePath));
-    const title = folder.split(/[\\/]/).filter(Boolean).pop() ?? 'Nova música';
+    const folderName = folder.split(/[\\/]/).filter(Boolean).pop() ?? 'Nova música';
+    const parsed = parseSongFolderName(folderName);
+    const title = parsed.title || folderName;
+    const detectedKey = parsed.key ?? 'C';
+    const detectedBpm = parsed.bpm ?? 120;
     const now = Date.now();
     const wholeSongPart: SongPart = {
       id: newId(),
@@ -205,10 +258,10 @@ export const useStore = create<StoreState>((set, get) => ({
       id: newId(),
       title,
       folderPath: folder,
-      originalKey: 'C',
-      currentKey: 'C',
-      originalBpm: 120,
-      currentBpm: 120,
+      originalKey: detectedKey,
+      currentKey: detectedKey,
+      originalBpm: detectedBpm,
+      currentBpm: detectedBpm,
       timeSignatureNum: 4,
       timeSignatureDen: 4,
       durationSec: 0,
@@ -224,7 +277,12 @@ export const useStore = create<StoreState>((set, get) => ({
     const library = { ...get().library, songs: [...get().library.songs, song] };
     set({ library });
     scheduleSave(library);
-    get().pushToast(`"${title}" importada com ${tracks.length} faixas.`);
+    const detectedInfo = [parsed.key ? `tom ${detectedKey}` : null, parsed.bpm ? `${detectedBpm} bpm` : null]
+      .filter(Boolean)
+      .join(', ');
+    get().pushToast(
+      `"${title}" importada com ${tracks.length} faixas${detectedInfo ? ` (${detectedInfo} detectados)` : ''}.`
+    );
     await get().selectSong(song.id);
   },
 
