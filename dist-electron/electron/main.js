@@ -178,10 +178,20 @@ electron_1.app.whenReady().then(() => {
     appendLog(`=== MRQ iniciado === versão=${electron_1.app.getVersion()} plataforma=${process.platform} arch=${process.arch} electron=${process.versions.electron} chrome=${process.versions.chrome}`);
     electron_1.protocol.handle('mrqfile', (request) => {
         try {
-            const raw = decodeURIComponent(request.url.replace('mrqfile://', '').replace(/^\/+/, ''));
-            const filePath = process.platform === 'win32' ? raw : '/' + raw;
+            // Formato da URL: mrqfile://local-file/<caminho inteiro em encodeURIComponent>
+            // Usamos um host FIXO ("local-file") e codificamos o caminho inteiro como um
+            // único bloco opaco (sem barras/dois-pontos "soltos"). Isso é necessário
+            // porque esquemas "standard" no Chromium tratam tudo logo após "//" como
+            // autoridade (host:porta) até a próxima "/" — e em caminhos do Windows como
+            // "I:/Música/arquivo.wav", o ":" era interpretado como separador de porta,
+            // fazendo o Chromium APAGAR a letra da unidade (virava "i/Música/arquivo.wav",
+            // sem a unidade "I:"). Codificando tudo com encodeURIComponent isso nunca
+            // mais acontece, pois não sobra nenhum "/" ou ":" cru na URL.
+            const url = new URL(request.url);
+            const encoded = url.pathname.replace(/^\/+/, '');
+            const filePath = decodeURIComponent(encoded);
             const fileUrl = (0, node_url_1.pathToFileURL)(filePath).toString();
-            appendLog(`[mrqfile] request.url="${request.url}" raw="${raw}" filePath="${filePath}" fileUrl="${fileUrl}"`);
+            appendLog(`[mrqfile] request.url="${request.url}" filePath="${filePath}" fileUrl="${fileUrl}"`);
             return electron_1.net.fetch(fileUrl);
         }
         catch (err) {
@@ -255,8 +265,7 @@ electron_1.ipcMain.handle('fs:scanFolderTracks', async (_e, folderPath) => {
     return tracks;
 });
 electron_1.ipcMain.handle('fs:toFileUrl', (_e, filePath) => {
-    const normalized = filePath.split(node_path_1.default.sep).join('/');
-    return 'mrqfile:///' + encodeURI(normalized).replace(/#/g, '%23');
+    return 'mrqfile://local-file/' + encodeURIComponent(filePath);
 });
 electron_1.ipcMain.handle('fs:openExternal', (_e, url) => electron_1.shell.openExternal(url));
 // ---------- IPC: log de diagnóstico ----------

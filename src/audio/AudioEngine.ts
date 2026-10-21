@@ -36,6 +36,24 @@ export type EngineListener = (state: EngineState) => void;
 
 const MAX_OUTPUT_PAIRS = 16;
 
+function logDiag(line: string) {
+  try {
+    console.log('[audio]', line);
+    void window.api?.log?.append(line);
+  } catch { /* noop */ }
+}
+
+function bytesPreview(buf: ArrayBuffer, n = 16): string {
+  try {
+    const arr = new Uint8Array(buf.slice(0, n));
+    const hex = Array.from(arr).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+    const ascii = Array.from(arr).map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : '.')).join('');
+    return `${hex} | "${ascii}"`;
+  } catch {
+    return '(indisponivel)';
+  }
+}
+
 function noteFrequency(note: string, octave = 3): number {
   const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
   const idx = names.indexOf(note);
@@ -156,26 +174,58 @@ export class AudioEngine {
     const decoded = await Promise.all(
       song.tracks.map(async (track) => {
         const url = trackUrls[track.id];
+        logDiag(`faixa="${track.name}" filePath="${track.filePath}" url="${url ?? '(sem url)'}"`);
         if (!url) {
-          failed.push({ name: track.name, reason: 'arquivo não encontrado' });
+          logDiag(`faixa="${track.name}": FALHA - nenhuma URL foi resolvida para esse arquivo`);
+          failed.push({ name: track.name, reason: 'arquivo nao encontrado' });
           return null;
         }
+
+        let res: Response;
         try {
-          const res = await fetch(url);
-          if (!res.ok) {
-            failed.push({ name: track.name, reason: `não foi possível ler o arquivo (HTTP ${res.status})` });
-            return null;
-          }
-          const arrayBuffer = await res.arrayBuffer();
-          if (arrayBuffer.byteLength === 0) {
-            failed.push({ name: track.name, reason: 'arquivo vazio' });
-            return null;
-          }
+          res = await fetch(url);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logDiag(`faixa="${track.name}": FALHA DE ACESSO ao buscar "${url}" -> ${msg}`);
+          failed.push({ name: track.name, reason: `nao foi possivel acessar o arquivo (${msg})` });
+          return null;
+        }
+        if (!res.ok) {
+          logDiag(`faixa="${track.name}": HTTP nao-OK status=${res.status} url="${url}"`);
+          failed.push({ name: track.name, reason: `nao foi possivel ler o arquivo (HTTP ${res.status})` });
+          return null;
+        }
+
+        let arrayBuffer: ArrayBuffer;
+        try {
+          arrayBuffer = await res.arrayBuffer();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          logDiag(`faixa="${track.name}": FALHA ao ler bytes da resposta -> ${msg}`);
+          failed.push({ name: track.name, reason: `falha ao ler os dados do arquivo (${msg})` });
+          return null;
+        }
+        if (arrayBuffer.byteLength === 0) {
+          logDiag(`faixa="${track.name}": arquivo retornou 0 bytes (url="${url}")`);
+          failed.push({ name: track.name, reason: 'arquivo vazio' });
+          return null;
+        }
+        logDiag(
+          `faixa="${track.name}": bytes recebidos=${arrayBuffer.byteLength} content-type="${res.headers.get('content-type') ?? ''}" primeirosBytes=[${bytesPreview(arrayBuffer)}]`
+        );
+
+        try {
           const buffer = await this.ctx.decodeAudioData(arrayBuffer.slice(0));
+          logDiag(
+            `faixa="${track.name}": OK duration=${buffer.duration.toFixed(2)}s sampleRate=${buffer.sampleRate} canais=${buffer.numberOfChannels}`
+          );
           return { track, buffer };
         } catch (err) {
-          console.error(`[audio] falha ao carregar a faixa "${track.name}" (${track.filePath})`, err);
-          failed.push({ name: track.name, reason: 'formato de áudio não suportado ou arquivo corrompido' });
+          const msg = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+          logDiag(
+            `faixa="${track.name}": FALHA DE DECODE (bytes=${arrayBuffer.byteLength}) -> ${msg} | primeirosBytes=[${bytesPreview(arrayBuffer)}]`
+          );
+          failed.push({ name: track.name, reason: 'formato de audio nao suportado ou arquivo corrompido' });
           return null;
         }
       })

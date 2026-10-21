@@ -199,10 +199,20 @@ app.whenReady().then(() => {
 
   protocol.handle('mrqfile', (request) => {
     try {
-      const raw = decodeURIComponent(request.url.replace('mrqfile://', '').replace(/^\/+/, ''));
-      const filePath = process.platform === 'win32' ? raw : '/' + raw;
+      // Formato da URL: mrqfile://local-file/<caminho inteiro em encodeURIComponent>
+      // Usamos um host FIXO ("local-file") e codificamos o caminho inteiro como um
+      // único bloco opaco (sem barras/dois-pontos "soltos"). Isso é necessário
+      // porque esquemas "standard" no Chromium tratam tudo logo após "//" como
+      // autoridade (host:porta) até a próxima "/" — e em caminhos do Windows como
+      // "I:/Música/arquivo.wav", o ":" era interpretado como separador de porta,
+      // fazendo o Chromium APAGAR a letra da unidade (virava "i/Música/arquivo.wav",
+      // sem a unidade "I:"). Codificando tudo com encodeURIComponent isso nunca
+      // mais acontece, pois não sobra nenhum "/" ou ":" cru na URL.
+      const url = new URL(request.url);
+      const encoded = url.pathname.replace(/^\/+/, '');
+      const filePath = decodeURIComponent(encoded);
       const fileUrl = pathToFileURL(filePath).toString();
-      appendLog(`[mrqfile] request.url="${request.url}" raw="${raw}" filePath="${filePath}" fileUrl="${fileUrl}"`);
+      appendLog(`[mrqfile] request.url="${request.url}" filePath="${filePath}" fileUrl="${fileUrl}"`);
       return net.fetch(fileUrl);
     } catch (err) {
       appendLog(`[mrqfile] ERRO ao resolver "${request.url}": ${err instanceof Error ? err.stack : err}`);
@@ -274,8 +284,7 @@ ipcMain.handle('fs:scanFolderTracks', async (_e, folderPath: string) => {
 });
 
 ipcMain.handle('fs:toFileUrl', (_e, filePath: string) => {
-  const normalized = filePath.split(path.sep).join('/');
-  return 'mrqfile:///' + encodeURI(normalized).replace(/#/g, '%23');
+  return 'mrqfile://local-file/' + encodeURIComponent(filePath);
 });
 
 ipcMain.handle('fs:openExternal', (_e, url: string) => shell.openExternal(url));
