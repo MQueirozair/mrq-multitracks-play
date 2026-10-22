@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
-import { Volume2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Download, Upload, Volume2, X } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useStore } from '../state/useStore';
 import { engine, padEngine } from '../audio/engineInstance';
 import { pairIndexLabel } from '../audio/AudioEngine';
+import type { AppSettings, Library } from '../../shared/types';
 
-type Tab = 'audio' | 'click' | 'pad' | 'remote' | 'account' | 'update' | 'license';
+type Tab = 'audio' | 'click' | 'pad' | 'remote' | 'account' | 'backup' | 'update' | 'license';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'audio', label: 'Áudio' },
@@ -13,14 +14,39 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'pad', label: 'Pad' },
   { id: 'remote', label: 'Remoto' },
   { id: 'account', label: 'Conta' },
+  { id: 'backup', label: 'Backup' },
   { id: 'update', label: 'Atualização' },
   { id: 'license', label: 'Registro' },
 ];
+
+/** Formato do arquivo de backup exportado/importado pela aba "Backup". */
+interface BackupFile {
+  kind: 'mrq-multitracks-play-backup';
+  version: 1;
+  exportedAt: number;
+  appVersion: string;
+  library: Library;
+  settings: AppSettings;
+}
+
+function downloadJson(filename: string, data: unknown) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
 
 export default function SettingsModal({ onClose }: { onClose: () => void }) {
   const [tab, setTab] = useState<Tab>('audio');
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
+  const library = useStore((s) => s.library);
+  const pushToast = useStore((s) => s.pushToast);
+  const backupFileInputRef = useRef<HTMLInputElement>(null);
+  const [backupMessage, setBackupMessage] = useState<string | null>(null);
   const [outputs, setOutputs] = useState<MediaDeviceInfo[]>([]);
   const [addresses, setAddresses] = useState<string[]>([]);
   const [qr, setQr] = useState<string | null>(null);
@@ -346,6 +372,94 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   O MRQ - Multitracks Play funciona totalmente offline, sem conta obrigatória. Suas músicas e
                   configurações ficam só neste computador.
                 </p>
+              </div>
+            )}
+
+            {tab === 'backup' && (
+              <div>
+                <div className="field-row">
+                  <div>
+                    <div className="label">Exportar backup</div>
+                    <div className="hint">
+                      Salva um arquivo .json com a sua biblioteca (músicas, tons, roteiros/arranjos, favoritas,
+                      anotações) e as configurações do app. Não inclui os arquivos de áudio em si — só os caminhos e
+                      metadados, pra manter o arquivo pequeno.
+                    </div>
+                  </div>
+                  <button
+                    className="btn"
+                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                    onClick={() => {
+                      const payload: BackupFile = {
+                        kind: 'mrq-multitracks-play-backup',
+                        version: 1,
+                        exportedAt: Date.now(),
+                        appVersion,
+                        library,
+                        settings,
+                      };
+                      const stamp = new Date().toISOString().slice(0, 10);
+                      downloadJson(`mrq-backup-${stamp}.json`, payload);
+                      setBackupMessage('Backup exportado.');
+                    }}
+                  >
+                    <Download size={14} /> Exportar backup (.json)
+                  </button>
+                </div>
+
+                <div className="field-row" style={{ marginTop: 10 }}>
+                  <div>
+                    <div className="label">Restaurar backup</div>
+                    <div className="hint">
+                      Substitui a biblioteca e as configurações atuais pelas do arquivo escolhido. As músicas
+                      continuam apontando para as pastas originais de áudio no computador de origem — se for outro
+                      computador, reimporte as pastas das multitracks depois.
+                    </div>
+                  </div>
+                  <button
+                    className="btn"
+                    style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                    onClick={() => backupFileInputRef.current?.click()}
+                  >
+                    <Upload size={14} /> Restaurar de um arquivo…
+                  </button>
+                  <input
+                    ref={backupFileInputRef}
+                    type="file"
+                    accept="application/json"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = '';
+                      if (!file) return;
+                      try {
+                        const text = await file.text();
+                        const parsed = JSON.parse(text) as Partial<BackupFile>;
+                        if (!parsed.library?.songs || !Array.isArray(parsed.library.songs) || !parsed.settings) {
+                          throw new Error('Arquivo não parece ser um backup válido do MRQ - Multitracks Play.');
+                        }
+                        const songCount = parsed.library.songs.length;
+                        const ok = window.confirm(
+                          `Restaurar este backup (${songCount} música(s))? Isso substitui a biblioteca e as configurações atuais.`
+                        );
+                        if (!ok) return;
+                        await window.api.store.saveLibrary(parsed.library);
+                        await window.api.store.saveSettings(parsed.settings);
+                        useStore.setState({ library: parsed.library, settings: parsed.settings });
+                        setBackupMessage('Backup restaurado com sucesso.');
+                        pushToast('Backup restaurado.');
+                      } catch (err) {
+                        const msg = err instanceof Error ? err.message : String(err);
+                        setBackupMessage(`Erro ao restaurar: ${msg}`);
+                        pushToast(`Erro ao restaurar backup: ${msg}`, 'error');
+                      }
+                    }}
+                  />
+                </div>
+
+                {backupMessage && (
+                  <div className="hint" style={{ marginTop: 12, color: 'var(--text-1)' }}>{backupMessage}</div>
+                )}
               </div>
             )}
 

@@ -99,6 +99,10 @@ export interface Song {
   waveformPeaks: number[] | null;
   createdAt: number;
   updatedAt: number;
+  /** marcada como favorita pelo usuário, para achar rápido na biblioteca */
+  favorite?: boolean;
+  /** anotações rápidas do operador sobre esta música (lembretes, combinados com a banda etc.) */
+  notes?: string;
 }
 
 export interface SceneItem {

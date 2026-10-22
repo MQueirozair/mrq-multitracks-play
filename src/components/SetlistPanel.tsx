@@ -46,11 +46,22 @@ export default function SetlistPanel() {
   const engineState = useStore((s) => s.engineState);
   const playLog = useStore((s) => s.playLog);
   const clearPlayLog = useStore((s) => s.clearPlayLog);
-  const [activeSceneId, setActiveSceneId] = useState<string | null>(library.scenes[0]?.id ?? null);
+  // ativa a cena no estado global (não só local deste painel), pra que outras
+  // telas (ex.: a prévia da próxima música no cabeçalho) também saibam qual
+  // cena está em uso, mesmo com o painel de setlist fechado.
+  const activeSceneId = useStore((s) => s.activeSceneId);
+  const setActiveSceneId = useStore((s) => s.setActiveSceneId);
   const [newSceneName, setNewSceneName] = useState('');
   const [showHistory, setShowHistory] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
   const prefetchedRef = useRef<string | null>(null);
+
+  // mesmo comportamento de antes: se nenhuma cena estiver ativa ainda, abre a
+  // primeira da lista automaticamente ao montar o painel pela 1ª vez.
+  useEffect(() => {
+    if (activeSceneId === null && library.scenes.length > 0) setActiveSceneId(library.scenes[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const scene = library.scenes.find((s) => s.id === activeSceneId) ?? null;
 

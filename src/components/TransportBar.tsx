@@ -1,6 +1,7 @@
 import { Keyboard, Pause, Play, SkipBack, SkipForward, Square } from 'lucide-react';
 import { formatTime } from '../lib/format';
 import { useStore } from '../state/useStore';
+import VisualMetronome from './VisualMetronome';
 
 const SHORTCUTS_HINT = [
   'Atalhos de teclado:',
@@ -16,9 +17,11 @@ export default function TransportBar() {
   const pause = useStore((s) => s.pause);
   const stop = useStore((s) => s.stop);
   const jumpRelative = useStore((s) => s.jumpRelative);
+  const currentSong = useStore((s) => s.currentSong);
 
   return (
     <div className="transport-row">
+      <VisualMetronome engineState={engineState} beatsPerBar={currentSong?.timeSignatureNum ?? 4} />
       <div style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-2)', fontSize: 13 }}>
         {formatTime(engineState.realSeconds)}
       </div>

@@ -52,6 +52,9 @@ interface StoreState {
   padActive: boolean;
   /** histórico (em memória, desta sessão) das partes/músicas tocadas, mais recente primeiro — ver "Histórico de execução" */
   playLog: { songTitle: string; partName: string; at: number }[];
+  /** id da cena aberta no painel de Setlist — fica no estado global (não só local do painel) para que
+   *  outras telas (ex.: prévia da próxima música no cabeçalho) também saibam qual cena está em uso. */
+  activeSceneId: string | null;
   /** título da música sendo aberta/importada no momento, ou null quando nada está em andamento.
    *  Usado para mostrar um indicador visual claro enquanto as faixas são decodificadas — sem isso,
    *  clicar numa música grande (muitas faixas) parecia "não abrir nada", quando na verdade só estava
@@ -120,6 +123,18 @@ interface StoreState {
 
   togglePad: () => void;
   clearPlayLog: () => void;
+  setActiveSceneId: (id: string | null) => void;
+  toggleFavorite: (songId: string) => void;
+  updateSongNotes: (songId: string, notes: string) => void;
+  /**
+   * Remove da versão/arranjo ativo todos os passos que tocam alguma das partes
+   * indicadas — usado pelo recurso "selecionar um trecho na forma de onda e
+   * excluir" (tela Arranjar). Se ainda não existe uma versão editável para a
+   * música, cria uma nova a partir da ordem atual antes de remover (mesmo
+   * fluxo de "salvar como nova versão" já usado no editor de roteiro), nunca
+   * mexendo na ordem original.
+   */
+  deletePartsFromArrangement: (partIds: string[], suggestedName: string) => void;
 }
 
 // Histórico de desfazer/refazer por música (em memória, não persistido).
@@ -272,6 +287,7 @@ export const useStore = create<StoreState>((set, get) => ({
   canRedo: false,
   padActive: false,
   playLog: [],
+  activeSceneId: null,
   loadingSongTitle: null,
   loadingSongId: null,
 
@@ -850,4 +866,42 @@ export const useStore = create<StoreState>((set, get) => ({
   },
 
   clearPlayLog: () => set({ playLog: [] }),
+
+  setActiveSceneId: (id) => set({ activeSceneId: id }),
+
+  toggleFavorite: (songId) => {
+    const library = {
+      ...get().library,
+      songs: get().library.songs.map((s) => (s.id === songId ? { ...s, favorite: !s.favorite } : s)),
+    };
+    set({ library, currentSong: get().currentSong?.id === songId ? { ...get().currentSong!, favorite: !get().currentSong!.favorite } : get().currentSong });
+    scheduleSave(library);
+  },
+
+  updateSongNotes: (songId, notes) => {
+    if (get().currentSong?.id === songId) {
+      get().updateCurrentSong((s) => ({ ...s, notes }));
+      return;
+    }
+    const library = { ...get().library, songs: get().library.songs.map((s) => (s.id === songId ? { ...s, notes } : s)) };
+    set({ library });
+    scheduleSave(library);
+  },
+
+  deletePartsFromArrangement: (partIds, suggestedName) => {
+    const song = get().currentSong;
+    if (!song || partIds.length === 0) return;
+    const idSet = new Set(partIds);
+    const arrangementId = get().ensureEditableArrangement(suggestedName);
+    if (!arrangementId) return;
+    const arrangement = get().currentSong?.arrangements.find((a) => a.id === arrangementId);
+    const baseSteps = arrangement?.steps ?? song.parts.map((p) => ({ partId: p.id, repeat: 1 as number | 'infinite' }));
+    const nextSteps = baseSteps.filter((step) => !idSet.has(step.partId));
+    if (nextSteps.length === baseSteps.length) {
+      get().pushToast('O trecho selecionado não corresponde a nenhuma parte do roteiro atual.', 'error');
+      return;
+    }
+    get().updateArrangementSteps(arrangementId, nextSteps);
+    get().pushToast(`Trecho removido desta versão (${baseSteps.length - nextSteps.length} parte(s)).`);
+  },
 }));

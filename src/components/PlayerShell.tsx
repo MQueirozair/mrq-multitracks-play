@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Mic, Redo2, Undo2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Mic, Redo2, Scissors, Undo2 } from 'lucide-react';
 import type { PartType, Song } from '../../shared/types';
 import { PART_COLORS } from '../../shared/types';
 import { useStore } from '../state/useStore';
@@ -12,6 +12,7 @@ import MixerStrip from './MixerStrip';
 import ChordView from './ChordView';
 import ArrangeEditor from './ArrangeEditor';
 import TransitionBanner from './TransitionBanner';
+import CountInOverlay from './CountInOverlay';
 import { engine } from '../audio/engineInstance';
 
 const PART_TYPES = Object.keys(PART_COLORS) as PartType[];
@@ -32,6 +33,7 @@ export default function PlayerShell({ song }: { song: Song }) {
   const pause = useStore((s) => s.pause);
   const stop = useStore((s) => s.stop);
   const jumpRelative = useStore((s) => s.jumpRelative);
+  const deletePartsFromArrangement = useStore((s) => s.deletePartsFromArrangement);
 
   const [draftRange, setDraftRange] = useState<{ start: number; end: number } | null>(null);
   const [draftName, setDraftName] = useState('Nova parte');
@@ -91,12 +93,31 @@ export default function PlayerShell({ song }: { song: Song }) {
           stop();
           break;
         default:
+          // Dígitos 1 a 9 pulam direto pra N-ésima parte do roteiro (mesma
+          // numeração mostrada nos botões da grade de partes), pra trocar de
+          // trecho sem precisar olhar pro mouse em apresentações ao vivo.
+          if (/^[1-9]$/.test(e.key)) {
+            const idx = parseInt(e.key, 10) - 1;
+            const part = song.parts[idx];
+            if (part) {
+              e.preventDefault();
+              jumpToPart(part.id);
+            }
+          }
           break;
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [play, pause, stop, jumpRelative, toggleLoopActivePart]);
+  }, [play, pause, stop, jumpRelative, toggleLoopActivePart, jumpToPart, song.parts]);
+
+  // Trechos da música que ficam dentro da seleção feita arrastando na forma
+  // de onda (tela Arranjar) — usado pra oferecer "excluir trecho selecionado"
+  // além de "adicionar parte", quando a seleção cobre parte(s) já existentes.
+  const overlappingParts = useMemo(() => {
+    if (!draftRange) return [];
+    return song.parts.filter((p) => p.startBar < draftRange.end && p.endBar > draftRange.start);
+  }, [draftRange, song.parts]);
 
   function seekBar(bar: number) {
     engine.seekToBar(bar);
@@ -106,6 +127,7 @@ export default function PlayerShell({ song }: { song: Song }) {
 
   return (
     <>
+      <CountInOverlay engineState={engineState} />
       <SongHeader song={song} />
 
       {isArrange && (
@@ -170,11 +192,30 @@ export default function PlayerShell({ song }: { song: Song }) {
                   setDraftName('Nova parte');
                 }}
               >
-                Adicionar
+                Adicionar parte
               </button>
+              {overlappingParts.length > 0 && (
+                <button
+                  className="btn danger"
+                  title={`Remove ${overlappingParts.map((p) => p.name).join(', ')} do roteiro desta versão (as faixas de áudio não são apagadas)`}
+                  onClick={() => {
+                    const ok = window.confirm(
+                      `Excluir "${overlappingParts.map((p) => p.name).join('", "')}" do roteiro? Isso cria/atualiza uma versão separada do arranjo — a música original continua intacta.`
+                    );
+                    if (!ok) return;
+                    deletePartsFromArrangement(overlappingParts.map((p) => p.id), 'Versão editada');
+                    setDraftRange(null);
+                  }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Scissors size={14} /> Excluir trecho selecionado
+                </button>
+              )}
               <button className="btn ghost" onClick={() => setDraftRange(null)}>Cancelar</button>
             </div>
           )}
+
+          {!isArrange && <TransitionBanner song={song} engineState={engineState} />}
 
           {isArrange ? (
             <ArrangeEditor song={song} />
@@ -191,7 +232,6 @@ export default function PlayerShell({ song }: { song: Song }) {
         </>
       )}
 
-      {!isChord && !isTracks && !isArrange && <TransitionBanner song={song} engineState={engineState} />}
       <TransportBar />
       <MixerStrip song={song} />
     </>

@@ -2,6 +2,8 @@ import type { Song } from '../../shared/types';
 import { useStore } from '../state/useStore';
 import PadWidget from './PadWidget';
 import AudioWatchdog from './AudioWatchdog';
+import SongNotes from './SongNotes';
+import NextSongPreview from './NextSongPreview';
 
 const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -24,8 +26,10 @@ export default function SongHeader({ song }: { song: Song }) {
           {song.originalKey !== song.currentKey && <>original {song.originalKey} · </>}
           {song.tracks.length} faixas
         </div>
+        <NextSongPreview />
       </div>
       <div className="song-header-controls">
+        <SongNotes song={song} />
         <div className="stepper-field">
           <label>Tom</label>
           <button className="stepper-btn" onClick={() => step(-1)}>–</button>

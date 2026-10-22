@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Star } from 'lucide-react';
 import { useStore } from '../state/useStore';
 import { formatTime } from '../lib/format';
 
@@ -10,9 +10,15 @@ export default function LibraryPanel() {
   const selectSong = useStore((s) => s.selectSong);
   const deleteSong = useStore((s) => s.deleteSong);
   const importSongFromFolder = useStore((s) => s.importSongFromFolder);
+  const toggleFavorite = useStore((s) => s.toggleFavorite);
   const [query, setQuery] = useState('');
+  const [onlyFavorites, setOnlyFavorites] = useState(false);
 
-  const songs = library.songs.filter((s) => s.title.toLowerCase().includes(query.toLowerCase()));
+  const songs = library.songs
+    .filter((s) => s.title.toLowerCase().includes(query.toLowerCase()))
+    .filter((s) => !onlyFavorites || s.favorite)
+    // favoritas primeiro, pra achar rápido as músicas mais usadas
+    .sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite));
 
   return (
     <div className="secondary-panel">
@@ -27,9 +33,16 @@ export default function LibraryPanel() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <button
+          className={`btn ghost favorites-filter-btn ${onlyFavorites ? 'active' : ''}`}
+          title="Mostrar só as músicas favoritas"
+          onClick={() => setOnlyFavorites((v) => !v)}
+        >
+          <Star size={13} fill={onlyFavorites ? 'currentColor' : 'none'} /> Só favoritas
+        </button>
         {songs.length === 0 && (
           <div style={{ color: 'var(--text-2)', fontSize: 13, padding: 10 }}>
-            Nenhuma música ainda. Clique em "+" para importar a pasta de uma multitrack.
+            {onlyFavorites ? 'Nenhuma música favoritada ainda.' : 'Nenhuma música ainda. Clique em "+" para importar a pasta de uma multitrack.'}
           </div>
         )}
         {songs.map((song) => (
@@ -39,6 +52,16 @@ export default function LibraryPanel() {
             onClick={() => selectSong(song.id)}
           >
             <div className="title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button
+                className="favorite-star-btn"
+                title={song.favorite ? 'Remover dos favoritos' : 'Marcar como favorita'}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleFavorite(song.id);
+                }}
+              >
+                <Star size={14} fill={song.favorite ? '#f2c84b' : 'none'} color={song.favorite ? '#f2c84b' : 'var(--text-2)'} />
+              </button>
               {song.title}
               {loadingSongTitle === song.title && <span className="spinner-sm" title="Abrindo…" />}
             </div>

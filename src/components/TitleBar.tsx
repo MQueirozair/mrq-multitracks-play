@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Minus, Monitor, Square, X } from 'lucide-react';
 import { useStore } from '../state/useStore';
+import SessionTimer from './SessionTimer';
 
 export default function TitleBar() {
   const engineState = useStore((s) => s.engineState);
@@ -33,6 +34,7 @@ export default function TitleBar() {
           Remoto {remoteInfo?.enabled ? `:${remoteInfo.port}` : 'desligado'}
         </div>
         {engineState.isPlaying && <div className="pill" style={{ color: 'var(--accent)' }}>▶ Tocando</div>}
+        <SessionTimer />
         <button
           className={`pill stage-mode-toggle ${settings.stageMode ? 'on' : ''}`}
           title="Modo Palco: tema de alto contraste e fontes maiores, pra telas com pouca luz"

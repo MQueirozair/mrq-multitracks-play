@@ -23,6 +23,8 @@ export interface EngineState {
   upcomingPartId: string | null;
   loopActivePart: boolean;
   songEnded: boolean;
+  /** pico instantâneo (0..1) do sinal pós-fader de cada faixa, usado pelo indicador de pico/clipping do mixer */
+  trackLevels: Record<string, number>;
 }
 
 interface LoadedTrack {
@@ -30,6 +32,7 @@ interface LoadedTrack {
   buffer: AudioBuffer;
   shifter: PitchShifter;
   gainNode: GainNode;
+  analyser: AnalyserNode;
   merger: ChannelMergerNode;
   connected: boolean;
 }
@@ -95,7 +98,10 @@ export class AudioEngine {
     upcomingPartId: null,
     loopActivePart: false,
     songEnded: false,
+    trackLevels: {},
   };
+
+  private levelScratch = new Uint8Array(256);
 
   private clickOsc: OscillatorNode | null = null;
   private clickGain: GainNode | null = null;
@@ -159,7 +165,11 @@ export class AudioEngine {
     const right = Math.min(pairIndex * 2 + 1, this.channelCount - 1);
     const splitter = this.ctx.createChannelSplitter(2);
     lt.gainNode.disconnect();
-    lt.gainNode.connect(splitter);
+    lt.analyser.disconnect();
+    // o analisador fica "no meio do caminho" só para poder medir o pico pós-fader
+    // (indicador de pico/clipping do mixer) — não altera o som, é um simples tap.
+    lt.gainNode.connect(lt.analyser);
+    lt.analyser.connect(splitter);
     splitter.connect(this.merger, 0, left);
     splitter.connect(this.merger, lt.buffer.numberOfChannels > 1 ? 1 : 0, right);
   }
@@ -282,8 +292,11 @@ export class AudioEngine {
       const gainNode = this.ctx.createGain();
       gainNode.gain.value = track.muted ? 0 : dbGain(track.volumeDb);
       shifter.connect(gainNode);
+      const analyser = this.ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0;
 
-      const lt: LoadedTrack = { track, buffer, shifter, gainNode, merger: this.merger!, connected: false };
+      const lt: LoadedTrack = { track, buffer, shifter, gainNode, analyser, merger: this.merger!, connected: false };
       this.tracks.set(track.id, lt);
 
       if (buffer.duration > maxDuration) {
@@ -327,7 +340,7 @@ export class AudioEngine {
     this.tracks.clear();
     this.referenceTrackId = null;
     this.song = null;
-    this.state = { ...this.state, isLoaded: false, isPlaying: false, originalSeconds: 0, realSeconds: 0, activePartId: null, upcomingPartId: null, pendingPartId: null };
+    this.state = { ...this.state, isLoaded: false, isPlaying: false, originalSeconds: 0, realSeconds: 0, activePartId: null, upcomingPartId: null, pendingPartId: null, trackLevels: {} };
   }
 
   // ---------------- transporte ----------------
@@ -692,11 +705,27 @@ export class AudioEngine {
     return this.song.parts[idx + 1].id;
   }
 
+  /** Lê o pico pós-fader de cada faixa (indicador de pico/clipping do mixer). Só roda enquanto toca, pra não gastar CPU à toa parado. */
+  private computeTrackLevels() {
+    const levels: Record<string, number> = {};
+    for (const [id, lt] of this.tracks) {
+      lt.analyser.getByteTimeDomainData(this.levelScratch);
+      let peak = 0;
+      for (let i = 0; i < this.levelScratch.length; i++) {
+        const v = Math.abs(this.levelScratch[i] - 128) / 128;
+        if (v > peak) peak = v;
+      }
+      levels[id] = peak;
+    }
+    this.state.trackLevels = levels;
+  }
+
   private tick() {
     if (!this.song) return;
     const bar = this.state.currentBar;
     const barInt = Math.floor(bar);
     this.state.upcomingPartId = this.computeUpcomingPartId();
+    if (this.state.isPlaying) this.computeTrackLevels();
 
     // Parte que está tocando "agora" (antes de qualquer atualização desta
     // chamada) — usada para decidir quando uma troca manual pendente deve
