@@ -11,6 +11,7 @@ import TransportBar from './TransportBar';
 import MixerStrip from './MixerStrip';
 import ChordView from './ChordView';
 import ArrangeEditor from './ArrangeEditor';
+import TransitionBanner from './TransitionBanner';
 import { engine } from '../audio/engineInstance';
 
 const PART_TYPES = Object.keys(PART_COLORS) as PartType[];
@@ -27,6 +28,10 @@ export default function PlayerShell({ song }: { song: Song }) {
   const redo = useStore((s) => s.redo);
   const canUndo = useStore((s) => s.canUndo);
   const canRedo = useStore((s) => s.canRedo);
+  const play = useStore((s) => s.play);
+  const pause = useStore((s) => s.pause);
+  const stop = useStore((s) => s.stop);
+  const jumpRelative = useStore((s) => s.jumpRelative);
 
   const [draftRange, setDraftRange] = useState<{ start: number; end: number } | null>(null);
   const [draftName, setDraftName] = useState('Nova parte');
@@ -52,6 +57,46 @@ export default function PlayerShell({ song }: { song: Song }) {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [isArrange, undo, redo]);
+
+  // Atalhos de teclado globais de transporte: Espaço (tocar/pausar), setas
+  // (parte anterior/próxima), L (loop da parte ativa), Esc (parar). Ficam
+  // ativos em qualquer tela (menos enquanto o editor de arranjo está aberto
+  // com o foco num campo de texto) — pensado pra operar ao vivo sem precisar
+  // alcançar o mouse toda hora.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const typing = target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      switch (e.key) {
+        case ' ':
+        case 'Spacebar':
+          e.preventDefault();
+          if (engine.getState().isPlaying) pause();
+          else play();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          jumpRelative(-1);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          jumpRelative(1);
+          break;
+        case 'l':
+        case 'L':
+          toggleLoopActivePart();
+          break;
+        case 'Escape':
+          stop();
+          break;
+        default:
+          break;
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [play, pause, stop, jumpRelative, toggleLoopActivePart]);
 
   function seekBar(bar: number) {
     engine.seekToBar(bar);
@@ -146,6 +191,7 @@ export default function PlayerShell({ song }: { song: Song }) {
         </>
       )}
 
+      {!isChord && !isTracks && !isArrange && <TransitionBanner song={song} engineState={engineState} />}
       <TransportBar />
       <MixerStrip song={song} />
     </>

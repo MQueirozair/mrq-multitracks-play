@@ -31,6 +31,9 @@ const api = {
     },
     app: {
         getVersion: () => electron_1.ipcRenderer.invoke('app:getVersion'),
+        /** Avisa o processo principal se a música está tocando ou não, pra ele poder confirmar
+         *  antes de fechar a janela no meio de uma reprodução ao vivo. */
+        reportPlaybackState: (isPlaying) => electron_1.ipcRenderer.send('app:playbackState', isPlaying),
     },
     update: {
         check: () => electron_1.ipcRenderer.invoke('update:check'),

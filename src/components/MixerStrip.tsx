@@ -15,6 +15,19 @@ const ROLE_ICON: Record<TrackRole, typeof Bell> = {
   other: SlidersHorizontal,
 };
 
+export const ROLE_COLOR: Record<TrackRole, string> = {
+  click: '#8c8f98',
+  guide: '#45708f',
+  drums: '#a0304f',
+  bass: '#2f8f5a',
+  guitar: '#c07a1f',
+  keys: '#6b4fa0',
+  vocal: '#f2a93b',
+  choir: '#7c4fe0',
+  loop: '#2d5fa0',
+  other: '#5c5c66',
+};
+
 export default function MixerStrip({ song }: { song: Song }) {
   const setTrackVolumeDb = useStore((s) => s.setTrackVolumeDb);
   const setTrackMuted = useStore((s) => s.setTrackMuted);
@@ -24,8 +37,13 @@ export default function MixerStrip({ song }: { song: Song }) {
     <div className="mixer-strip">
       {song.tracks.map((track) => {
         const RoleIcon = ROLE_ICON[track.role];
+        const dimmed = track.muted || (song.tracks.some((t) => t.solo) && !track.solo);
         return (
-        <div className="mixer-channel" key={track.id}>
+        <div
+          className={`mixer-channel${dimmed ? ' dimmed' : ''}`}
+          key={track.id}
+          style={{ '--role-color': ROLE_COLOR[track.role] } as React.CSSProperties}
+        >
           <div className="ch-icon"><RoleIcon size={16} /></div>
           <div className="ch-name" title={track.name}>{track.name}</div>
           <div className="ch-sub">{track.output.replace('stereo-', '')}</div>
@@ -58,7 +76,7 @@ export default function MixerStrip({ song }: { song: Song }) {
         </div>
         );
       })}
-      <div className="mixer-channel master">
+      <div className="mixer-channel master" style={{ '--role-color': 'var(--accent)' } as React.CSSProperties}>
         <div className="ch-icon"><Square size={14} /></div>
         <div className="ch-name">MASTER</div>
         <div className="ch-sub">&nbsp;</div>

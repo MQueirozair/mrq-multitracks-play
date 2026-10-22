@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Volume2, X } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useStore } from '../state/useStore';
-import { engine } from '../audio/engineInstance';
+import { engine, padEngine } from '../audio/engineInstance';
 import { pairIndexLabel } from '../audio/AudioEngine';
 
 type Tab = 'audio' | 'click' | 'pad' | 'remote' | 'account' | 'update' | 'license';
@@ -178,6 +178,21 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     onChange={(e) => updateSettings({ click: { ...settings.click, volumeDb: parseFloat(e.target.value) } })}
                   />
                 </div>
+                <div className="field-row">
+                  <div>
+                    <div className="label">Saída do click</div>
+                    <div className="hint">Para onde vai o bipe de contagem (antes de a música entrar).</div>
+                  </div>
+                  <select
+                    value={settings.click.output}
+                    onChange={(e) => updateSettings({ click: { ...settings.click, output: e.target.value } })}
+                  >
+                    <option value="auto">Automática</option>
+                    <option value="stereo-1-2">Estéreo (1/2)</option>
+                    <option value="left-1">Esquerda (1)</option>
+                    <option value="right-1">Direita (2)</option>
+                  </select>
+                </div>
               </div>
             )}
 
@@ -197,7 +212,11 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   <input
                     type="range" min={-30} max={6} step={1}
                     value={settings.pad.volumeDb}
-                    onChange={(e) => updateSettings({ pad: { ...settings.pad, volumeDb: parseFloat(e.target.value) } })}
+                    onChange={(e) => {
+                      const volumeDb = parseFloat(e.target.value);
+                      updateSettings({ pad: { ...settings.pad, volumeDb } });
+                      padEngine.setVolumeDb(volumeDb);
+                    }}
                   />
                 </div>
                 <div className="field-row">
@@ -214,22 +233,63 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                   </select>
                 </div>
                 <div className="field-row">
-                  <div className="label">Subida e descida (s)</div>
-                  <input
-                    type="number" min={0.1} step={0.1}
-                    value={settings.pad.fadeInOutSec}
-                    style={{ width: 80 }}
-                    onChange={(e) => updateSettings({ pad: { ...settings.pad, fadeInOutSec: parseFloat(e.target.value) } })}
-                  />
+                  <div>
+                    <div className="label">Saída do pad</div>
+                    <div className="hint">Com a música ou separada (ex.: só no monitor, sem ir pro FOH).</div>
+                  </div>
+                  <select
+                    value={settings.pad.output === 'stereo-1-2' ? 'with-song' : settings.pad.output}
+                    onChange={(e) => updateSettings({ pad: { ...settings.pad, output: e.target.value } })}
+                  >
+                    <option value="with-song">Com a música</option>
+                    <option value="stereo-3-4">Separada (3/4)</option>
+                  </select>
                 </div>
                 <div className="field-row">
-                  <div className="label">Troca de tom (s)</div>
-                  <input
-                    type="number" min={0.1} step={0.1}
+                  <div>
+                    <div className="label">Subida e descida</div>
+                    <div className="hint">Tempo de fade ao ligar, desligar e trocar de tom.</div>
+                  </div>
+                  <select
+                    value={settings.pad.fadeInOutSec}
+                    onChange={(e) => updateSettings({ pad: { ...settings.pad, fadeInOutSec: parseFloat(e.target.value) } })}
+                  >
+                    {[0.5, 1, 1.5, 2, 3, 5].map((s) => (
+                      <option key={s} value={s}>{s} s</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field-row">
+                  <div>
+                    <div className="label">Troca de tom</div>
+                    <div className="hint">Tempo do crossfade ao mudar de tom com o pad ligado.</div>
+                  </div>
+                  <select
                     value={settings.pad.keyChangeCrossfadeSec}
-                    style={{ width: 80 }}
                     onChange={(e) => updateSettings({ pad: { ...settings.pad, keyChangeCrossfadeSec: parseFloat(e.target.value) } })}
-                  />
+                  >
+                    {[0.5, 1, 1.5, 2, 3, 5].map((s) => (
+                      <option key={s} value={s}>{s} s</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field-row">
+                  <div>
+                    <div className="label">Emenda da repetição</div>
+                    <div className="hint">Ciclo da "respiração" do pad (o timbre não é uma amostra em loop, então isso só dá um leve movimento ao som em vez de ficar estático).</div>
+                  </div>
+                  <select
+                    value={settings.pad.loopCrossfadeSec}
+                    onChange={(e) => {
+                      const loopCrossfadeSec = parseFloat(e.target.value);
+                      updateSettings({ pad: { ...settings.pad, loopCrossfadeSec } });
+                      padEngine.setBreatheSeconds(loopCrossfadeSec);
+                    }}
+                  >
+                    {[2, 4, 6, 8, 12].map((s) => (
+                      <option key={s} value={s}>{s} s</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             )}

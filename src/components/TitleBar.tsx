@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Minus, Square, X } from 'lucide-react';
+import { Minus, Monitor, Square, X } from 'lucide-react';
 import { useStore } from '../state/useStore';
 
 export default function TitleBar() {
@@ -7,6 +7,7 @@ export default function TitleBar() {
   const [audioOk, setAudioOk] = useState(true);
   const [remoteInfo, setRemoteInfo] = useState<{ port: number; enabled: boolean } | null>(null);
   const settings = useStore((s) => s.settings);
+  const updateSettings = useStore((s) => s.updateSettings);
 
   useEffect(() => {
     window.api.remote.getInfo().then(setRemoteInfo).catch(() => {});
@@ -32,6 +33,13 @@ export default function TitleBar() {
           Remoto {remoteInfo?.enabled ? `:${remoteInfo.port}` : 'desligado'}
         </div>
         {engineState.isPlaying && <div className="pill" style={{ color: 'var(--accent)' }}>▶ Tocando</div>}
+        <button
+          className={`pill stage-mode-toggle ${settings.stageMode ? 'on' : ''}`}
+          title="Modo Palco: tema de alto contraste e fontes maiores, pra telas com pouca luz"
+          onClick={() => updateSettings({ stageMode: !settings.stageMode })}
+        >
+          <Monitor size={12} /> Palco
+        </button>
       </div>
 
       <div className="win-controls">

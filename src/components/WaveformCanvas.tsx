@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Magnet } from 'lucide-react';
+import { ChevronDown, Magnet } from 'lucide-react';
 import type { Song } from '../../shared/types';
 
 interface Props {
@@ -35,6 +35,14 @@ export default function WaveformCanvas({ song, currentBar, editable, onSeekBar, 
   const [dragStartBar, setDragStartBar] = useState<number | null>(null);
   const [dragEndBar, setDragEndBar] = useState<number | null>(null);
   const [snap, setSnap] = useState(true);
+  // Qual forma de onda está sendo exibida: a mixagem ("Mistura", o padrão) ou
+  // uma faixa específica — útil pra marcar partes olhando, por exemplo, só a
+  // batida do click ou só a voz guia, que têm transientes muito mais claros
+  // que a mixagem inteira.
+  const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
+  const [trackMenuOpen, setTrackMenuOpen] = useState(false);
+  const selectedTrack = selectedTrackId ? song.tracks.find((t) => t.id === selectedTrackId) ?? null : null;
+  const displayPeaks = selectedTrack ? selectedTrack.peaks ?? null : song.waveformPeaks;
 
   const totalBars = Math.max(
     TOTAL_BARS_PADDING,
@@ -106,8 +114,8 @@ export default function WaveformCanvas({ song, currentBar, editable, onSeekBar, 
       ctx.fillRect(x1, 0, Math.max(1, x2 - x1), 3);
     }
 
-    // forma de onda
-    const peaks = song.waveformPeaks;
+    // forma de onda (da mixagem, ou de uma faixa específica selecionada acima)
+    const peaks = displayPeaks;
     if (peaks && peaks.length > 0) {
       const mid = height / 2;
       ctx.fillStyle = '#f2a93b99';
@@ -156,7 +164,7 @@ export default function WaveformCanvas({ song, currentBar, editable, onSeekBar, 
       ctx.fillRect(x, height - 10, 1, 10);
       ctx.fillText(String(bar), x + 2, height - 2);
     }
-  }, [ensureSize, song, totalBars, dragStartBar, dragEndBar]);
+  }, [ensureSize, song, totalBars, dragStartBar, dragEndBar, displayPeaks]);
 
   const drawPlayhead = useCallback(() => {
     const size = ensureSize();
@@ -195,6 +203,30 @@ export default function WaveformCanvas({ song, currentBar, editable, onSeekBar, 
 
   return (
     <div className="waveform-wrap" ref={wrapRef}>
+      <div className="waveform-track-select">
+        <button className="btn waveform-track-select-btn" onClick={() => setTrackMenuOpen((v) => !v)}>
+          {selectedTrack ? selectedTrack.name : 'Mistura'} <ChevronDown size={13} />
+        </button>
+        {trackMenuOpen && (
+          <div className="waveform-track-menu" onMouseLeave={() => setTrackMenuOpen(false)}>
+            <div
+              className={`waveform-track-menu-item ${!selectedTrackId ? 'active' : ''}`}
+              onClick={() => { setSelectedTrackId(null); setTrackMenuOpen(false); }}
+            >
+              Mistura
+            </div>
+            {song.tracks.map((t) => (
+              <div
+                key={t.id}
+                className={`waveform-track-menu-item ${selectedTrackId === t.id ? 'active' : ''}`}
+                onClick={() => { setSelectedTrackId(t.id); setTrackMenuOpen(false); }}
+              >
+                {t.name}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       {editable && (
         <button
           className={`icon-btn waveform-snap-btn ${snap ? 'active' : ''}`}

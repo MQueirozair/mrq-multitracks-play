@@ -170,6 +170,8 @@ export interface AppSettings {
     track: string | null;
     outOfOrderBehavior: 'keep' | 'mute' | 'mute-and-announce';
   };
+  /** tema de alto contraste / fontes maiores, pensado para telas de palco com pouca luz */
+  stageMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -204,6 +206,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     track: null,
     outOfOrderBehavior: 'keep',
   },
+  stageMode: false,
 };
 
 export const PART_COLORS: Record<PartType, string> = {

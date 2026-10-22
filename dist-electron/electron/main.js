@@ -62,6 +62,10 @@ const store = new electron_store_1.default({
     },
 });
 let mainWindow = null;
+/** espelho, no processo principal, do engineState.isPlaying do renderer — usado só pra decidir se confirma antes de fechar a janela. */
+let playbackActive = false;
+/** true depois que o usuário confirma "fechar mesmo assim", pra não reabrir o diálogo de novo no fechamento disparado por close() aqui mesmo. */
+let forceClose = false;
 let remoteServer = null;
 // ---------- Log de diagnóstico persistente ----------
 // Fica em disco (fora da pasta de instalação) para sobreviver a updates e
@@ -158,6 +162,31 @@ function createWindow() {
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
+    // Evita fechar o app sem querer no meio de uma música tocando ao vivo: o
+    // renderer avisa (via IPC) sempre que play/pause/stop muda o estado, e se o
+    // usuário tentar fechar a janela enquanto ainda está tocando, confirmamos
+    // antes de deixar fechar de verdade.
+    mainWindow.on('close', (e) => {
+        if (forceClose || !playbackActive)
+            return;
+        e.preventDefault();
+        electron_1.dialog
+            .showMessageBox(mainWindow, {
+            type: 'warning',
+            buttons: ['Cancelar', 'Fechar mesmo assim'],
+            defaultId: 0,
+            cancelId: 0,
+            title: 'Música tocando',
+            message: 'A música ainda está tocando. Tem certeza que quer fechar o MRQ - Multitracks Play?',
+        })
+            .then((result) => {
+            if (result.response === 1) {
+                forceClose = true;
+                mainWindow?.close();
+            }
+        })
+            .catch(() => { });
+    });
     remoteServer = new remoteServer_1.RemoteServer({
         getPort: () => store.get('settings').remote.port,
         getPin: () => store.get('settings').remote.pin,
@@ -225,6 +254,9 @@ electron_1.ipcMain.handle('update:install', () => {
     return true;
 });
 electron_1.ipcMain.handle('app:getVersion', () => electron_1.app.getVersion());
+electron_1.ipcMain.on('app:playbackState', (_e, isPlaying) => {
+    playbackActive = isPlaying;
+});
 process.on('uncaughtException', (err) => {
     appendLog(`UNCAUGHT EXCEPTION (main): ${err?.stack || err}`);
 });

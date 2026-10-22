@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { useStore } from '../state/useStore';
 import { initMidi, setBindings, setDispatcher } from '../midi/midiController';
-import { padEngine } from '../audio/engineInstance';
 
 /** Componente sem interface: liga o MIDI aos comandos do app. Monte uma vez no topo. */
 export default function MidiBridge() {
@@ -37,16 +36,9 @@ export default function MidiBridge() {
         case 'transport:loop':
           state.toggleLoopActivePart();
           break;
-        case 'pad:toggle': {
-          const song = state.currentSong;
-          if (!song) break;
-          if (padEngine.playing) padEngine.stop(state.settings.pad.fadeInOutSec);
-          else {
-            padEngine.setVolumeDb(state.settings.pad.volumeDb);
-            padEngine.start(song.currentKey, state.settings.pad.fadeInOutSec);
-          }
+        case 'pad:toggle':
+          state.togglePad();
           break;
-        }
         case 'partType': {
           const song = state.currentSong;
           if (!song || !binding.partType) break;

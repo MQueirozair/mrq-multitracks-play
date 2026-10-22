@@ -1,3 +1,5 @@
+import type { AudioEngine } from './AudioEngine';
+
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 function noteFrequency(note: string, octave = 3): number {
@@ -9,23 +11,44 @@ function noteFrequency(note: string, octave = 3): number {
 
 /**
  * Pad contínuo sintetizado: dois osciladores desafinados + filtro, com crossfade
- * suave ao trocar de tom e fade in/out configuráveis.
+ * suave ao trocar de tom e fade in/out configuráveis. A saída passa por um
+ * LFO lento no corte do filtro ("respiração") cujo período é configurável
+ * via "Emenda da repetição" — dá um leve movimento ao pad em vez de ficar
+ * 100% estático, já que (ao contrário de um pad por amostra de áudio) este
+ * motor não tem nenhum ponto de loop/emenda real pra suavizar.
  */
 export class PadEngine {
   private ctx: AudioContext;
+  private engineRef: AudioEngine;
   private output: GainNode;
-  private voices: { osc1: OscillatorNode; osc2: OscillatorNode; gain: GainNode }[] = [];
+  private voices: { osc1: OscillatorNode; osc2: OscillatorNode; gain: GainNode; filter: BiquadFilterNode; lfo: OscillatorNode; lfoGain: GainNode }[] = [];
   private isOn = false;
+  private currentOutputId = 'with-song';
+  private breatheSec = 6;
 
-  constructor(ctx: AudioContext, destination: AudioNode) {
-    this.ctx = ctx;
-    this.output = ctx.createGain();
+  constructor(engineRef: AudioEngine) {
+    this.engineRef = engineRef;
+    this.ctx = engineRef.ctx;
+    this.output = this.ctx.createGain();
     this.output.gain.value = 0.5;
-    this.output.connect(destination);
+    this.setOutput(this.currentOutputId);
   }
 
   setVolumeDb(db: number) {
     this.output.gain.setTargetAtTime(Math.pow(10, db / 20), this.ctx.currentTime, 0.05);
+  }
+
+  /** Troca pra onde o pad é enviado (junto com a música, ou numa saída separada) sem interromper o som. */
+  setOutput(outputId: string) {
+    this.currentOutputId = outputId;
+    try { this.output.disconnect(); } catch { /* ainda não conectado */ }
+    this.engineRef.connectMonoToOutput(this.output, outputId);
+  }
+
+  /** Duração (em segundos) do ciclo de "respiração" do pad — ver docstring da classe. */
+  setBreatheSeconds(sec: number) {
+    this.breatheSec = Math.max(1, sec);
+    for (const v of this.voices) v.lfo.frequency.setTargetAtTime(1 / this.breatheSec, this.ctx.currentTime, 0.2);
   }
 
   start(note: string, fadeSec: number) {
@@ -39,6 +62,16 @@ export class PadEngine {
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = 1200;
+
+    // LFO lento modulando o corte do filtro: dá a "respiração" do pad.
+    const lfo = this.ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 1 / this.breatheSec;
+    const lfoGain = this.ctx.createGain();
+    lfoGain.gain.value = 300; // +-300Hz ao redor do corte base
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+    lfo.start(t);
 
     const osc1 = this.ctx.createOscillator();
     osc1.type = 'sawtooth';
@@ -56,7 +89,7 @@ export class PadEngine {
 
     osc1.start();
     osc2.start();
-    this.voices.push({ osc1, osc2, gain });
+    this.voices.push({ osc1, osc2, gain, filter, lfo, lfoGain });
     this.isOn = true;
   }
 
@@ -80,6 +113,7 @@ export class PadEngine {
       v.gain.gain.linearRampToValueAtTime(0, t + Math.max(0.05, fadeSec));
       v.osc1.stop(t + fadeSec + 0.1);
       v.osc2.stop(t + fadeSec + 0.1);
+      v.lfo.stop(t + fadeSec + 0.1);
     }
   }
 

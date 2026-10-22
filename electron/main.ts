@@ -70,6 +70,10 @@ const store = new Store<StoreSchema>({
 });
 
 let mainWindow: BrowserWindow | null = null;
+/** espelho, no processo principal, do engineState.isPlaying do renderer — usado só pra decidir se confirma antes de fechar a janela. */
+let playbackActive = false;
+/** true depois que o usuário confirma "fechar mesmo assim", pra não reabrir o diálogo de novo no fechamento disparado por close() aqui mesmo. */
+let forceClose = false;
 let remoteServer: RemoteServer | null = null;
 
 // ---------- Log de diagnóstico persistente ----------
@@ -172,6 +176,31 @@ function createWindow() {
     mainWindow = null;
   });
 
+  // Evita fechar o app sem querer no meio de uma música tocando ao vivo: o
+  // renderer avisa (via IPC) sempre que play/pause/stop muda o estado, e se o
+  // usuário tentar fechar a janela enquanto ainda está tocando, confirmamos
+  // antes de deixar fechar de verdade.
+  mainWindow.on('close', (e) => {
+    if (forceClose || !playbackActive) return;
+    e.preventDefault();
+    dialog
+      .showMessageBox(mainWindow!, {
+        type: 'warning',
+        buttons: ['Cancelar', 'Fechar mesmo assim'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Música tocando',
+        message: 'A música ainda está tocando. Tem certeza que quer fechar o MRQ - Multitracks Play?',
+      })
+      .then((result) => {
+        if (result.response === 1) {
+          forceClose = true;
+          mainWindow?.close();
+        }
+      })
+      .catch(() => { /* noop */ });
+  });
+
   remoteServer = new RemoteServer({
     getPort: () => store.get('settings').remote.port,
     getPin: () => store.get('settings').remote.pin,
@@ -243,6 +272,9 @@ ipcMain.handle('update:install', () => {
   return true;
 });
 ipcMain.handle('app:getVersion', () => app.getVersion());
+ipcMain.on('app:playbackState', (_e, isPlaying: boolean) => {
+  playbackActive = isPlaying;
+});
 
 process.on('uncaughtException', (err) => {
   appendLog(`UNCAUGHT EXCEPTION (main): ${err?.stack || err}`);

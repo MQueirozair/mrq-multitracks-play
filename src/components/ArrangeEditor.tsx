@@ -88,54 +88,58 @@ export default function ArrangeEditor({ song }: { song: Song }) {
   }
 
   return (
-    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 280, overflowY: 'auto' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <strong style={{ fontSize: 13 }}>Partes marcadas</strong>
-        <span style={{ color: 'var(--text-2)', fontSize: 11 }}>({song.parts.length})</span>
+    <div className="card arrange-editor">
+      <div className="arrange-section-head">
+        <strong className="arrange-section-title">Partes marcadas</strong>
+        <span className="arrange-count">{song.parts.length}</span>
       </div>
 
-      {song.parts.map((part) => (
-        <div key={part.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ width: 10, height: 10, borderRadius: 3, background: part.color, flexShrink: 0 }} />
-          <input
-            value={part.name}
-            onChange={(e) => updatePart(part.id, { name: e.target.value })}
-            style={{ width: 140 }}
-          />
-          <select
-            value={part.type}
-            onChange={(e) => {
-              const type = e.target.value as PartType;
-              updatePart(part.id, { type, color: PART_COLORS[type] });
-            }}
-          >
-            {PART_TYPES.map((t) => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
-          <label style={{ fontSize: 11, color: 'var(--text-2)' }}>de</label>
-          <input
-            type="number"
-            value={part.startBar}
-            onChange={(e) => updatePart(part.id, { startBar: parseInt(e.target.value, 10) || 1 })}
-            style={{ width: 64 }}
-          />
-          <label style={{ fontSize: 11, color: 'var(--text-2)' }}>até</label>
-          <input
-            type="number"
-            value={part.endBar}
-            onChange={(e) => updatePart(part.id, { endBar: parseInt(e.target.value, 10) || 1 })}
-            style={{ width: 64 }}
-          />
-          <div style={{ flex: 1 }} />
-          <button className="btn danger" onClick={() => deletePart(part.id)}>Excluir</button>
-        </div>
-      ))}
+      <div className="arrange-parts-list">
+        {song.parts.map((part) => (
+          <div key={part.id} className="arrange-part-row">
+            <span className="arrange-color-dot" style={{ background: part.color }} />
+            <input
+              className="arrange-input-name"
+              value={part.name}
+              onChange={(e) => updatePart(part.id, { name: e.target.value })}
+            />
+            <select
+              className="arrange-input-type"
+              value={part.type}
+              onChange={(e) => {
+                const type = e.target.value as PartType;
+                updatePart(part.id, { type, color: PART_COLORS[type] });
+              }}
+            >
+              {PART_TYPES.map((t) => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            <label className="arrange-inline-label">de</label>
+            <input
+              type="number"
+              className="arrange-input-bar"
+              value={part.startBar}
+              onChange={(e) => updatePart(part.id, { startBar: parseInt(e.target.value, 10) || 1 })}
+            />
+            <label className="arrange-inline-label">até</label>
+            <input
+              type="number"
+              className="arrange-input-bar"
+              value={part.endBar}
+              onChange={(e) => updatePart(part.id, { endBar: parseInt(e.target.value, 10) || 1 })}
+            />
+            <div className="arrange-spacer" />
+            <button className="btn danger" onClick={() => deletePart(part.id)}>Excluir</button>
+          </div>
+        ))}
+      </div>
 
-      <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <strong style={{ fontSize: 13 }}>Roteiro / versão</strong>
+      <div className="arrange-roteiro-block">
+        <div className="arrange-roteiro-head">
+          <strong className="arrange-section-title">Roteiro / versão</strong>
           <select
+            className="arrange-arr-select"
             value={song.activeArrangementId ?? ''}
             onChange={(e) => setActiveArrangement(e.target.value || null)}
           >
@@ -145,10 +149,10 @@ export default function ArrangeEditor({ song }: { song: Song }) {
             ))}
           </select>
           <input
+            className="arrange-new-name"
             placeholder="nome da nova versão, ex: Culto curto"
             value={newArrName}
             onChange={(e) => setNewArrName(e.target.value)}
-            style={{ width: 200 }}
           />
           <button
             className="btn"
@@ -162,13 +166,13 @@ export default function ArrangeEditor({ song }: { song: Song }) {
           </button>
         </div>
 
-        <span style={{ color: 'var(--text-2)', fontSize: 11 }}>
-          Arraste <GripVertical size={10} style={{ verticalAlign: 'middle' }} /> para reordenar · clique numa linha e aperte Delete para remover ·
-          {' '}<InfinityIcon size={10} style={{ verticalAlign: 'middle' }} /> repete até você desarmar o loop ao vivo
+        <span className="arrange-hint">
+          Arraste <GripVertical size={10} className="arrange-hint-icon" /> para reordenar · clique numa linha e aperte Delete para remover ·
+          {' '}<InfinityIcon size={10} className="arrange-hint-icon" /> repete até você desarmar o loop ao vivo
         </span>
 
         <div
-          style={{ display: 'flex', flexDirection: 'column', gap: 4 }}
+          className="arrange-steps-list"
           tabIndex={0}
           onKeyDown={(e) => {
             if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIndex !== null) {
@@ -192,39 +196,30 @@ export default function ArrangeEditor({ song }: { song: Song }) {
                   dragIndex.current = null;
                 }}
                 onClick={() => setSelectedIndex(i)}
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                  alignItems: 'center',
-                  padding: '4px 6px',
-                  borderRadius: 6,
-                  cursor: 'grab',
-                  background: selectedIndex === i ? 'var(--bg-2)' : 'transparent',
-                  outline: selectedIndex === i ? '1px solid var(--accent)' : 'none',
-                }}
+                className={`arrange-step-row${selectedIndex === i ? ' selected' : ''}`}
+                style={{ '--step-color': part.color } as React.CSSProperties}
               >
-                <GripVertical size={14} style={{ color: 'var(--text-2)', flexShrink: 0 }} />
-                <span style={{ width: 18, textAlign: 'right', color: 'var(--text-2)', fontSize: 11 }}>{i + 1}</span>
-                <span style={{ width: 10, height: 10, borderRadius: 3, background: part.color, flexShrink: 0 }} />
-                <span style={{ fontSize: 13, width: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{part.name}</span>
+                <GripVertical size={14} className="arrange-step-grip" />
+                <span className="arrange-step-index">{i + 1}</span>
+                <span className="arrange-color-dot" style={{ background: part.color }} />
+                <span className="arrange-step-name">{part.name}</span>
 
                 {isInfinite ? (
                   <button
-                    className="btn"
+                    className="btn arrange-infinite-btn"
                     title="Repetindo até desativar — clique para voltar ao normal"
-                    style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'var(--accent)', color: 'var(--accent-ink)' }}
                     onClick={(e) => { e.stopPropagation(); setStepRepeat(i, 1); }}
                   >
                     <InfinityIcon size={13} /> até desativar
                   </button>
                 ) : (
                   <>
-                    <label style={{ fontSize: 11, color: 'var(--text-2)' }}>repetir</label>
+                    <label className="arrange-inline-label">repetir</label>
                     <input
                       type="number"
                       min={1}
                       value={step.repeat}
-                      style={{ width: 50 }}
+                      className="arrange-input-repeat"
                       onClick={(e) => e.stopPropagation()}
                       onChange={(e) => setStepRepeat(i, Math.max(1, parseInt(e.target.value, 10) || 1))}
                     />
@@ -243,7 +238,7 @@ export default function ArrangeEditor({ song }: { song: Song }) {
                 <button className="icon-btn" title="Duplicar" onClick={(e) => { e.stopPropagation(); duplicateStep(i); }}>
                   <Copy size={13} />
                 </button>
-                <div style={{ flex: 1 }} />
+                <div className="arrange-spacer" />
                 <button className="btn danger" onClick={(e) => { e.stopPropagation(); removeStep(i); }}>
                   <Trash2 size={13} />
                 </button>
@@ -251,6 +246,7 @@ export default function ArrangeEditor({ song }: { song: Song }) {
             );
           })}
           <select
+            className="arrange-add-select"
             value=""
             onChange={(e) => {
               if (!e.target.value) return;

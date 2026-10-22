@@ -22,6 +22,7 @@ export default function App() {
   const toasts = useStore((s) => s.toasts);
   const dismissToast = useStore((s) => s.dismissToast);
   const importSongFromFolder = useStore((s) => s.importSongFromFolder);
+  const settings = useStore((s) => s.settings);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
@@ -41,7 +42,7 @@ export default function App() {
   const showSidePanel = ['tempo', 'outputs', 'key', 'guide', 'midi'].includes(nav) && currentSong;
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${settings.stageMode ? 'stage-mode' : ''}`}>
       <TitleBar />
       <MidiBridge />
       <div className="main-body">

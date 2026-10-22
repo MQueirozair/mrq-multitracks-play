@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { Bell, Drum, Guitar, Infinity as InfinityIcon, Mic, Mic2, Piano, SlidersHorizontal, Users } from 'lucide-react';
 import type { Song, TrackRole } from '../../shared/types';
 import { useStore } from '../state/useStore';
+import { ROLE_COLOR } from './MixerStrip';
 
 const ROLE_ICON: Record<TrackRole, typeof Bell> = {
   click: Bell,
@@ -94,7 +95,7 @@ export default function TracksView({ song, currentBar, onSeekBar }: Props) {
       }
 
       const peaks = track.peaks;
-      ctx.fillStyle = dimmed ? '#7a7d8855' : '#f2a93bcc';
+      ctx.fillStyle = dimmed ? '#7a7d8855' : ROLE_COLOR[track.role] + 'dd';
       if (peaks && peaks.length > 0) {
         const barWidth = Math.max(1, width / peaks.length);
         for (let p = 0; p < peaks.length; p++) {
@@ -165,9 +166,14 @@ export default function TracksView({ song, currentBar, onSeekBar }: Props) {
       <div className="tracks-labels">
         {song.tracks.map((track) => {
           const RoleIcon = ROLE_ICON[track.role];
+          const dimmed = track.muted || (anySolo && !track.solo);
           return (
-            <div className="tracks-label-row" key={track.id} style={{ height: LANE_HEIGHT }}>
-              <RoleIcon size={14} />
+            <div
+              className={`tracks-label-row${dimmed ? ' dimmed' : ''}`}
+              key={track.id}
+              style={{ height: LANE_HEIGHT, '--role-color': ROLE_COLOR[track.role] } as React.CSSProperties}
+            >
+              <span className="tracks-label-icon"><RoleIcon size={13} /></span>
               <span className="tracks-label-name" title={track.name}>{track.name}</span>
               <div style={{ flex: 1 }} />
               <button

@@ -1,5 +1,7 @@
 import type { Song } from '../../shared/types';
 import { useStore } from '../state/useStore';
+import PadWidget from './PadWidget';
+import AudioWatchdog from './AudioWatchdog';
 
 const KEYS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
@@ -39,6 +41,8 @@ export default function SongHeader({ song }: { song: Song }) {
         <div className={`status-pill ${engineState.isPlaying ? 'playing' : ''}`}>
           {engineState.isCountingIn ? `ENTRADA ${engineState.countInBeatsLeft}` : engineState.isPlaying ? 'TOCANDO' : 'PAUSADO'}
         </div>
+        <PadWidget song={song} />
+        <AudioWatchdog />
       </div>
     </div>
   );

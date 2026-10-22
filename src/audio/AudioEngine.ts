@@ -1,5 +1,5 @@
 import { PitchShifter } from 'soundtouchjs';
-import type { Song, SongArrangement, SongPart, SongTrack } from '../../shared/types';
+import type { ClickSettings, Song, SongArrangement, SongPart, SongTrack } from '../../shared/types';
 import { semitoneDistance } from '../../shared/types';
 
 export interface EngineTrackState {
@@ -19,6 +19,8 @@ export interface EngineState {
   currentBar: number;
   activePartId: string | null;
   pendingPartId: string | null;
+  /** id da parte que vai tocar depois que a parte ativa atual terminar (ordem natural ou próximo passo do arranjo); null quando não há previsão (ex.: loop ao vivo armado, ou é a última parte) */
+  upcomingPartId: string | null;
   loopActivePart: boolean;
   songEnded: boolean;
 }
@@ -90,6 +92,7 @@ export class AudioEngine {
     currentBar: 1,
     activePartId: null,
     pendingPartId: null,
+    upcomingPartId: null,
     loopActivePart: false,
     songEnded: false,
   };
@@ -159,6 +162,36 @@ export class AudioEngine {
     lt.gainNode.connect(splitter);
     splitter.connect(this.merger, 0, left);
     splitter.connect(this.merger, lt.buffer.numberOfChannels > 1 ? 1 : 0, right);
+  }
+
+  /**
+   * Conecta um nó de áudio "mono" (ex.: o beep do click, o pad contínuo) a um
+   * par de saída do dispositivo, reaproveitando o mesmo merger multi-canal
+   * já usado pelas faixas — assim o click/pad respeitam a mesma interface de
+   * áudio multi-saída configurada em Ajustes > Áudio. Aceita:
+   *  - 'auto' / 'with-song' / 'stereo-N-M': manda para os DOIS canais do par
+   *    correspondente (N/M define o par; 'auto'/'with-song' usam o par 1/2).
+   *  - 'left-N' / 'right-N': manda só para um lado do par N (útil, por
+   *    exemplo, pra mandar o click só pro fone do baterista, deixando o
+   *    outro canal livre pra música).
+   */
+  connectMonoToOutput(node: AudioNode, outputId: string) {
+    if (!this.merger) {
+      node.connect(this.ctx.destination);
+      return;
+    }
+    const isLeftOnly = outputId.startsWith('left-');
+    const isRightOnly = outputId.startsWith('right-');
+    const normalized = outputId === 'auto' || outputId === 'with-song' ? 'stereo-1-2' : outputId;
+    const pairIndex = outputToPairIndex(normalized);
+    const left = Math.min(pairIndex * 2, this.channelCount - 1);
+    const right = Math.min(pairIndex * 2 + 1, this.channelCount - 1);
+    if (isLeftOnly) node.connect(this.merger, 0, left);
+    else if (isRightOnly) node.connect(this.merger, 0, right);
+    else {
+      node.connect(this.merger, 0, left);
+      node.connect(this.merger, 0, right);
+    }
   }
 
   // ---------------- carregamento ----------------
@@ -294,7 +327,7 @@ export class AudioEngine {
     this.tracks.clear();
     this.referenceTrackId = null;
     this.song = null;
-    this.state = { ...this.state, isLoaded: false, isPlaying: false, originalSeconds: 0, realSeconds: 0, activePartId: null };
+    this.state = { ...this.state, isLoaded: false, isPlaying: false, originalSeconds: 0, realSeconds: 0, activePartId: null, upcomingPartId: null, pendingPartId: null };
   }
 
   // ---------------- transporte ----------------
@@ -319,7 +352,7 @@ export class AudioEngine {
     this.seekToBar(part ? part.startBar : 1);
   }
 
-  async playCountIn(beats: number, bpm: number, onBeat: (n: number) => void) {
+  async playCountIn(beats: number, bpm: number, onBeat: (n: number) => void, click?: ClickSettings) {
     await this.ctx.resume();
     this.state.isCountingIn = true;
     const beatDur = 60 / bpm;
@@ -327,24 +360,120 @@ export class AudioEngine {
       this.state.countInBeatsLeft = beats - i;
       this.emit();
       onBeat(i);
-      this.playClickBeat(i === 0);
+      this.playClickBeat(i === 0, click);
       await sleep(beatDur * 1000);
     }
     this.state.isCountingIn = false;
     this.emit();
   }
 
-  private playClickBeat(accent: boolean) {
+  private noiseBufferCache: AudioBuffer | null = null;
+  /** buffer de ruído branco, gerado uma vez e reaproveitado pelos timbres de click que precisam dele. */
+  private getNoiseBuffer(): AudioBuffer {
+    if (this.noiseBufferCache) return this.noiseBufferCache;
+    const length = Math.floor(this.ctx.sampleRate * 0.2);
+    const buffer = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    this.noiseBufferCache = buffer;
+    return buffer;
+  }
+
+  /**
+   * Toca um tique do click de contagem (count-in), respeitando o timbre, o
+   * acento no tempo 1, o volume e a saída configurados em Ajustes > Click.
+   * Antes, isto era um bipe fixo direto pro destino padrão, ignorando
+   * completamente essas 4 configurações.
+   */
+  private playClickBeat(accent: boolean, click?: ClickSettings) {
+    const settings: ClickSettings = click ?? {
+      countInBars: 1, sound: 'beep', accentFirstBeat: true, volumeDb: 0, output: 'auto', doubleClick: 'off',
+    };
+    const isAccent = accent && settings.accentFirstBeat;
     const t = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.frequency.value = accent ? 1500 : 1000;
-    gain.gain.setValueAtTime(0.25, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    osc.start(t);
-    osc.stop(t + 0.1);
+    const peakGain = Math.pow(10, settings.volumeDb / 20) * (isAccent ? 0.3 : 0.2);
+
+    const out = this.ctx.createGain();
+    out.gain.value = 1;
+    this.connectMonoToOutput(out, settings.output);
+
+    const sound = settings.sound ?? 'beep';
+
+    if (sound === 'beep') {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = isAccent ? 1500 : 1000;
+      gain.gain.setValueAtTime(peakGain, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+      osc.connect(gain);
+      gain.connect(out);
+      osc.start(t);
+      osc.stop(t + 0.1);
+    } else if (sound === 'click') {
+      // "clique seco": ruído curto filtrado em passa-alta, decaimento quase imediato
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.getNoiseBuffer();
+      const hp = this.ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = isAccent ? 3500 : 2500;
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(peakGain * 1.4, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.02);
+      src.connect(hp);
+      hp.connect(gain);
+      gain.connect(out);
+      src.start(t);
+      src.stop(t + 0.03);
+    } else if (sound === 'rimshot') {
+      // aproximação de rimshot: ruído filtrado em banda + um "thwack" grave curto
+      const src = this.ctx.createBufferSource();
+      src.buffer = this.getNoiseBuffer();
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = 1800;
+      bp.Q.value = 1.2;
+      const noiseGain = this.ctx.createGain();
+      noiseGain.gain.setValueAtTime(peakGain * 1.1, t);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
+      src.connect(bp);
+      bp.connect(noiseGain);
+      noiseGain.connect(out);
+      src.start(t);
+      src.stop(t + 0.05);
+
+      const thump = this.ctx.createOscillator();
+      thump.type = 'triangle';
+      thump.frequency.setValueAtTime(isAccent ? 260 : 200, t);
+      thump.frequency.exponentialRampToValueAtTime(80, t + 0.05);
+      const thumpGain = this.ctx.createGain();
+      thumpGain.gain.setValueAtTime(peakGain * 0.8, t);
+      thumpGain.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+      thump.connect(thumpGain);
+      thumpGain.connect(out);
+      thump.start(t);
+      thump.stop(t + 0.07);
+    } else if (sound === 'cowbell') {
+      // cowbell clássico de caixa de ritmo: 2 ondas quadradas desafinadas entre si
+      const freqs = isAccent ? [845, 1290] : [800, 1200];
+      for (const f of freqs) {
+        const osc = this.ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.value = f;
+        const bp = this.ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.value = f;
+        bp.Q.value = 3;
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(peakGain * 0.6, t);
+        gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+        osc.connect(bp);
+        bp.connect(gain);
+        gain.connect(out);
+        osc.start(t);
+        osc.stop(t + 0.14);
+      }
+    }
   }
 
   seekToOriginalSeconds(origSec: number) {
@@ -537,10 +666,37 @@ export class AudioEngine {
     this.monitorHandle = null;
   }
 
+  /**
+   * Qual parte deve tocar depois que a parte ativa atual chegar ao fim —
+   * usado só pra dar uma dica visual ("A seguir: ...") na interface, sem
+   * nenhum efeito sobre a reprodução em si. Segue a mesma lógica de decisão
+   * do tickArrangement()/tick(), mas sem mexer em nenhum estado.
+   */
+  private computeUpcomingPartId(): string | null {
+    if (!this.song) return null;
+    const activePart = this.song.parts.find((p) => p.id === this.state.activePartId);
+    if (!activePart) return null;
+    const arrangement = this.getActiveArrangement();
+    if (arrangement && arrangement.steps.length > 0) {
+      const step = arrangement.steps[this.arrangementIndex];
+      if (!step) return null;
+      if (step.repeat === 'infinite') return null; // loop ao vivo: sem previsão até desarmarem
+      if (this.arrangementRepeatsLeft > 1) return step.partId; // ainda vai repetir a mesma parte
+      const nextIndex = (this.arrangementIndex + 1) % arrangement.steps.length;
+      const nextStep = arrangement.steps[nextIndex];
+      return nextStep ? nextStep.partId : null;
+    }
+    // sem arranjo customizado: segue a ordem natural das partes marcadas
+    const idx = this.song.parts.findIndex((p) => p.id === activePart.id);
+    if (idx < 0 || idx === this.song.parts.length - 1) return null;
+    return this.song.parts[idx + 1].id;
+  }
+
   private tick() {
     if (!this.song) return;
     const bar = this.state.currentBar;
     const barInt = Math.floor(bar);
+    this.state.upcomingPartId = this.computeUpcomingPartId();
 
     // Parte que está tocando "agora" (antes de qualquer atualização desta
     // chamada) — usada para decidir quando uma troca manual pendente deve

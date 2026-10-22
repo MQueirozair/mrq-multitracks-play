@@ -48,6 +48,10 @@ interface StoreState {
   recognizing: boolean;
   canUndo: boolean;
   canRedo: boolean;
+  /** espelho reativo de padEngine.playing, pra UI poder reagir (a classe do motor não dispara re-render sozinha) */
+  padActive: boolean;
+  /** histórico (em memória, desta sessão) das partes/músicas tocadas, mais recente primeiro — ver "Histórico de execução" */
+  playLog: { songTitle: string; partName: string; at: number }[];
   /** título da música sendo aberta/importada no momento, ou null quando nada está em andamento.
    *  Usado para mostrar um indicador visual claro enquanto as faixas são decodificadas — sem isso,
    *  clicar numa música grande (muitas faixas) parecia "não abrir nada", quando na verdade só estava
@@ -112,6 +116,10 @@ interface StoreState {
   addScene: (name: string) => void;
   updateScene: (sceneId: string, patch: Partial<Scene>) => void;
   deleteScene: (sceneId: string) => void;
+  importScene: (scene: Scene) => void;
+
+  togglePad: () => void;
+  clearPlayLog: () => void;
 }
 
 // Histórico de desfazer/refazer por música (em memória, não persistido).
@@ -262,13 +270,19 @@ export const useStore = create<StoreState>((set, get) => ({
   recognizing: false,
   canUndo: false,
   canRedo: false,
+  padActive: false,
+  playLog: [],
   loadingSongTitle: null,
   loadingSongId: null,
 
   init: async () => {
     const [library, settings] = await Promise.all([window.api.store.getLibrary(), window.api.store.getSettings()]);
     set({ library, settings, ready: true });
+    padEngine.setOutput(settings.pad.output);
+    padEngine.setBreatheSeconds(settings.pad.loopCrossfadeSec);
 
+    let lastLoggedPartId: string | null = null;
+    let lastReportedPlaying: boolean | null = null;
     engine.subscribe((engineState) => {
       set({ engineState });
       const song = get().currentSong;
@@ -283,6 +297,26 @@ export const useStore = create<StoreState>((set, get) => ({
         positionSec: engineState.realSeconds,
         durationSec: engineState.realTotalSeconds,
       });
+
+      // Histórico de execução: registra cada parte que começa a tocar de
+      // fato (evita duplicar quando o id não muda entre ticks).
+      if (engineState.isPlaying && song && engineState.activePartId && engineState.activePartId !== lastLoggedPartId) {
+        lastLoggedPartId = engineState.activePartId;
+        const part = song.parts.find((p) => p.id === engineState.activePartId);
+        if (part) {
+          set((s) => ({
+            playLog: [{ songTitle: song.title, partName: part.name, at: Date.now() }, ...s.playLog].slice(0, 500),
+          }));
+        }
+      }
+      if (!engineState.isPlaying) lastLoggedPartId = null;
+
+      // Avisa o processo principal quando a reprodução liga/desliga, pra ele
+      // poder confirmar antes de fechar o app no meio de uma música ao vivo.
+      if (engineState.isPlaying !== lastReportedPlaying) {
+        lastReportedPlaying = engineState.isPlaying;
+        window.api.app?.reportPlaybackState?.(engineState.isPlaying);
+      }
     });
 
     window.api.remote.onCommand((cmd) => {
@@ -715,7 +749,7 @@ export const useStore = create<StoreState>((set, get) => ({
     if (settings.click.countInBars > 0 && !engine.getState().isPlaying) {
       const song = get().currentSong;
       const beats = settings.click.countInBars * (song?.timeSignatureNum ?? 4);
-      await engine.playCountIn(beats, song?.currentBpm ?? 120, () => {});
+      await engine.playCountIn(beats, song?.currentBpm ?? 120, () => {}, settings.click);
     }
     await engine.play();
   },
@@ -748,6 +782,10 @@ export const useStore = create<StoreState>((set, get) => ({
     set({ settings });
     await window.api.store.saveSettings(settings);
     if (patch.outputDeviceId !== undefined) await engine.setOutputDevice(patch.outputDeviceId);
+    if (patch.pad) {
+      padEngine.setOutput(settings.pad.output);
+      padEngine.setBreatheSeconds(settings.pad.loopCrossfadeSec);
+    }
   },
 
   addMidiBinding: (binding) => {
@@ -775,4 +813,41 @@ export const useStore = create<StoreState>((set, get) => ({
     set({ library });
     scheduleSave(library);
   },
+  importScene: (scene) => {
+    // gera um id novo pra não colidir com nenhuma cena já existente (ex.: a mesma
+    // cena importada 2x, ou importada no mesmo app em que foi exportada)
+    const songIds = new Set(get().library.songs.map((s) => s.id));
+    const validItems = scene.items.filter((it) => songIds.has(it.songId));
+    const skipped = scene.items.length - validItems.length;
+    const imported: Scene = { id: newId(), name: scene.name, items: validItems };
+    const library = { ...get().library, scenes: [...get().library.scenes, imported] };
+    set({ library });
+    scheduleSave(library);
+    get().pushToast(
+      skipped > 0
+        ? `Cena "${imported.name}" importada. ${skipped} música(s) da cena não foram encontradas nesta biblioteca e foram ignoradas.`
+        : `Cena "${imported.name}" importada com ${imported.items.length} música(s).`,
+      skipped > 0 ? 'error' : 'info'
+    );
+  },
+
+  /** Liga/desliga o pad contínuo no tom da música atual — ação única usada pelo
+   *  botão na tela, pelo atalho de teclado e pelo binding de MIDI, pra não ter
+   *  3 lógicas divergentes de ligar/desligar o pad. */
+  togglePad: () => {
+    const song = get().currentSong;
+    if (!song) return;
+    const settings = get().settings;
+    if (padEngine.playing) {
+      padEngine.stop(settings.pad.fadeInOutSec);
+    } else {
+      padEngine.setOutput(settings.pad.output);
+      padEngine.setBreatheSeconds(settings.pad.loopCrossfadeSec);
+      padEngine.setVolumeDb(settings.pad.volumeDb);
+      padEngine.start(song.currentKey, settings.pad.fadeInOutSec);
+    }
+    set({ padActive: padEngine.playing });
+  },
+
+  clearPlayLog: () => set({ playLog: [] }),
 }));

@@ -39,6 +39,9 @@ const api = {
   },
   app: {
     getVersion: (): Promise<string> => ipcRenderer.invoke('app:getVersion'),
+    /** Avisa o processo principal se a música está tocando ou não, pra ele poder confirmar
+     *  antes de fechar a janela no meio de uma reprodução ao vivo. */
+    reportPlaybackState: (isPlaying: boolean) => ipcRenderer.send('app:playbackState', isPlaying),
   },
   update: {
     check: (): Promise<UpdateStatusPayload> => ipcRenderer.invoke('update:check'),

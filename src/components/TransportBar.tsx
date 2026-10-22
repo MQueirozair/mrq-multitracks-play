@@ -1,6 +1,14 @@
-import { Pause, Play, SkipBack, SkipForward, Square } from 'lucide-react';
+import { Keyboard, Pause, Play, SkipBack, SkipForward, Square } from 'lucide-react';
 import { formatTime } from '../lib/format';
 import { useStore } from '../state/useStore';
+
+const SHORTCUTS_HINT = [
+  'Atalhos de teclado:',
+  'Espaço — Tocar / Pausar',
+  '← / → — Parte anterior / próxima',
+  'L — Ligar/desligar loop da parte ativa',
+  'Esc — Parar',
+].join('\n');
 
 export default function TransportBar() {
   const engineState = useStore((s) => s.engineState);
@@ -24,6 +32,9 @@ export default function TransportBar() {
       <div style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-2)', fontSize: 13 }}>
         -{formatTime(Math.max(0, engineState.realTotalSeconds - engineState.realSeconds))}
       </div>
+      <button className="icon-btn" title={SHORTCUTS_HINT} style={{ marginLeft: 6 }}>
+        <Keyboard size={15} />
+      </button>
     </div>
   );
 }

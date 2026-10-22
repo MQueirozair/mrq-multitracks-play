@@ -36,6 +36,7 @@ exports.DEFAULT_SETTINGS = {
         track: null,
         outOfOrderBehavior: 'keep',
     },
+    stageMode: false,
 };
 exports.PART_COLORS = {
     Intro: '#2f6f6a',
