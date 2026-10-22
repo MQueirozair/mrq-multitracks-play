@@ -14,6 +14,7 @@ import { DEFAULT_SETTINGS, PART_COLORS } from '../../shared/types';
 import { newId } from '../lib/id';
 import { engine, padEngine } from '../audio/engineInstance';
 import { combinePeaks, computePeaks, decodeForAnalysis, yieldToBrowser } from '../audio/waveform';
+import { detectBpm, detectKey } from '../audio/KeyBpmDetection';
 import { recognizeParts } from '../audio/PartRecognition';
 import type { EngineState } from '../audio/AudioEngine';
 
@@ -211,6 +212,35 @@ async function urlsForSong(song: Song): Promise<Record<string, string>> {
   return Object.fromEntries(entries);
 }
 
+/**
+ * Escolhe a melhor faixa pra estimar BPM/tom por análise de áudio, quando o
+ * nome da pasta não traz essa informação. Pra BPM, uma faixa de click (se
+ * existir) é ideal — ela é perfeitamente periódica. Pra tom, preferimos um
+ * instrumento harmônico (teclado/violão/baixo) em vez de bateria/click, que
+ * não têm altura definida.
+ */
+function pickTrackForAnalysis(tracks: SongTrack[], purpose: 'bpm' | 'key'): SongTrack | null {
+  if (purpose === 'bpm') {
+    return (
+      tracks.find((t) => t.role === 'click') ??
+      tracks.find((t) => t.role === 'drums') ??
+      tracks.find((t) => t.role !== 'guide') ??
+      tracks[0] ??
+      null
+    );
+  }
+  return (
+    tracks.find((t) => t.role === 'keys') ??
+    tracks.find((t) => t.role === 'guitar') ??
+    tracks.find((t) => t.role === 'bass') ??
+    tracks.find((t) => t.role === 'vocal') ??
+    tracks.find((t) => t.role !== 'click' && t.role !== 'drums' && t.role !== 'guide') ??
+    tracks[0] ??
+    null
+  );
+}
+
+
 export const useStore = create<StoreState>((set, get) => ({
   ready: false,
   library: { songs: [], scenes: [] },
@@ -289,8 +319,47 @@ export const useStore = create<StoreState>((set, get) => ({
     const folderName = folder.split(/[\\/]/).filter(Boolean).pop() ?? 'Nova música';
     const parsed = parseSongFolderName(folderName);
     const title = parsed.title || folderName;
-    const detectedKey = parsed.key ?? 'C';
-    const detectedBpm = parsed.bpm ?? 120;
+
+    // Se o nome da pasta não trouxe BPM e/ou tom, tenta detectar por análise
+    // de áudio (ver src/audio/KeyBpmDetection.ts) antes de cair no padrão
+    // fixo (C / 120 bpm). Roda sobre uma única faixa (não todas), decidida
+    // pela função acima, pra manter o import rápido.
+    let detectedKey = parsed.key;
+    let detectedBpm = parsed.bpm;
+    const audioDetected: string[] = [];
+    if (!detectedBpm || !detectedKey) {
+      try {
+        if (!detectedBpm) {
+          const t = pickTrackForAnalysis(tracks, 'bpm');
+          if (t) {
+            const url = await window.api.fs.toFileUrl(t.filePath);
+            const buf = await decodeForAnalysis(engine.ctx, url);
+            const bpm = detectBpm(buf);
+            if (bpm) {
+              detectedBpm = bpm;
+              audioDetected.push(`BPM ${bpm} (por áudio)`);
+            }
+          }
+        }
+        if (!detectedKey) {
+          const t = pickTrackForAnalysis(tracks, 'key');
+          if (t) {
+            const url = await window.api.fs.toFileUrl(t.filePath);
+            const buf = await decodeForAnalysis(engine.ctx, url);
+            const key = detectKey(buf);
+            if (key) {
+              detectedKey = key;
+              audioDetected.push(`tom ${key} (por áudio)`);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[deteccao] falha ao analisar audio para bpm/tom', err);
+      }
+    }
+
+    const finalKey = detectedKey ?? 'C';
+    const finalBpm = detectedBpm ?? 120;
     const now = Date.now();
     const wholeSongPart: SongPart = {
       id: newId(),
@@ -304,10 +373,10 @@ export const useStore = create<StoreState>((set, get) => ({
       id: newId(),
       title,
       folderPath: folder,
-      originalKey: detectedKey,
-      currentKey: detectedKey,
-      originalBpm: detectedBpm,
-      currentBpm: detectedBpm,
+      originalKey: finalKey,
+      currentKey: finalKey,
+      originalBpm: finalBpm,
+      currentBpm: finalBpm,
       timeSignatureNum: 4,
       timeSignatureDen: 4,
       durationSec: 0,
@@ -323,14 +392,14 @@ export const useStore = create<StoreState>((set, get) => ({
     const library = { ...get().library, songs: [...get().library.songs, song] };
     set({ library });
     scheduleSave(library);
-    const detectedInfo = [parsed.key ? `tom ${detectedKey}` : null, parsed.bpm ? `${detectedBpm} bpm` : null]
-      .filter(Boolean)
-      .join(', ');
+    const fromName = [parsed.key ? `tom ${finalKey}` : null, parsed.bpm ? `${finalBpm} bpm` : null].filter(Boolean);
+    const detectedInfo = [...fromName, ...audioDetected].join(', ');
     get().pushToast(
       `"${title}" importada com ${tracks.length} faixas${detectedInfo ? ` (${detectedInfo} detectados)` : ''}.`
     );
     await get().selectSong(song.id);
   },
+
 
   selectSong: async (songId) => {
     const song = get().library.songs.find((s) => s.id === songId);
