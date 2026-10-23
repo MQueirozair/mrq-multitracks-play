@@ -1,6 +1,6 @@
 const WebSocket = require('ws');
 async function main() {
-  const listRes = await fetch('http://127.0.0.1:9335/json');
+  const listRes = await fetch('http://127.0.0.1:9338/json');
   const list = await listRes.json();
   const page = list.find((p) => p.type === 'page');
   const ws = new WebSocket(page.webSocketDebuggerUrl);

@@ -91,6 +91,18 @@ export class Sf2LayerVoice {
     this.synth?.midiNoteOff(0, note);
   }
 
+  /**
+   * Pitch bend em semitons (ver RackEngine.PITCH_BEND_RANGE_SEMITONES) — usa
+   * a roda de pitch bend nativa do FluidSynth, que já afeta as notas em
+   * andamento (não só as novas). O valor bruto é de 14 bits (0..16383,
+   * 8192 = centro), e o FluidSynth por padrão interpreta ±8192 como ±2
+   * semitons (faixa de pitch bend padrão do General MIDI).
+   */
+  setPitchBend(semitones: number) {
+    const raw = Math.round(8192 + (semitones / 2) * 8192);
+    this.synth?.midiPitchBend(0, Math.max(0, Math.min(16383, raw)));
+  }
+
   allNotesOff() {
     this.synth?.midiAllNotesOff(0);
   }

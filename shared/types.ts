@@ -167,11 +167,15 @@ export interface MidiBinding {
  *  - 'sf2'     → SoundFont real (.sf2/.sf3), tocado via motor FluidSynth (WASM).
  *  - 'dx7'     → Banco/voz real de FM Yamaha DX7 (.syx), via núcleo MSFA (o mesmo
  *                motor que o Google abriu publicamente e que o Dexed usa).
- *  - 'sampler' → Amostra de áudio do próprio usuário (.wav/.aiff/.flac/.ogg),
- *                usada como "piano por amostra". Existe porque o formato .npno
- *                da Nord Piano Library é proprietário e criptografado — a própria
- *                Clavia nunca o documentou publicamente — então não é seguro
- *                decodificá-lo aqui; ver RackLayer.rejectedNpno.
+ *  - 'sampler' → Amostra de áudio do próprio usuário (.wav/.aiff/.flac/.ogg/.mp3),
+ *                usada como "piano por amostra" simples (um único sample
+ *                reamostrado por tecla) — opção independente de 'npno', não um
+ *                substituto dele.
+ *  - 'npno'    → Biblioteca de piano Nord real (.npno), decodificada de fato
+ *                (múltiplas camadas de velocidade reais por tecla) via o crate
+ *                Rust "nord-format" compilado pra WebAssembly — ver NpnoLayerVoice.ts.
+ *                Projeto comunitário/não-oficial (a Clavia nunca documentou o
+ *                formato publicamente), mas decodifica o layout real do arquivo.
  */
 export type RackLayerFormat = 'sf2' | 'dx7' | 'sampler' | 'npno';
 
@@ -207,6 +211,8 @@ export interface RackLayer {
   rootNote: number;
   /** imagem customizada do card (data URL), escolhida no painel "Editar"; null = ícone padrão */
   photoDataUrl: string | null;
+  /** panorama estéreo da camada, -1 (esquerda) .. 1 (direita), 0 = centro */
+  pan: number;
 
   // --- painel "Editar" (ver InstrumentRack.tsx: <LayerEditPanel>) ---
   /** nota MIDI mais grave que esta camada responde (0-127) */
@@ -245,6 +251,21 @@ export interface RackLayer {
 /** Curva de resposta de velocidade aplicada à entrada MIDI física inteira do rack. */
 export type RackVelocityCurve = 'linear' | 'soft' | 'hard';
 
+/**
+ * Uma "cena" é uma foto completa da configuração das 4 camadas (instrumento,
+ * efeitos, roteamento de nota) + volume geral/reverb, salva com um nome pra
+ * recall rápido — pensado pra trocar repertório/música ao vivo sem reconfigurar
+ * tudo na mão. Pode ser recuperada manualmente (ver InstrumentRack.tsx) ou por
+ * Program Change do teclado físico (a cena de índice N na lista = PC número N).
+ */
+export interface RackScene {
+  id: string;
+  name: string;
+  layers: RackLayer[];
+  masterVolume: number;
+  reverb: number;
+}
+
 export interface InstrumentRackState {
   layers: RackLayer[];
   /** 0..1 */
@@ -259,6 +280,17 @@ export interface InstrumentRackState {
   transpose: number;
   /** se true, segura as notas liberadas enquanto o pedal de sustain (CC64) estiver pressionado */
   sustainEnabled: boolean;
+  /**
+   * Tamanho do buffer de áudio (em amostras) pedido ao sistema de som pro
+   * AudioContext do Rack — ver painel MIDI (RackMidiPanel) e RackEngine.setBufferFrames.
+   * 0 = Automático (pede o menor buffer que o navegador conseguir, o mesmo
+   * comportamento de sempre). Valores > 0 pedem um alvo explícito: menor =
+   * responde mais rápido ao teclado físico, porém mais exigente do
+   * processador (risco de "crackles"); maior = mais estável, porém mais atraso.
+   */
+  bufferFrames: number;
+  /** cenas salvas (configuração completa das 4 camadas) — ver RackScene */
+  scenes: RackScene[];
 }
 
 export interface AppSettings {
@@ -295,6 +327,7 @@ function emptyRackLayer(id: string, color: string): RackLayer {
     solo: false,
     rootNote: 60,
     photoDataUrl: null,
+    pan: 0,
     noteRangeStart: 0,
     noteRangeEnd: 127,
     octave: 0,
@@ -329,6 +362,8 @@ export const DEFAULT_RACK_STATE: InstrumentRackState = {
   velocityCurve: 'linear',
   transpose: 0,
   sustainEnabled: true,
+  bufferFrames: 0,
+  scenes: [],
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {

@@ -20,6 +20,7 @@ function emptyRackLayer(id, color) {
         solo: false,
         rootNote: 60,
         photoDataUrl: null,
+        pan: 0,
         noteRangeStart: 0,
         noteRangeEnd: 127,
         octave: 0,
@@ -53,6 +54,8 @@ exports.DEFAULT_RACK_STATE = {
     velocityCurve: 'linear',
     transpose: 0,
     sustainEnabled: true,
+    bufferFrames: 0,
+    scenes: [],
 };
 exports.DEFAULT_SETTINGS = {
     outputDeviceId: null,

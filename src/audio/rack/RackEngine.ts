@@ -6,6 +6,24 @@ import { NpnoLayerVoice } from './NpnoLayerVoice';
 
 type AnyLayerVoice = Sf2LayerVoice | Dx7LayerVoice | SamplerLayerVoice | NpnoLayerVoice;
 
+/**
+ * Vozes que suportam pitch bend em tempo real (afeta as notas já soando, não
+ * só as novas) — todas, exceto a camada DX7: o núcleo FM "MSFA" usado por ela
+ * (@audio/synth-dx7) não expõe uma forma de alterar a afinação de uma `Voice`
+ * já em andamento sem reconstruí-la (o que soaria como um "salto" audível),
+ * então por ora a roda de pitch bend física não afeta camadas DX7 —
+ * limitação documentada, não um bug silencioso.
+ */
+interface PitchBendableVoice {
+  setPitchBend(semitones: number): void;
+}
+function isPitchBendable(voice: AnyLayerVoice): voice is AnyLayerVoice & PitchBendableVoice {
+  return typeof (voice as Partial<PitchBendableVoice>).setPitchBend === 'function';
+}
+
+/** Faixa de pitch bend aplicada (±2 semitons, o padrão do General MIDI). */
+export const PITCH_BEND_RANGE_SEMITONES = 2;
+
 const SF2_EXT = new Set(['sf2', 'sf3']);
 const DX7_EXT = new Set(['syx']);
 const SAMPLE_EXT = new Set(['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3']);
@@ -63,8 +81,14 @@ interface LayerRuntime {
 
   // cadeia de áudio (ver connectChain): voice -> envelopeGain -> cutoffFilter ->
   // eqLow -> eqMid -> eqHigh -> drivePreGain -> (dry + wet via shaper) -> driveSum
-  // -> volumeGain -> characterFilter -> masterGain/reverbBus
+  // -> volumeGain -> panNode -> characterFilter -> masterGain/reverbBus
   envelopeGain: GainNode;
+  panNode: StereoPannerNode;
+  /** semitons de pitch bend atualmente aplicados (vindos da roda do teclado físico) */
+  pitchBendSemitones: number;
+  /** tap passivo pro medidor de nível (VU) de cada camada no card — ver getLayerLevel() */
+  meterAnalyser: AnalyserNode;
+  meterBuf: Float32Array;
   envelope: LayerEnvelopeSettings;
   cutoffFilter: BiquadFilterNode;
   filter: LayerFilterSettings;
@@ -163,6 +187,16 @@ function createDriveCurve(type: RackDriveType, amount: number): Float32Array {
  * volume geral — tudo disparado por mensagens MIDI note-on/note-off vindas de
  * um teclado físico conectado.
  */
+/**
+ * Opções de tamanho de buffer (em amostras) oferecidas no painel MIDI — ver
+ * RackMidiPanel. 0 é especial: "Automático", que pede ao navegador o menor
+ * buffer viável (latencyHint: 'interactive', o mesmo pedido que o rack
+ * sempre fez) — é o valor padrão, pra ninguém regredir a latência que já
+ * tínhamos antes deste controle existir. As opções > 0 pedem um alvo
+ * numérico de amostras, pra quem precisa trocar resposta por estabilidade.
+ */
+export const RACK_BUFFER_OPTIONS = [0, 128, 256, 512, 1024, 2048] as const;
+
 export class RackEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -172,14 +206,37 @@ export class RackEngine {
   private layers: LayerRuntime[] = [];
   private reverbAmount = 0;
   private masterVolume = 0.8;
+  /** tamanho de buffer "desejado", em amostras (0 = automático) — ver setBufferFrames() */
+  private bufferFrames = 0;
 
   /** Cria o AudioContext e o barramento na primeira vez que for preciso (gesto do usuário já ocorreu ao abrir a aba). */
   ensureStarted() {
     if (this.ctx) return;
-    // latencyHint: 'interactive' pede ao navegador o menor buffer de saída
-    // viável (prioriza resposta rápida sobre economia de CPU) — importante
-    // pra um instrumento tocado ao vivo por teclado MIDI físico.
-    const ctx = new AudioContext({ latencyHint: 'interactive' });
+    this.buildGraph();
+  }
+
+  /**
+   * (Re)constrói o AudioContext e todo o grafo de áudio compartilhado do rack
+   * (master, reverb, as 4 camadas) do zero, usando this.bufferFrames como
+   * alvo de latência. Chamado na primeira vez (ensureStarted) e de novo
+   * sempre que o usuário troca o tamanho do buffer em tempo real
+   * (setBufferFrames) — nesse segundo caso o AudioContext anterior já foi
+   * fechado e as vozes carregadas precisam ser recarregadas pelo chamador
+   * (ver reloadAllRackLayers em rackReload.ts), pois o estado de cada
+   * instrumento (SoundFont/DX7/.npno/amostra carregados) vive na própria voz,
+   * não neste motor.
+   */
+  private buildGraph() {
+    // bufferFrames === 0 ("Automático") pede o mesmo 'interactive' de sempre
+    // (o menor buffer que o navegador conseguir). Um valor numérico pede um
+    // alvo explícito de latência em segundos — o navegador escolhe o menor
+    // buffer de hardware disponível >= esse alvo (nunca menor que o mínimo
+    // que o driver de som permitir). Isso é o que dá controle real de
+    // "aumentar/diminuir" o buffer ao usuário, pra trocar resposta por
+    // estabilidade (ou vice-versa) conforme a máquina dele.
+    const latencyHint: AudioContextLatencyCategory | number =
+      this.bufferFrames > 0 ? this.bufferFrames / (this.ctx?.sampleRate ?? 48000) : 'interactive';
+    const ctx = new AudioContext({ latencyHint });
     this.ctx = ctx;
     const masterGain = ctx.createGain();
     masterGain.gain.value = this.masterVolume;
@@ -199,10 +256,54 @@ export class RackEngine {
     this.reverbBus = reverbBus;
     this.reverbWetGain = reverbWetGain;
 
+    this.layers = [];
     for (let i = 0; i < 4; i++) {
       this.layers.push(this.createLayerRuntime(ctx, masterGain, reverbBus));
     }
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  }
+
+  /**
+   * Troca o tamanho do buffer de áudio (latência) do rack em tempo real.
+   * Se o motor ainda não tinha sido iniciado, só guarda o valor pro próximo
+   * ensureStarted() usar. Se já estava rodando, fecha o AudioContext atual e
+   * recria tudo do zero — os instrumentos carregados em cada camada precisam
+   * ser recarregados pelo chamador logo em seguida (eles não sobrevivem à
+   * troca de AudioContext; ver reloadAllRackLayers em rackReload.ts).
+   */
+  async setBufferFrames(frames: number): Promise<void> {
+    this.bufferFrames = frames;
+    if (!this.ctx) return;
+    const oldCtx = this.ctx;
+    for (const layer of this.layers) {
+      layer.voice?.dispose();
+    }
+    this.ctx = null;
+    this.masterGain = null;
+    this.reverbBus = null;
+    this.reverbWetGain = null;
+    this.convolver = null;
+    this.layers = [];
+    try {
+      await oldCtx.close();
+    } catch {
+      /* ignora erro ao fechar contexto antigo */
+    }
+    this.buildGraph();
+  }
+
+  getBufferFrames(): number {
+    return this.bufferFrames;
+  }
+
+  /** Latência real medida pelo navegador no AudioContext atual (null se o motor ainda não iniciou). */
+  getLatencyInfoMs(): { baseLatencyMs: number; outputLatencyMs: number } | null {
+    if (!this.ctx) return null;
+    const anyCtx = this.ctx as AudioContext & { outputLatency?: number };
+    return {
+      baseLatencyMs: (this.ctx.baseLatency ?? 0) * 1000,
+      outputLatencyMs: (anyCtx.outputLatency ?? 0) * 1000,
+    };
   }
 
   private createLayerRuntime(ctx: AudioContext, masterGain: GainNode, reverbBus: GainNode): LayerRuntime {
@@ -240,12 +341,14 @@ export class RackEngine {
 
     const volumeGain = ctx.createGain();
     volumeGain.gain.value = 0.7;
+    const panNode = ctx.createStereoPanner();
+    panNode.pan.value = 0;
     const characterFilter = ctx.createBiquadFilter();
     applyCharacter(characterFilter, 'original');
 
     // voice.output (ligado depois, em loadLayer) -> envelopeGain -> cutoffFilter
     // -> eqLow -> eqMid -> eqHigh -> drivePreGain -> { driveDry, driveShaper->driveWet }
-    // -> volumeGain -> characterFilter -> masterGain/reverbBus
+    // -> volumeGain -> panNode -> characterFilter -> masterGain/reverbBus
     envelopeGain.connect(cutoffFilter);
     cutoffFilter.connect(eqLow);
     eqLow.connect(eqMid);
@@ -256,9 +359,17 @@ export class RackEngine {
     driveShaper.connect(driveWet);
     driveDry.connect(volumeGain);
     driveWet.connect(volumeGain);
-    volumeGain.connect(characterFilter);
+    volumeGain.connect(panNode);
+    panNode.connect(characterFilter);
     characterFilter.connect(masterGain);
     characterFilter.connect(reverbBus);
+
+    // Tap passivo (não precisa de .connect() pra frente) pro medidor de nível
+    // de cada card — ver getLayerLevel().
+    const meterAnalyser = ctx.createAnalyser();
+    meterAnalyser.fftSize = 256;
+    meterAnalyser.smoothingTimeConstant = 0.6;
+    characterFilter.connect(meterAnalyser);
 
     return {
       format: null,
@@ -285,8 +396,25 @@ export class RackEngine {
       driveWet,
       drive: { enabled: false, type: 'warm', driveDb: 0, mix: 1 },
       volumeGain,
+      panNode,
       characterFilter,
+      pitchBendSemitones: 0,
+      meterAnalyser,
+      meterBuf: new Float32Array(meterAnalyser.fftSize),
     };
+  }
+
+  /** Nível de pico (0..1) do áudio que está de fato saindo da camada agora — ver medidor no card. */
+  getLayerLevel(index: number): number {
+    const layer = this.layers[index];
+    if (!layer) return 0;
+    layer.meterAnalyser.getFloatTimeDomainData(layer.meterBuf as Float32Array<ArrayBuffer>);
+    let max = 0;
+    for (let i = 0; i < layer.meterBuf.length; i++) {
+      const abs = Math.abs(layer.meterBuf[i]);
+      if (abs > max) max = abs;
+    }
+    return max;
   }
 
   async resume() {
@@ -355,6 +483,13 @@ export class RackEngine {
   setCharacter(index: number, character: RackCharacter) {
     const layer = this.layers[index];
     if (layer) applyCharacter(layer.characterFilter, character);
+  }
+
+  /** Panorama estéreo da camada, -1 (esquerda) .. 1 (direita). */
+  setPan(index: number, pan: number) {
+    const layer = this.layers[index];
+    if (!layer || !this.ctx) return;
+    layer.panNode.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), this.ctx.currentTime, 0.01);
   }
 
   // --- roteamento de nota por camada (painel "Editar") ---
@@ -509,12 +644,41 @@ export class RackEngine {
     }
   }
 
+  /**
+   * Fotografia instantânea de todas as notas MIDI (0-127, antes da
+   * transposição por oitava de cada camada) que estão soando agora em
+   * qualquer camada — usado pela tira de teclado visual (feature 9).
+   */
+  getActiveNotesSnapshot(): number[] {
+    const notes = new Set<number>();
+    for (const layer of this.layers) {
+      for (const note of layer.activeNotes.keys()) notes.add(note);
+    }
+    return Array.from(notes);
+  }
+
   /** Botão "PARAR NOTAS": corta/libera tudo que estiver soando em todas as camadas, imediatamente. */
   panic() {
     for (const layer of this.layers) {
       layer.voice?.allNotesOff();
       layer.activeNotes.clear();
       if (this.ctx) layer.envelopeGain.gain.setTargetAtTime(1, this.ctx.currentTime, 0.01);
+    }
+  }
+
+  /**
+   * Pitch bend vindo da roda do teclado físico — `normalized` é -1..1 (centro
+   * = 0), já calculado a partir das 14 bits do evento MIDI (ver
+   * rackMidiRouter.ts). Afeta as camadas compatíveis com o canal MIDI
+   * informado, respeitando o filtro de canal de cada uma (ver midiChannel).
+   */
+  setPitchBend(normalized: number, channel?: number) {
+    const semitones = Math.max(-1, Math.min(1, normalized)) * PITCH_BEND_RANGE_SEMITONES;
+    for (const layer of this.layers) {
+      if (!layer.voice) continue;
+      if (layer.midiChannel !== 0 && channel !== undefined && layer.midiChannel !== channel) continue;
+      layer.pitchBendSemitones = semitones;
+      if (isPitchBendable(layer.voice)) layer.voice.setPitchBend(semitones);
     }
   }
 }

@@ -85,7 +85,8 @@ export class NpnoLayerVoice {
   private ctx: AudioContext;
   private rootMap = new Map<number, RootStrokes>();
   private keyMap: number[] = [];
-  private active = new Map<number, { src: AudioBufferSourceNode; gain: GainNode }>();
+  private active = new Map<number, { src: AudioBufferSourceNode; gain: GainNode; baseRate: number }>();
+  private bendSemitones = 0;
   private libName = '';
   readonly output: GainNode;
 
@@ -199,7 +200,8 @@ export class NpnoLayerVoice {
 
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
-    src.playbackRate.value = Math.pow(2, (note - root) / 12);
+    const baseRate = Math.pow(2, (note - root) / 12);
+    src.playbackRate.value = baseRate * Math.pow(2, this.bendSemitones / 12);
     const gain = this.ctx.createGain();
     const now = this.ctx.currentTime;
     const target = Math.max(0, Math.min(1, velocity / 127));
@@ -215,11 +217,21 @@ export class NpnoLayerVoice {
         /* já desconectado */
       }
     };
-    this.active.set(note, { src, gain });
+    this.active.set(note, { src, gain, baseRate });
   }
 
   noteOff(note: number) {
     this.stopNote(note, RELEASE_FADE_SEC);
+  }
+
+  /** Pitch bend em semitons (ver RackEngine.PITCH_BEND_RANGE_SEMITONES), aplicado às notas já soando. */
+  setPitchBend(semitones: number) {
+    this.bendSemitones = semitones;
+    const now = this.ctx.currentTime;
+    const bendFactor = Math.pow(2, semitones / 12);
+    for (const voice of this.active.values()) {
+      voice.src.playbackRate.setTargetAtTime(voice.baseRate * bendFactor, now, 0.01);
+    }
   }
 
   private stopNote(note: number, fadeSec: number) {

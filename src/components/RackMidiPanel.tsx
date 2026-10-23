@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Piano } from 'lucide-react';
+import { Minus, Piano, Plus } from 'lucide-react';
 import { useStore } from '../state/useStore';
-import { rackEngine } from '../audio/rack/RackEngine';
+import { rackEngine, RACK_BUFFER_OPTIONS } from '../audio/rack/RackEngine';
+import { reloadAllRackLayers } from '../audio/rack/rackReload';
 import {
   initRackMidi,
   isRackMidiSupported,
@@ -20,6 +21,14 @@ const VELOCITY_OPTIONS: { value: RackVelocityCurve; label: string }[] = [
   { value: 'hard', label: 'Dura' },
 ];
 
+function formatMs(ms: number): string {
+  return ms < 10 ? `${ms.toFixed(1)}ms` : `${Math.round(ms)}ms`;
+}
+
+function bufferLabel(frames: number): string {
+  return frames <= 0 ? 'Automático' : `${frames} amostras`;
+}
+
 /**
  * Pílula de status + painel de configuração do teclado MIDI físico, mostrado
  * na barra de título só quando a aba "Rack de instrumentos" está aberta — é
@@ -30,10 +39,48 @@ const VELOCITY_OPTIONS: { value: RackVelocityCurve; label: string }[] = [
 export default function RackMidiPanel() {
   const rack = useStore((s) => s.settings.rack);
   const updateRack = useStore((s) => s.updateRack);
+  const pushToast = useStore((s) => s.pushToast);
   const [open, setOpen] = useState(false);
   const [midiReady, setMidiReady] = useState(false);
   const [midiInputs, setMidiInputs] = useState<{ id: string; name: string }[]>([]);
+  const [applyingBuffer, setApplyingBuffer] = useState(false);
+  const [latencyMs, setLatencyMs] = useState<number | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const rackRef = useRef(rack);
+  rackRef.current = rack;
+
+  // Mede a latência real (não só o pedido) do AudioContext atual pra mostrar
+  // no painel — atualiza sempre que o painel abre ou o buffer muda.
+  useEffect(() => {
+    if (!open) return;
+    const info = rackEngine.getLatencyInfoMs();
+    setLatencyMs(info ? info.baseLatencyMs + info.outputLatencyMs : null);
+  }, [open, rack.bufferFrames]);
+
+  async function handleBufferChange(frames: number) {
+    setApplyingBuffer(true);
+    try {
+      await rackEngine.setBufferFrames(frames);
+      await reloadAllRackLayers(rackRef.current.layers, (index, err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        pushToast(`Não foi possível recarregar o instrumento da camada ${index + 1}: ${message}`, 'error');
+      });
+      updateRack({ bufferFrames: frames });
+      const info = rackEngine.getLatencyInfoMs();
+      setLatencyMs(info ? info.baseLatencyMs + info.outputLatencyMs : null);
+    } finally {
+      setApplyingBuffer(false);
+    }
+  }
+
+  function stepBuffer(direction: -1 | 1) {
+    const current = rack.bufferFrames ?? 0;
+    const idx = RACK_BUFFER_OPTIONS.indexOf(current as (typeof RACK_BUFFER_OPTIONS)[number]);
+    const safeIdx = idx === -1 ? 0 : idx;
+    const nextIdx = Math.max(0, Math.min(RACK_BUFFER_OPTIONS.length - 1, safeIdx + direction));
+    const next = RACK_BUFFER_OPTIONS[nextIdx];
+    if (next !== current) handleBufferChange(next);
+  }
 
   useEffect(() => {
     initRackMidi().then((ok) => {
@@ -136,6 +183,40 @@ export default function RackMidiPanel() {
                 />
                 Pedal de sustain (CC64) segura as notas
               </label>
+
+              <div className="rack-field">
+                <label>
+                  Buffer de áudio ({bufferLabel(rack.bufferFrames ?? 0)}
+                  {latencyMs !== null ? ` · ~${formatMs(latencyMs)} de latência real` : ''})
+                </label>
+                <div className="rack-buffer-stepper">
+                  <button
+                    type="button"
+                    className="btn rack-buffer-step-btn"
+                    disabled={applyingBuffer || (rack.bufferFrames ?? 0) <= RACK_BUFFER_OPTIONS[0]}
+                    onClick={() => stepBuffer(-1)}
+                    title="Diminuir buffer: responde mais rápido, mais exigente do processador"
+                  >
+                    <Minus size={13} />
+                  </button>
+                  <span className="rack-buffer-step-value">
+                    {applyingBuffer ? 'Aplicando…' : bufferLabel(rack.bufferFrames ?? 0)}
+                  </span>
+                  <button
+                    type="button"
+                    className="btn rack-buffer-step-btn"
+                    disabled={applyingBuffer || (rack.bufferFrames ?? 0) >= RACK_BUFFER_OPTIONS[RACK_BUFFER_OPTIONS.length - 1]}
+                    onClick={() => stepBuffer(1)}
+                    title="Aumentar buffer: mais estável (evita estalos), porém mais atraso"
+                  >
+                    <Plus size={13} />
+                  </button>
+                </div>
+                <div style={{ color: 'var(--text-2)', fontSize: 10.5, marginTop: 2 }}>
+                  Automático = menor buffer que o sistema permitir (padrão). Se o som estiver "estalando",
+                  aumente. Recarrega os instrumentos já carregados automaticamente.
+                </div>
+              </div>
 
               <button className="btn rack-panic-btn" style={{ marginTop: 4 }} onClick={() => rackEngine.panic()}>
                 PARAR NOTAS

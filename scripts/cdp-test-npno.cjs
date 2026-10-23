@@ -9,7 +9,7 @@ const http = require('http');
 
 function getTargets() {
   return new Promise((resolve, reject) => {
-    http.get('http://127.0.0.1:9336/json', (res) => {
+    http.get('http://127.0.0.1:9338/json', (res) => {
       let data = '';
       res.on('data', (d) => (data += d));
       res.on('end', () => resolve(JSON.parse(data)));

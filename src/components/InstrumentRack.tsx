@@ -1,8 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, Image as ImageIcon, Piano, Plus, Volume2, X as XIcon } from 'lucide-react';
+import { AudioLines, Copy, Image as ImageIcon, Piano, Plus, RotateCcw, Volume2, X as XIcon } from 'lucide-react';
 import { useStore } from '../state/useStore';
-import type { RackCharacter, RackDriveType, RackLayer, RackLayerFormat } from '../../shared/types';
+import type { RackCharacter, RackDriveType, RackLayer, RackLayerFormat, RackScene } from '../../shared/types';
 import { rackEngine, detectRackFormat } from '../audio/rack/RackEngine';
+import { applyLayerParamsToEngine, reloadAllRackLayers, reloadLayerFromDisk as reloadLayerFromDiskShared } from '../audio/rack/rackReload';
+import { onRackProgramChange, onRackRawNoteOn } from '../midi/rackMidiRouter';
+
+const DEFAULT_LAYER_FX: Partial<RackLayer> = {
+  envelopeEnabled: false,
+  attackMs: 5,
+  releaseMs: 350,
+  filterEnabled: false,
+  cutoffHz: 20000,
+  eqEnabled: false,
+  eqBassDb: 0,
+  eqMidDb: 0,
+  eqTrebleDb: 0,
+  eqMidFreqHz: 1000,
+  driveEnabled: false,
+  driveType: 'warm',
+  driveDb: 0,
+  driveMix: 1,
+  pan: 0,
+};
 
 const CHARACTER_OPTIONS: { value: RackCharacter; label: string }[] = [
   { value: 'original', label: 'Original' },
@@ -45,12 +65,44 @@ export default function InstrumentRack() {
   const pushToast = useStore((s) => s.pushToast);
 
   const [loadingLayer, setLoadingLayer] = useState<number | null>(null);
+  // Electron não implementa window.prompt() nativo no renderer (lança
+  // "prompt() is and will not be supported."), então o nome da cena é pedido
+  // por um modal próprio em vez do prompt() do navegador.
+  const [sceneNameDraft, setSceneNameDraft] = useState<string | null>(null);
   const restoredRef = useRef(false);
   const rackRef = useRef(rack);
   rackRef.current = rack;
 
   useEffect(() => {
+    // Aplica o tamanho de buffer salvo da sessão anterior antes do primeiro
+    // "resume" (que é quem de fato cria o AudioContext) — assim a preferência
+    // de latência do usuário já vale desde a primeira nota tocada.
+    rackEngine.setBufferFrames(rackRef.current.bufferFrames ?? 0);
     rackEngine.resume().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Atalho de pânico: Esc para todas as notas de todas as camadas enquanto a
+  // aba Rack estiver aberta — útil pra cortar rápido um som preso/travado
+  // sem precisar tirar a mão do teclado físico pra clicar no botão.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') rackEngine.panic();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // Program Change do teclado físico recarrega a cena salva de mesmo índice
+  // (0 = primeira cena salva, 1 = segunda, ...) — pensado pra troca de
+  // repertório via footswitch MIDI sem tirar a mão do teclado.
+  useEffect(() => {
+    const unsub = onRackProgramChange((program) => {
+      const scene = rackRef.current.scenes?.[program];
+      if (scene) handleLoadScene(scene);
+    });
+    return unsub;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -75,38 +127,14 @@ export default function InstrumentRack() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function applyLayerParamsToEngine(index: number, layer: RackLayer) {
-    rackEngine.setCharacter(index, layer.character);
-    rackEngine.setLayerVolume(index, layer.volume);
-    rackEngine.setLayerMuted(index, layer.muted);
-    rackEngine.setLayerSolo(index, layer.solo);
-    rackEngine.setNoteRange(index, layer.noteRangeStart, layer.noteRangeEnd);
-    rackEngine.setOctave(index, layer.octave);
-    rackEngine.setMidiChannel(index, layer.midiChannel);
-    rackEngine.setEnvelope(index, { enabled: layer.envelopeEnabled, attackMs: layer.attackMs, releaseMs: layer.releaseMs });
-    rackEngine.setFilter(index, { enabled: layer.filterEnabled, cutoffHz: layer.cutoffHz });
-    rackEngine.setEq(index, {
-      enabled: layer.eqEnabled,
-      bassDb: layer.eqBassDb,
-      midDb: layer.eqMidDb,
-      trebleDb: layer.eqTrebleDb,
-      midFreqHz: layer.eqMidFreqHz,
-    });
-    rackEngine.setDrive(index, { enabled: layer.driveEnabled, type: layer.driveType, driveDb: layer.driveDb, mix: layer.driveMix });
-  }
-
+  // applyLayerParamsToEngine e a lógica de releitura do disco agora vivem em
+  // rackReload.ts (compartilhadas com o handler de troca de buffer no
+  // RackMidiPanel) — aqui só embrulhamos pra manter o indicador de
+  // carregamento por camada (setLoadingLayer) que já existia.
   async function reloadLayerFromDisk(index: number, filePath: string, format: RackLayerFormat, layer: RackLayer) {
     setLoadingLayer(index);
     try {
-      const url = await window.api.fs.toFileUrl(filePath);
-      const res = await fetch(url);
-      if (!res.ok) throw new Error('arquivo não encontrado no disco');
-      const buffer = await res.arrayBuffer();
-      const presets = await rackEngine.loadLayer(index, buffer, format, layer.rootNote);
-      const presetToUse = layer.selectedPreset ?? (presets.length ? presets[0].value : null);
-      if (presetToUse) rackEngine.selectPreset(index, presetToUse);
-      applyLayerParamsToEngine(index, layer);
-      return { presets, presetToUse };
+      return await reloadLayerFromDiskShared(index, filePath, format, layer);
     } finally {
       setLoadingLayer((v) => (v === index ? null : v));
     }
@@ -197,6 +225,7 @@ export default function InstrumentRack() {
     }
     if ('octave' in patch) rackEngine.setOctave(index, layer.octave);
     if ('midiChannel' in patch) rackEngine.setMidiChannel(index, layer.midiChannel);
+    if ('pan' in patch) rackEngine.setPan(index, layer.pan);
     if ('envelopeEnabled' in patch || 'attackMs' in patch || 'releaseMs' in patch) {
       rackEngine.setEnvelope(index, { enabled: layer.envelopeEnabled, attackMs: layer.attackMs, releaseMs: layer.releaseMs });
     }
@@ -217,7 +246,69 @@ export default function InstrumentRack() {
     }
   }
 
+  // Clona a configuração inteira de uma camada (instrumento + todos os
+  // ajustes do painel Editar) para outra — útil pra empilhar o mesmo
+  // instrumento duas vezes com um "Caráter"/EQ diferente em cada camada, sem
+  // ter que carregar o arquivo de novo na mão.
+  async function handleDuplicateLayer(sourceIndex: number, targetIndex: number) {
+    const source = rack.layers[sourceIndex];
+    const target = rack.layers[targetIndex];
+    const cloned: RackLayer = { ...source, id: target.id, color: target.color };
+    updateRackLayer(targetIndex, cloned);
+    if (source.filePath && source.format) {
+      try {
+        await reloadLayerFromDisk(targetIndex, source.filePath, source.format, cloned);
+      } catch (err: any) {
+        pushToast(`Não foi possível duplicar o instrumento: ${err?.message ?? err}`, 'error');
+        return;
+      }
+    } else {
+      rackEngine.clearLayer(targetIndex);
+      applyLayerParamsToEngine(targetIndex, cloned);
+    }
+    pushToast(`Camada ${sourceIndex + 1} duplicada para a camada ${targetIndex + 1}.`);
+  }
+
+  // --- cenas: fotografia completa das 4 camadas + master/reverb, salva com
+  // nome pra recall rápido ao vivo (manual ou por Program Change MIDI) ---
+
+  function handleSaveScene() {
+    setSceneNameDraft(`Cena ${(rack.scenes?.length ?? 0) + 1}`);
+  }
+
+  function confirmSaveScene(name: string) {
+    const trimmed = name.trim();
+    setSceneNameDraft(null);
+    if (!trimmed) return;
+    const scene: RackScene = {
+      id: `scene-${Date.now()}`,
+      name: trimmed,
+      layers: rack.layers.map((l) => ({ ...l })),
+      masterVolume: rack.masterVolume,
+      reverb: rack.reverb,
+    };
+    updateRack({ scenes: [...(rack.scenes ?? []), scene] });
+    pushToast(`Cena "${trimmed}" salva (PC ${rack.scenes?.length ?? 0} no teclado físico).`);
+  }
+
+  async function handleLoadScene(scene: RackScene) {
+    const layers = scene.layers.map((l) => ({ ...l }));
+    updateRack({ layers, masterVolume: scene.masterVolume, reverb: scene.reverb });
+    rackEngine.setMasterVolume(scene.masterVolume);
+    rackEngine.setReverb(scene.reverb);
+    await reloadAllRackLayers(layers, (index, err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      pushToast(`Não foi possível recarregar o instrumento da camada ${index + 1} da cena: ${message}`, 'error');
+    });
+    pushToast(`Cena "${scene.name}" carregada.`);
+  }
+
+  function handleDeleteScene(id: string) {
+    updateRack({ scenes: (rack.scenes ?? []).filter((s) => s.id !== id) });
+  }
+
   return (
+    <div className="rack-page-outer">
     <div className="rack-page">
       {rack.layers.map((layer, index) => (
         <LayerCard
@@ -234,6 +325,8 @@ export default function InstrumentRack() {
           onToggleMute={() => handleToggleMute(index)}
           onToggleSolo={() => handleToggleSolo(index)}
           onEditPatch={(patch) => handleEditPatch(index, patch)}
+          otherLayers={rack.layers.map((l, i) => ({ index: i, label: `Camada ${i + 1}` })).filter((l) => l.index !== index)}
+          onDuplicateTo={(targetIndex) => handleDuplicateLayer(index, targetIndex)}
         />
       ))}
 
@@ -243,7 +336,62 @@ export default function InstrumentRack() {
         onMasterVolumeChange={(v) => updateRack({ masterVolume: v })}
         onReverbChange={(v) => updateRack({ reverb: v })}
         onPanic={() => rackEngine.panic()}
+        scenes={rack.scenes ?? []}
+        onSaveScene={handleSaveScene}
+        onLoadScene={handleLoadScene}
+        onDeleteScene={handleDeleteScene}
       />
+    </div>
+    <RackKeyboardStrip layers={rack.layers} />
+    {sceneNameDraft !== null && (
+      <SceneNameModal initialName={sceneNameDraft} onConfirm={confirmSaveScene} onCancel={() => setSceneNameDraft(null)} />
+    )}
+    </div>
+  );
+}
+
+function SceneNameModal({
+  initialName,
+  onConfirm,
+  onCancel,
+}: {
+  initialName: string;
+  onConfirm: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initialName);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  return (
+    <div className="rack-modal-overlay" onClick={onCancel}>
+      <div className="rack-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="rack-modal-title">Salvar cena</div>
+        <input
+          ref={inputRef}
+          type="text"
+          className="rack-modal-input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') onConfirm(name);
+            if (e.key === 'Escape') onCancel();
+          }}
+          placeholder='Nome da cena (ex.: "Música X — Intro")'
+        />
+        <div className="rack-modal-actions">
+          <button type="button" className="btn" onClick={onCancel}>
+            Cancelar
+          </button>
+          <button type="button" className="btn primary" onClick={() => onConfirm(name)}>
+            Salvar
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -261,6 +409,8 @@ function LayerCard({
   onToggleMute,
   onToggleSolo,
   onEditPatch,
+  otherLayers,
+  onDuplicateTo,
 }: {
   layer: RackLayer;
   index: number;
@@ -274,6 +424,8 @@ function LayerCard({
   onToggleMute: () => void;
   onToggleSolo: () => void;
   onEditPatch: (patch: Partial<RackLayer>) => void;
+  otherLayers: { index: number; label: string }[];
+  onDuplicateTo: (targetIndex: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const hasInstrument = !!layer.format;
@@ -359,6 +511,7 @@ function LayerCard({
       </div>
       <div className="rack-volume-value">{layer.volume.toFixed(2)}</div>
       <div className="rack-volume-label">Volume</div>
+      <LayerMeter index={index} active={hasInstrument} />
 
       <div className="rack-bottom-row">
         <button className="btn" onClick={onLoad}>
@@ -376,8 +529,112 @@ function LayerCard({
           onClose={() => setEditing(false)}
           onPatch={onEditPatch}
           onRootNoteChange={onRootNoteChange}
+          otherLayers={otherLayers}
+          onDuplicateTo={onDuplicateTo}
         />
       )}
+    </div>
+  );
+}
+
+const KEYBOARD_LOW = 21; // A0
+const KEYBOARD_HIGH = 108; // C8 (piano de 88 teclas)
+const KEYBOARD_TOTAL = KEYBOARD_HIGH - KEYBOARD_LOW + 1;
+function isBlackKey(note: number) {
+  return [1, 3, 6, 8, 10].includes(note % 12);
+}
+
+/**
+ * Tira de teclado virtual: mostra as faixas de nota configuradas em cada
+ * camada (barra colorida embaixo das teclas) e acende em tempo real as
+ * notas que estão soando agora — não é tocável, é só visualização/feedback
+ * pra quem está tocando no teclado físico conectado.
+ */
+function RackKeyboardStrip({ layers }: { layers: RackLayer[] }) {
+  const keyRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  useEffect(() => {
+    let raf = 0;
+    let lastFrame = 0;
+    let lastActive = new Set<number>();
+    function tick(now: number) {
+      if (now - lastFrame > 60) {
+        lastFrame = now;
+        const active = new Set(rackEngine.getActiveNotesSnapshot());
+        if (active.size !== lastActive.size || [...active].some((n) => !lastActive.has(n))) {
+          for (let note = KEYBOARD_LOW; note <= KEYBOARD_HIGH; note++) {
+            const el = keyRefs.current[note - KEYBOARD_LOW];
+            if (el) el.classList.toggle('rack-key-active', active.has(note));
+          }
+          lastActive = active;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const loadedLayers = layers.filter((l) => l.format);
+
+  return (
+    <div className="rack-keyboard-strip">
+      <div className="rack-keyboard-keys">
+        {Array.from({ length: KEYBOARD_TOTAL }, (_, i) => KEYBOARD_LOW + i).map((note) => (
+          <div
+            key={note}
+            ref={(el) => (keyRefs.current[note - KEYBOARD_LOW] = el)}
+            className={`rack-key ${isBlackKey(note) ? 'rack-key-black' : 'rack-key-white'}`}
+            title={`Nota MIDI ${note}`}
+          />
+        ))}
+      </div>
+      <div className="rack-keyboard-ranges">
+        {loadedLayers.map((layer) => {
+          const start = Math.max(KEYBOARD_LOW, layer.noteRangeStart);
+          const end = Math.min(KEYBOARD_HIGH, layer.noteRangeEnd);
+          if (end < start) return null;
+          const leftPct = ((start - KEYBOARD_LOW) / KEYBOARD_TOTAL) * 100;
+          const widthPct = ((end - start + 1) / KEYBOARD_TOTAL) * 100;
+          return (
+            <div
+              key={layer.id}
+              className="rack-key-range"
+              style={{ left: `${leftPct}%`, width: `${widthPct}%`, background: layer.color }}
+              title={`Faixa da ${layer.id}`}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Medidor de nível (VU) ao vivo de uma camada — lê o pico real do áudio que está saindo dela, ~20x/s. */
+function LayerMeter({ index, active }: { index: number; active: boolean }) {
+  const barRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    let raf = 0;
+    let lastFrame = 0;
+    function tick(now: number) {
+      // ~20fps é mais que suficiente pra um medidor visual, evita trabalho à toa
+      if (now - lastFrame > 45) {
+        lastFrame = now;
+        const level = rackEngine.getLayerLevel(index);
+        const pct = Math.min(100, Math.round(Math.sqrt(level) * 100));
+        if (barRef.current) barRef.current.style.width = `${pct}%`;
+      }
+      raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [index, active]);
+
+  return (
+    <div className="rack-vu-track" title="Nível de saída desta camada">
+      <div ref={barRef} className="rack-vu-fill" style={{ width: '0%' }} />
     </div>
   );
 }
@@ -388,18 +645,46 @@ function LayerEditPanel({
   onClose,
   onPatch,
   onRootNoteChange,
+  otherLayers,
+  onDuplicateTo,
 }: {
   layer: RackLayer;
   index: number;
   onClose: () => void;
   onPatch: (patch: Partial<RackLayer>) => void;
   onRootNoteChange: (n: number) => void;
+  otherLayers: { index: number; label: string }[];
+  onDuplicateTo: (targetIndex: number) => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [learningRange, setLearningRange] = useState(false);
+  const learnBoundsRef = useRef<{ min: number; max: number } | null>(null);
 
   function choosePhoto() {
     fileInputRef.current?.click();
   }
+
+  // "Aprender faixa": arma um modo de escuta por alguns segundos — a menor e
+  // maior tecla física tocada nesse intervalo vira a faixa de notas da
+  // camada, bem mais rápido que arrastar os dois controles deslizantes.
+  useEffect(() => {
+    if (!learningRange) return;
+    learnBoundsRef.current = null;
+    const unsub = onRackRawNoteOn((note) => {
+      const cur = learnBoundsRef.current;
+      learnBoundsRef.current = cur ? { min: Math.min(cur.min, note), max: Math.max(cur.max, note) } : { min: note, max: note };
+    });
+    const timeout = setTimeout(() => {
+      setLearningRange(false);
+      const bounds = learnBoundsRef.current;
+      if (bounds) onPatch({ noteRangeStart: bounds.min, noteRangeEnd: bounds.max });
+    }, 6000);
+    return () => {
+      unsub();
+      clearTimeout(timeout);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [learningRange]);
 
   function onPhotoSelected(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -415,9 +700,18 @@ function LayerEditPanel({
       <div className="rack-edit-panel card" onClick={(e) => e.stopPropagation()}>
         <div className="rack-edit-panel-header">
           <span>CAMADA {String(index + 1).padStart(2, '0')} / AJUSTES</span>
-          <button className="rack-edit-close" onClick={onClose} title="Fechar">
-            <XIcon size={16} />
-          </button>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              className="rack-edit-close"
+              onClick={() => onPatch(DEFAULT_LAYER_FX)}
+              title="Resetar envelope, filtro, EQ, drive e pan pros valores padrão"
+            >
+              <RotateCcw size={14} />
+            </button>
+            <button className="rack-edit-close" onClick={onClose} title="Fechar">
+              <XIcon size={16} />
+            </button>
+          </div>
         </div>
 
         <div className="rack-edit-grid">
@@ -443,6 +737,15 @@ function LayerEditPanel({
                 onChange={(e) => onPatch({ noteRangeEnd: Math.max(Number(e.target.value), layer.noteRangeStart) })}
               />
             </div>
+            <button
+              type="button"
+              className="btn rack-learn-range-btn"
+              disabled={learningRange}
+              onClick={() => setLearningRange(true)}
+              title="Toque a tecla mais grave e a mais aguda que essa camada deve responder, no teclado físico"
+            >
+              {learningRange ? 'Toque as teclas no teclado físico…' : 'Aprender faixa (toque 2 teclas)'}
+            </button>
             <div className="rack-field">
               <label>Oitava {layer.octave >= 0 ? '+' : ''}{layer.octave}</label>
               <input type="range" min={-3} max={3} value={layer.octave} onChange={(e) => onPatch({ octave: Number(e.target.value) })} />
@@ -455,6 +758,17 @@ function LayerEditPanel({
                 max={16}
                 value={layer.midiChannel}
                 onChange={(e) => onPatch({ midiChannel: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-field">
+              <label>Pan {layer.pan === 0 ? 'centro' : layer.pan < 0 ? `${Math.round(-layer.pan * 100)}% esq.` : `${Math.round(layer.pan * 100)}% dir.`}</label>
+              <input
+                type="range"
+                min={-1}
+                max={1}
+                step={0.05}
+                value={layer.pan ?? 0}
+                onChange={(e) => onPatch({ pan: Number(e.target.value) })}
               />
             </div>
             {layer.format === 'sampler' && (
@@ -552,6 +866,18 @@ function LayerEditPanel({
               <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPhotoSelected} />
               {layer.photoDataUrl && <ImageIcon size={14} style={{ opacity: 0.6 }} />}
             </div>
+            {layer.format && (
+              <div className="rack-duplicate-row">
+                <span>Duplicar esta camada para:</span>
+                <div className="rack-duplicate-btns">
+                  {otherLayers.map((l) => (
+                    <button key={l.index} type="button" className="btn rack-duplicate-btn" onClick={() => onDuplicateTo(l.index)}>
+                      <Copy size={11} /> {l.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -583,12 +909,20 @@ function MasterColumn({
   onMasterVolumeChange,
   onReverbChange,
   onPanic,
+  scenes,
+  onSaveScene,
+  onLoadScene,
+  onDeleteScene,
 }: {
   masterVolume: number;
   reverb: number;
   onMasterVolumeChange: (v: number) => void;
   onReverbChange: (v: number) => void;
   onPanic: () => void;
+  scenes: RackScene[];
+  onSaveScene: () => void;
+  onLoadScene: (scene: RackScene) => void;
+  onDeleteScene: (id: string) => void;
 }) {
   return (
     <div className="rack-master-col">
@@ -635,6 +969,26 @@ function MasterColumn({
       <button className="rack-panic-btn" onClick={onPanic}>
         PARAR NOTAS
       </button>
+
+      <div className="rack-scenes">
+        <div className="rack-scenes-title">Cenas</div>
+        <div className="rack-scenes-list">
+          {scenes.length === 0 && <div className="rack-scenes-empty">Nenhuma cena salva ainda.</div>}
+          {scenes.map((scene, i) => (
+            <div key={scene.id} className="rack-scene-row">
+              <button type="button" className="rack-scene-btn" onClick={() => onLoadScene(scene)} title={`Program Change ${i} no teclado físico recarrega esta cena`}>
+                <span className="rack-scene-pc">{i}</span> {scene.name}
+              </button>
+              <button type="button" className="rack-scene-del" onClick={() => onDeleteScene(scene.id)} title="Excluir cena">
+                <XIcon size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+        <button type="button" className="btn rack-scene-save-btn" onClick={onSaveScene}>
+          Salvar cena atual
+        </button>
+      </div>
 
       <div className="rack-master-legend">M: MUDO · S: SOLO</div>
     </div>

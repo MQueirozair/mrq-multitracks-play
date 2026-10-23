@@ -10,6 +10,25 @@ let access: MIDIAccess | null = null;
 let selectedInputId: string | null = null;
 const attached = new Set<MIDIInput>();
 const changeListeners = new Set<() => void>();
+const programChangeListeners = new Set<(program: number) => void>();
+const rawNoteOnListeners = new Set<(note: number) => void>();
+
+/** Avisa quando chega uma mensagem MIDI Program Change (0xC0) — usado pro recall de cenas do rack. */
+export function onRackProgramChange(cb: (program: number) => void): () => void {
+  programChangeListeners.add(cb);
+  return () => programChangeListeners.delete(cb);
+}
+
+/**
+ * Avisa sobre cada tecla física pressionada, com a nota já transposta
+ * globalmente mas ANTES de qualquer filtro de camada — usado só pelo
+ * "Aprender faixa" (MIDI learn) no painel Editar, pra descobrir a faixa de
+ * notas tocada sem interferir no roteamento normal pro RackEngine.
+ */
+export function onRackRawNoteOn(cb: (note: number) => void): () => void {
+  rawNoteOnListeners.add(cb);
+  return () => rawNoteOnListeners.delete(cb);
+}
 
 // --- configuração "completa" do teclado MIDI físico (ver TitleBar > painel MIDI) ---
 let velocityCurve: RackVelocityCurve = 'linear';
@@ -77,6 +96,20 @@ function handleMessage(ev: MIDIMessageEvent) {
     return;
   }
 
+  if (command === 0xe0) {
+    // Pitch bend: 14 bits (LSB + MSB*128), centro = 8192.
+    const raw = (data[1] ?? 0) | ((data[2] ?? 0) << 7);
+    const normalized = (raw - 8192) / 8192;
+    rackEngine.setPitchBend(normalized, channel);
+    return;
+  }
+
+  if (command === 0xc0) {
+    // Program Change — usado pra recall de cenas salvas do rack (ver RackMidiPanel/InstrumentRack).
+    programChangeListeners.forEach((cb) => cb(data[1] ?? 0));
+    return;
+  }
+
   if (command !== 0x90 && command !== 0x80) return;
   const rawNote = data[1];
   const rawVelocity = data[2] ?? 0;
@@ -87,6 +120,7 @@ function handleMessage(ev: MIDIMessageEvent) {
   if (isNoteOn) {
     heldBySustain.delete(note);
     rackEngine.noteOn(note, applyVelocityCurve(rawVelocity), channel);
+    rawNoteOnListeners.forEach((cb) => cb(note));
   } else {
     if (sustainDown && sustainEnabled) {
       heldBySustain.add(note);
@@ -136,3 +170,14 @@ export function listRackMidiInputs(): { id: string; name: string }[] {
 export function isRackMidiSupported(): boolean {
   return 'requestMIDIAccess' in navigator;
 }
+
+// Expõe o parser de mensagens em window pra diagnóstico manual e pro harness
+// de testes via CDP (ver scripts/cdp-*.cjs) — permite simular bytes MIDI
+// brutos (ex.: Program Change, Pitch Bend) sem um teclado físico conectado
+// ao sandbox de desenvolvimento. Não é usado por nenhum caminho do app em si.
+if (typeof window !== 'undefined') {
+  (window as unknown as { __rackMidiTestDispatch?: (bytes: number[]) => void }).__rackMidiTestDispatch = (
+    bytes: number[]
+  ) => handleMessage({ data: Uint8Array.from(bytes) } as MIDIMessageEvent);
+}
+

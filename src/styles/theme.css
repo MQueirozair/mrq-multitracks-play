@@ -505,7 +505,17 @@ input[type="range"] { accent-color: var(--accent); }
 .play-log-row .when { color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ---------- Rack de instrumentos (camadas ao vivo) ---------- */
-.rack-page { display: flex; gap: 12px; padding: 2px; height: 100%; overflow: auto; align-items: flex-start; }
+.rack-page-outer { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; }
+.rack-page { display: flex; gap: 12px; padding: 2px; flex: 1 1 auto; min-height: 0; overflow: auto; align-items: flex-start; }
+.rack-keyboard-strip { flex: none; display: flex; flex-direction: column; padding: 4px 2px 6px; }
+.rack-keyboard-keys { display: flex; width: 100%; height: 26px; gap: 1px; }
+.rack-key { flex: 1 1 0; border-radius: 0 0 2px 2px; transition: background-color 60ms linear; }
+.rack-key-white { background: #e9e9ec; }
+.rack-key-black { background: #2a2a30; height: 70%; }
+.rack-key-active.rack-key-white { background: #3ecf6e; }
+.rack-key-active.rack-key-black { background: #2f9e55; }
+.rack-keyboard-ranges { position: relative; width: 100%; height: 5px; margin-top: 2px; }
+.rack-key-range { position: absolute; top: 0; height: 100%; border-radius: 2px; opacity: 0.85; }
 .rack-layer-card {
   --layer-color: var(--accent);
   width: 230px; flex-shrink: 0; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-lg);
@@ -533,6 +543,51 @@ input[type="range"] { accent-color: var(--accent); }
   font-size: 13px; font-weight: 700; text-align: center; color: var(--text-0); min-height: 18px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.rack-learn-range-btn { font-size: 10.5px; padding: 5px 8px; margin: -2px 0 2px; }
+.rack-duplicate-row { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.rack-duplicate-row > span { font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-2); }
+.rack-duplicate-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.rack-duplicate-btn { font-size: 10.5px; padding: 4px 8px; display: flex; align-items: center; gap: 4px; }
+.rack-vu-track {
+  width: 100%; height: 4px; border-radius: 2px; background: #0005; overflow: hidden; margin: 2px 0 4px;
+}
+.rack-vu-fill {
+  height: 100%; background: linear-gradient(90deg, #3ecf6e, #e0c93e 75%, #e05c3e 92%);
+  transition: width 60ms linear;
+}
+.rack-scenes { width: 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.rack-scenes-title { font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-2); text-align: center; }
+.rack-scenes-list { display: flex; flex-direction: column; gap: 4px; max-height: 140px; overflow-y: auto; }
+.rack-scenes-empty { font-size: 10px; color: var(--text-2); text-align: center; padding: 4px 0; }
+.rack-scene-row { display: flex; align-items: center; gap: 4px; }
+.rack-scene-btn {
+  flex: 1; text-align: left; font-size: 10.5px; padding: 5px 7px; border-radius: var(--radius-sm, 6px);
+  background: var(--bg-2); border: 1px solid var(--border); color: var(--text-1); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rack-scene-btn:hover { border-color: var(--accent); }
+.rack-scene-pc {
+  display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 9px; font-weight: 800; margin-right: 4px;
+}
+.rack-scene-del { flex: none; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--text-2); }
+.rack-scene-del:hover { color: #e05c3e; }
+.rack-scene-save-btn { font-size: 10.5px; padding: 6px; }
+.rack-modal-overlay {
+  position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; z-index: 200;
+}
+.rack-modal {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 16px; width: 320px; display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 12px 32px #0008;
+}
+.rack-modal-title { font-size: 13px; font-weight: 700; }
+.rack-modal-input {
+  width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--bg-2); color: var(--text-1); font-size: 12.5px;
+}
+.rack-modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
 .rack-field { display: flex; flex-direction: column; gap: 3px; }
 .rack-field label { font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-2); }
 .rack-field select { font-size: 11.5px; padding: 5px 6px; }
@@ -585,6 +640,12 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .rack-midi-popover-title { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--text-1); }
 .rack-checkbox-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-1); cursor: pointer; }
+.rack-buffer-stepper { display: flex; align-items: center; gap: 8px; }
+.rack-buffer-step-btn {
+  width: 26px; height: 26px; padding: 0; display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; flex: none;
+}
+.rack-buffer-step-value { flex: 1; text-align: center; font-size: 12px; font-weight: 700; color: var(--text-1); font-variant-numeric: tabular-nums; }
 
 /* ---------- modal "Editar" por camada ---------- */
 .rack-edit-overlay {
