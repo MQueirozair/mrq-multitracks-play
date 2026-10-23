@@ -336,9 +336,21 @@ electron_1.ipcMain.handle('store:getSettings', () => {
     // Faz merge raso com os valores padrão: o `defaults` do electron-store só entra em
     // ação quando a chave inteira "settings" não existe (1º uso). Em instalações que já
     // tinham configurações salvas de versões antigas, campos novos adicionados depois
-    // (ex: "rack", nesta versão) ficariam `undefined` e quebrariam a tela que os usa.
+    // (ex: "rack", e os campos novos de cada RackLayer no painel "Editar") ficariam
+    // `undefined` e quebrariam a tela que os usa — por isso o merge é feito também
+    // dentro de cada item de `rack.layers`, não só no nível de `rack`.
     const stored = store.get('settings');
-    return { ...types_1.DEFAULT_SETTINGS, ...stored, rack: { ...types_1.DEFAULT_SETTINGS.rack, ...(stored?.rack ?? {}) } };
+    const storedRack = stored?.rack;
+    const defaultLayers = types_1.DEFAULT_SETTINGS.rack.layers;
+    const layers = (storedRack?.layers ?? defaultLayers).map((layer, i) => ({
+        ...(defaultLayers[i] ?? defaultLayers[0]),
+        ...layer,
+    }));
+    return {
+        ...types_1.DEFAULT_SETTINGS,
+        ...stored,
+        rack: { ...types_1.DEFAULT_SETTINGS.rack, ...(storedRack ?? {}), layers },
+    };
 });
 electron_1.ipcMain.handle('store:saveSettings', (_e, settings) => {
     store.set('settings', settings);
@@ -393,11 +405,11 @@ electron_1.ipcMain.handle('fs:chooseInstrumentFile', async () => {
         properties: ['openFile'],
         title: 'Escolha o arquivo do instrumento',
         filters: [
-            { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3'] },
+            { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno'] },
             { name: 'SoundFont (.sf2, .sf3)', extensions: ['sf2', 'sf3'] },
             { name: 'Banco DX7 (.syx)', extensions: ['syx'] },
             { name: 'Amostra de áudio (.wav, .aiff, .flac, .ogg, .mp3)', extensions: ['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3'] },
-            { name: 'Nord Piano Library (.npno) — não suportado, ver aviso no app', extensions: ['npno'] },
+            { name: 'Nord Piano Library (.npno)', extensions: ['npno'] },
             { name: 'Todos os arquivos', extensions: ['*'] },
         ],
     });

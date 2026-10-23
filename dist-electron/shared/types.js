@@ -19,6 +19,25 @@ function emptyRackLayer(id, color) {
         muted: false,
         solo: false,
         rootNote: 60,
+        photoDataUrl: null,
+        noteRangeStart: 0,
+        noteRangeEnd: 127,
+        octave: 0,
+        midiChannel: 0,
+        envelopeEnabled: false,
+        attackMs: 5,
+        releaseMs: 350,
+        filterEnabled: false,
+        cutoffHz: 20000,
+        eqEnabled: false,
+        eqBassDb: 0,
+        eqMidDb: 0,
+        eqTrebleDb: 0,
+        eqMidFreqHz: 1000,
+        driveEnabled: false,
+        driveType: 'warm',
+        driveDb: 0,
+        driveMix: 1,
     };
 }
 exports.DEFAULT_RACK_STATE = {
@@ -31,6 +50,9 @@ exports.DEFAULT_RACK_STATE = {
     masterVolume: 0.8,
     reverb: 0,
     midiInputId: null,
+    velocityCurve: 'linear',
+    transpose: 0,
+    sustainEnabled: true,
 };
 exports.DEFAULT_SETTINGS = {
     outputDeviceId: null,

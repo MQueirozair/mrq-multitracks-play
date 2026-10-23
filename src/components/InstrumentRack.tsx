@@ -1,15 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, Piano, Plus, Volume2 } from 'lucide-react';
+import { AudioLines, Image as ImageIcon, Piano, Plus, Volume2, X as XIcon } from 'lucide-react';
 import { useStore } from '../state/useStore';
-import type { RackCharacter, RackLayer, RackLayerFormat } from '../../shared/types';
-import { rackEngine, detectRackFormat, NPNO_EXPLANATION } from '../audio/rack/RackEngine';
-import {
-  initRackMidi,
-  isRackMidiSupported,
-  listRackMidiInputs,
-  onRackMidiDevicesChanged,
-  setRackMidiInput,
-} from '../midi/rackMidiRouter';
+import type { RackCharacter, RackDriveType, RackLayer, RackLayerFormat } from '../../shared/types';
+import { rackEngine, detectRackFormat } from '../audio/rack/RackEngine';
 
 const CHARACTER_OPTIONS: { value: RackCharacter; label: string }[] = [
   { value: 'original', label: 'Original' },
@@ -18,10 +11,17 @@ const CHARACTER_OPTIONS: { value: RackCharacter; label: string }[] = [
   { value: 'warm', label: 'Warm' },
 ];
 
+const DRIVE_TYPE_OPTIONS: { value: RackDriveType; label: string }[] = [
+  { value: 'warm', label: 'Warm / suave' },
+  { value: 'hard', label: 'Hard / agressivo' },
+  { value: 'tube', label: 'Tube / válvula' },
+];
+
 const FORMAT_BADGE: Record<RackLayerFormat, string> = {
   sf2: 'SOUNDFONT / SF2',
   dx7: 'FM YAMAHA / DX7',
   sampler: 'PIANO / AMOSTRA',
+  npno: 'PIANO NORD / NPNO',
 };
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -32,9 +32,11 @@ function noteLabel(n: number): string {
 /**
  * Rack de instrumentos ao vivo: 4 camadas tocáveis simultaneamente por um
  * teclado MIDI físico conectado, cada uma carregando um arquivo de instrumento
- * real do usuário (SoundFont .sf2/.sf3, banco DX7 .syx, ou amostra de áudio).
- * Ver NPNO_EXPLANATION para o motivo de .npno (Nord Piano Library) não ser
- * decodificado diretamente — é um formato fechado e criptografado da Clavia.
+ * real do usuário (SoundFont .sf2/.sf3, banco DX7 .syx, amostra de áudio, ou
+ * biblioteca de piano Nord .npno). A configuração do teclado MIDI físico
+ * (dispositivo, curva de velocidade, transposição, sustain) fica em
+ * RackMidiPanel, na barra de título. O .npno é decodificado de verdade pelo
+ * crate nord-format compilado pra WebAssembly — ver NpnoLayerVoice.ts.
  */
 export default function InstrumentRack() {
   const rack = useStore((s) => s.settings.rack);
@@ -42,8 +44,6 @@ export default function InstrumentRack() {
   const updateRackLayer = useStore((s) => s.updateRackLayer);
   const pushToast = useStore((s) => s.pushToast);
 
-  const [midiReady, setMidiReady] = useState(false);
-  const [midiInputs, setMidiInputs] = useState<{ id: string; name: string }[]>([]);
   const [loadingLayer, setLoadingLayer] = useState<number | null>(null);
   const restoredRef = useRef(false);
   const rackRef = useRef(rack);
@@ -51,17 +51,7 @@ export default function InstrumentRack() {
 
   useEffect(() => {
     rackEngine.resume().catch(() => {});
-    initRackMidi().then((ok) => {
-      setMidiReady(ok);
-      setMidiInputs(listRackMidiInputs());
-    });
-    const unsub = onRackMidiDevicesChanged(() => setMidiInputs(listRackMidiInputs()));
-    return unsub;
   }, []);
-
-  useEffect(() => {
-    setRackMidiInput(rack.midiInputId);
-  }, [rack.midiInputId]);
 
   useEffect(() => {
     rackEngine.setMasterVolume(rack.masterVolume);
@@ -76,6 +66,7 @@ export default function InstrumentRack() {
     if (restoredRef.current) return;
     restoredRef.current = true;
     rackRef.current.layers.forEach((layer, index) => {
+      applyLayerParamsToEngine(index, layer);
       if (!layer.filePath || !layer.format) return;
       reloadLayerFromDisk(index, layer.filePath, layer.format, layer).catch((err: Error) => {
         pushToast(`Não foi possível recarregar o instrumento da camada ${index + 1}: ${err.message ?? err}`, 'error');
@@ -83,6 +74,26 @@ export default function InstrumentRack() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function applyLayerParamsToEngine(index: number, layer: RackLayer) {
+    rackEngine.setCharacter(index, layer.character);
+    rackEngine.setLayerVolume(index, layer.volume);
+    rackEngine.setLayerMuted(index, layer.muted);
+    rackEngine.setLayerSolo(index, layer.solo);
+    rackEngine.setNoteRange(index, layer.noteRangeStart, layer.noteRangeEnd);
+    rackEngine.setOctave(index, layer.octave);
+    rackEngine.setMidiChannel(index, layer.midiChannel);
+    rackEngine.setEnvelope(index, { enabled: layer.envelopeEnabled, attackMs: layer.attackMs, releaseMs: layer.releaseMs });
+    rackEngine.setFilter(index, { enabled: layer.filterEnabled, cutoffHz: layer.cutoffHz });
+    rackEngine.setEq(index, {
+      enabled: layer.eqEnabled,
+      bassDb: layer.eqBassDb,
+      midDb: layer.eqMidDb,
+      trebleDb: layer.eqTrebleDb,
+      midFreqHz: layer.eqMidFreqHz,
+    });
+    rackEngine.setDrive(index, { enabled: layer.driveEnabled, type: layer.driveType, driveDb: layer.driveDb, mix: layer.driveMix });
+  }
 
   async function reloadLayerFromDisk(index: number, filePath: string, format: RackLayerFormat, layer: RackLayer) {
     setLoadingLayer(index);
@@ -94,10 +105,7 @@ export default function InstrumentRack() {
       const presets = await rackEngine.loadLayer(index, buffer, format, layer.rootNote);
       const presetToUse = layer.selectedPreset ?? (presets.length ? presets[0].value : null);
       if (presetToUse) rackEngine.selectPreset(index, presetToUse);
-      rackEngine.setCharacter(index, layer.character);
-      rackEngine.setLayerVolume(index, layer.volume);
-      rackEngine.setLayerMuted(index, layer.muted);
-      rackEngine.setLayerSolo(index, layer.solo);
+      applyLayerParamsToEngine(index, layer);
       return { presets, presetToUse };
     } finally {
       setLoadingLayer((v) => (v === index ? null : v));
@@ -109,10 +117,6 @@ export default function InstrumentRack() {
     if (!filePath) return;
     const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
     const detected = detectRackFormat(fileName);
-    if (detected === 'npno-unsupported') {
-      pushToast(NPNO_EXPLANATION, 'error');
-      return;
-    }
     if (!detected) {
       pushToast(`Formato de arquivo não reconhecido: ${fileName}`, 'error');
       return;
@@ -185,30 +189,36 @@ export default function InstrumentRack() {
     updateRackLayer(index, { solo: next });
   }
 
+  function handleEditPatch(index: number, patch: Partial<RackLayer>) {
+    const layer = { ...rack.layers[index], ...patch };
+    updateRackLayer(index, patch);
+    if ('noteRangeStart' in patch || 'noteRangeEnd' in patch) {
+      rackEngine.setNoteRange(index, layer.noteRangeStart, layer.noteRangeEnd);
+    }
+    if ('octave' in patch) rackEngine.setOctave(index, layer.octave);
+    if ('midiChannel' in patch) rackEngine.setMidiChannel(index, layer.midiChannel);
+    if ('envelopeEnabled' in patch || 'attackMs' in patch || 'releaseMs' in patch) {
+      rackEngine.setEnvelope(index, { enabled: layer.envelopeEnabled, attackMs: layer.attackMs, releaseMs: layer.releaseMs });
+    }
+    if ('filterEnabled' in patch || 'cutoffHz' in patch) {
+      rackEngine.setFilter(index, { enabled: layer.filterEnabled, cutoffHz: layer.cutoffHz });
+    }
+    if ('eqEnabled' in patch || 'eqBassDb' in patch || 'eqMidDb' in patch || 'eqTrebleDb' in patch || 'eqMidFreqHz' in patch) {
+      rackEngine.setEq(index, {
+        enabled: layer.eqEnabled,
+        bassDb: layer.eqBassDb,
+        midDb: layer.eqMidDb,
+        trebleDb: layer.eqTrebleDb,
+        midFreqHz: layer.eqMidFreqHz,
+      });
+    }
+    if ('driveEnabled' in patch || 'driveType' in patch || 'driveDb' in patch || 'driveMix' in patch) {
+      rackEngine.setDrive(index, { enabled: layer.driveEnabled, type: layer.driveType, driveDb: layer.driveDb, mix: layer.driveMix });
+    }
+  }
+
   return (
     <div className="rack-page">
-      <div className="rack-toolbar card">
-        <span className={`midi-status-dot ${midiReady ? 'ok' : ''}`} title={midiReady ? 'MIDI ativo' : 'MIDI indisponível'} />
-        <strong style={{ fontSize: 12 }}>Teclado MIDI</strong>
-        {isRackMidiSupported() ? (
-          <select value={rack.midiInputId ?? ''} onChange={(e) => updateRack({ midiInputId: e.target.value || null })}>
-            <option value="">Todos os dispositivos conectados</option>
-            {midiInputs.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span style={{ color: 'var(--text-2)', fontSize: 12 }}>MIDI não suportado neste ambiente.</span>
-        )}
-        {midiReady && midiInputs.length === 0 && (
-          <span style={{ color: 'var(--text-2)', fontSize: 12 }}>
-            Nenhum teclado MIDI detectado ainda — conecte o seu instrumento e ele aparece aqui.
-          </span>
-        )}
-      </div>
-
       {rack.layers.map((layer, index) => (
         <LayerCard
           key={layer.id}
@@ -223,6 +233,7 @@ export default function InstrumentRack() {
           onRootNoteChange={(n) => handleRootNoteChange(index, n)}
           onToggleMute={() => handleToggleMute(index)}
           onToggleSolo={() => handleToggleSolo(index)}
+          onEditPatch={(patch) => handleEditPatch(index, patch)}
         />
       ))}
 
@@ -249,6 +260,7 @@ function LayerCard({
   onRootNoteChange,
   onToggleMute,
   onToggleSolo,
+  onEditPatch,
 }: {
   layer: RackLayer;
   index: number;
@@ -261,6 +273,7 @@ function LayerCard({
   onRootNoteChange: (n: number) => void;
   onToggleMute: () => void;
   onToggleSolo: () => void;
+  onEditPatch: (patch: Partial<RackLayer>) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const hasInstrument = !!layer.format;
@@ -279,14 +292,15 @@ function LayerCard({
         </div>
       </div>
 
-      <div className="rack-layer-art">
-        {loading ? (
-          <span style={{ fontSize: 11, color: 'var(--text-2)' }}>Carregando…</span>
-        ) : hasInstrument ? (
-          layer.format === 'dx7' ? <AudioLines size={30} /> : <Piano size={30} />
-        ) : (
-          <Plus size={26} />
-        )}
+      <div className="rack-layer-art" style={layer.photoDataUrl ? { backgroundImage: `url(${layer.photoDataUrl})` } : undefined}>
+        {!layer.photoDataUrl &&
+          (loading ? (
+            <span style={{ fontSize: 11, color: 'var(--text-2)' }}>Carregando…</span>
+          ) : hasInstrument ? (
+            layer.format === 'dx7' ? <AudioLines size={30} /> : <Piano size={30} />
+          ) : (
+            <Plus size={26} />
+          ))}
       </div>
 
       <div className="rack-format-badge">{layer.format ? FORMAT_BADGE[layer.format] : 'PRONTA PARA O SEU SOM'}</div>
@@ -339,32 +353,12 @@ function LayerCard({
           value={layer.volume}
           onChange={(e) => onVolumeChange(Number(e.target.value))}
         />
-        <button className="btn rack-edit-btn" onClick={() => setEditing((v) => !v)}>
+        <button className="btn rack-edit-btn" onClick={() => setEditing(true)}>
           Editar
         </button>
       </div>
       <div className="rack-volume-value">{layer.volume.toFixed(2)}</div>
       <div className="rack-volume-label">Volume</div>
-
-      {editing && (
-        <div className="card" style={{ padding: 8, fontSize: 11, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ color: 'var(--text-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={layer.filePath ?? ''}>
-            {layer.fileName ?? 'nenhum arquivo carregado'}
-          </div>
-          {layer.format === 'sampler' && (
-            <div className="rack-field">
-              <label>Nota raiz da amostra ({noteLabel(layer.rootNote)})</label>
-              <input
-                type="range"
-                min={0}
-                max={127}
-                value={layer.rootNote}
-                onChange={(e) => onRootNoteChange(Number(e.target.value))}
-              />
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="rack-bottom-row">
         <button className="btn" onClick={onLoad}>
@@ -374,7 +368,212 @@ function LayerCard({
           X
         </button>
       </div>
+
+      {editing && (
+        <LayerEditPanel
+          layer={layer}
+          index={index}
+          onClose={() => setEditing(false)}
+          onPatch={onEditPatch}
+          onRootNoteChange={onRootNoteChange}
+        />
+      )}
     </div>
+  );
+}
+
+function LayerEditPanel({
+  layer,
+  index,
+  onClose,
+  onPatch,
+  onRootNoteChange,
+}: {
+  layer: RackLayer;
+  index: number;
+  onClose: () => void;
+  onPatch: (patch: Partial<RackLayer>) => void;
+  onRootNoteChange: (n: number) => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  function choosePhoto() {
+    fileInputRef.current?.click();
+  }
+
+  function onPhotoSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => onPatch({ photoDataUrl: String(reader.result) });
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div className="rack-edit-overlay" onClick={onClose}>
+      <div className="rack-edit-panel card" onClick={(e) => e.stopPropagation()}>
+        <div className="rack-edit-panel-header">
+          <span>CAMADA {String(index + 1).padStart(2, '0')} / AJUSTES</span>
+          <button className="rack-edit-close" onClick={onClose} title="Fechar">
+            <XIcon size={16} />
+          </button>
+        </div>
+
+        <div className="rack-edit-grid">
+          {/* topo-esquerda: faixa de notas, oitava, canal MIDI */}
+          <div className="rack-edit-cell">
+            <div className="rack-field">
+              <label>Nota inicial {layer.noteRangeStart} ({noteLabel(layer.noteRangeStart)})</label>
+              <input
+                type="range"
+                min={0}
+                max={127}
+                value={layer.noteRangeStart}
+                onChange={(e) => onPatch({ noteRangeStart: Math.min(Number(e.target.value), layer.noteRangeEnd) })}
+              />
+            </div>
+            <div className="rack-field">
+              <label>Nota final {layer.noteRangeEnd} ({noteLabel(layer.noteRangeEnd)})</label>
+              <input
+                type="range"
+                min={0}
+                max={127}
+                value={layer.noteRangeEnd}
+                onChange={(e) => onPatch({ noteRangeEnd: Math.max(Number(e.target.value), layer.noteRangeStart) })}
+              />
+            </div>
+            <div className="rack-field">
+              <label>Oitava {layer.octave >= 0 ? '+' : ''}{layer.octave}</label>
+              <input type="range" min={-3} max={3} value={layer.octave} onChange={(e) => onPatch({ octave: Number(e.target.value) })} />
+            </div>
+            <div className="rack-field">
+              <label>Canal MIDI (0 = todos) {layer.midiChannel}</label>
+              <input
+                type="range"
+                min={0}
+                max={16}
+                value={layer.midiChannel}
+                onChange={(e) => onPatch({ midiChannel: Number(e.target.value) })}
+              />
+            </div>
+            {layer.format === 'sampler' && (
+              <div className="rack-field">
+                <label>Nota raiz da amostra ({noteLabel(layer.rootNote)})</label>
+                <input type="range" min={0} max={127} value={layer.rootNote} onChange={(e) => onRootNoteChange(Number(e.target.value))} />
+              </div>
+            )}
+          </div>
+
+          {/* topo-direita: envelope (attack/release) + filtro (cutoff) */}
+          <div className="rack-edit-cell">
+            <ToggleHeader title="Envelope" enabled={layer.envelopeEnabled} onToggle={(v) => onPatch({ envelopeEnabled: v })} />
+            <div className="rack-field">
+              <label>Attack (ms) {Math.round(layer.attackMs)}</label>
+              <input type="range" min={0} max={2000} value={layer.attackMs} onChange={(e) => onPatch({ attackMs: Number(e.target.value) })} />
+            </div>
+            <div className="rack-field">
+              <label>Release (ms) {Math.round(layer.releaseMs)}</label>
+              <input type="range" min={0} max={5000} value={layer.releaseMs} onChange={(e) => onPatch({ releaseMs: Number(e.target.value) })} />
+            </div>
+            <div className="rack-field">
+              <div className="rack-field-label-row">
+                <label>Cutoff (Hz) {Math.round(layer.cutoffHz)}</label>
+                <ToggleHeader compact title="Filtro" enabled={layer.filterEnabled} onToggle={(v) => onPatch({ filterEnabled: v })} />
+              </div>
+              <input
+                type="range"
+                min={80}
+                max={20000}
+                step={10}
+                value={layer.cutoffHz}
+                onChange={(e) => onPatch({ cutoffHz: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-edit-hint">Cutoff: ligue o filtro e reduza os Hz para suavizar o som.</div>
+          </div>
+
+          {/* baixo-esquerda: EQ de 3 bandas */}
+          <div className="rack-edit-cell">
+            <ToggleHeader title="EQ" enabled={layer.eqEnabled} onToggle={(v) => onPatch({ eqEnabled: v })} />
+            <div className="rack-field">
+              <label>Graves (dB) {layer.eqBassDb.toFixed(2)}</label>
+              <input type="range" min={-24} max={24} step={0.5} value={layer.eqBassDb} onChange={(e) => onPatch({ eqBassDb: Number(e.target.value) })} />
+            </div>
+            <div className="rack-field">
+              <label>Médios (dB) {layer.eqMidDb.toFixed(2)}</label>
+              <input type="range" min={-24} max={24} step={0.5} value={layer.eqMidDb} onChange={(e) => onPatch({ eqMidDb: Number(e.target.value) })} />
+            </div>
+            <div className="rack-field">
+              <label>Agudos (dB) {layer.eqTrebleDb.toFixed(2)}</label>
+              <input type="range" min={-24} max={24} step={0.5} value={layer.eqTrebleDb} onChange={(e) => onPatch({ eqTrebleDb: Number(e.target.value) })} />
+            </div>
+            <div className="rack-field">
+              <label>Frequência dos médios (Hz) {Math.round(layer.eqMidFreqHz)}</label>
+              <input
+                type="range"
+                min={100}
+                max={8000}
+                step={10}
+                value={layer.eqMidFreqHz}
+                onChange={(e) => onPatch({ eqMidFreqHz: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+
+          {/* baixo-direita: drive/saturação + foto da camada */}
+          <div className="rack-edit-cell">
+            <ToggleHeader title="Drive" enabled={layer.driveEnabled} onToggle={(v) => onPatch({ driveEnabled: v })} />
+            <div className="rack-field">
+              <label>Tipo de saturação</label>
+              <select value={layer.driveType} onChange={(e) => onPatch({ driveType: e.target.value as RackDriveType })}>
+                {DRIVE_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="rack-field">
+              <label>Drive (dB) {layer.driveDb.toFixed(2)}</label>
+              <input type="range" min={0} max={24} step={0.5} value={layer.driveDb} onChange={(e) => onPatch({ driveDb: Number(e.target.value) })} />
+            </div>
+            <div className="rack-field">
+              <label>Mistura do drive {layer.driveMix.toFixed(2)}</label>
+              <input type="range" min={0} max={1} step={0.01} value={layer.driveMix} onChange={(e) => onPatch({ driveMix: Number(e.target.value) })} />
+            </div>
+            <div className="rack-edit-photo-row">
+              <button className="btn rack-photo-btn" onClick={choosePhoto}>
+                Escolher foto
+              </button>
+              <button className="btn rack-photo-btn" onClick={() => onPatch({ photoDataUrl: null })}>
+                Foto padrão
+              </button>
+              <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={onPhotoSelected} />
+              {layer.photoDataUrl && <ImageIcon size={14} style={{ opacity: 0.6 }} />}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ToggleHeader({
+  title,
+  enabled,
+  onToggle,
+  compact,
+}: {
+  title: string;
+  enabled: boolean;
+  onToggle: (v: boolean) => void;
+  compact?: boolean;
+}) {
+  return (
+    <button className={`rack-toggle-header ${enabled ? 'on' : ''} ${compact ? 'compact' : ''}`} onClick={() => onToggle(!enabled)}>
+      {title} / {enabled ? 'LIGADO' : 'DESLIGADO'}
+    </button>
   );
 }
 

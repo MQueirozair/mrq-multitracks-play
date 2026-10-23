@@ -1,23 +1,38 @@
-import { Voice, parse, type Dx7Voice } from '@audio/synth-dx7';
+import { parse } from '@audio/synth-dx7';
 import type { RackPresetOption } from '../../../shared/types';
 
-const BLOCK = 64; // tamanho fixo de bloco do motor MSFA
-const BUFFER_SIZE = 512; // múltiplo de 64; ~11,6 ms de latência em 44,1 kHz
-const FULL_SCALE = 2 ** -28; // escala do int32 bruto do motor (ver dx7.js: SCALE)
+// Pré-compilado por scripts/build-rack-worklets.cjs (esbuild) a partir de
+// src/audio/rack/worklet-src/Dx7Processor.ts, e servido como arquivo estático
+// — mesmo padrão usado pros arquivos do js-synthesizer em public/vendor/.
+// AudioWorklet exige uma URL real pra carregar o módulo; não compilamos isso
+// pelo pipeline normal do Vite porque o empacotamento de `new URL()`/`?url`
+// pra esse caso (módulo sem export usado só por efeito colateral dentro de um
+// AudioWorkletGlobalScope) não é confiável em todas as versões/consumidores
+// do Vite — pré-compilar deixa o resultado previsível em dev e produção.
+const DX7_WORKLET_URL = './vendor/dx7-worklet/dx7-processor.js';
+
+const moduleReadyByContext = new WeakMap<AudioContext, Promise<void>>();
+
+function ensureWorkletModuleReady(ctx: AudioContext): Promise<void> {
+  let ready = moduleReadyByContext.get(ctx);
+  if (!ready) {
+    ready = ctx.audioWorklet.addModule(DX7_WORKLET_URL);
+    moduleReadyByContext.set(ctx, ready);
+  }
+  return ready;
+}
 
 /**
  * Uma camada que toca um banco/voz real do Yamaha DX7 (.syx), usando o núcleo
  * FM "MSFA" (o mesmo que o Google abriu publicamente e que o Dexed usa),
- * portado bit a bit para JavaScript pelo pacote @audio/synth-dx7. Cada nota
- * tocada vira uma instância de `Voice` somada num ScriptProcessorNode — dá
- * polifonia real (uma voz FM de 6 operadores por tecla pressionada).
+ * portado bit a bit para JavaScript pelo pacote @audio/synth-dx7 — rodando
+ * dentro de um AudioWorklet (ver Dx7Processor.worklet.ts) em vez do antigo
+ * ScriptProcessorNode, pra eliminar o atraso perceptível ao tocar.
  */
 export class Dx7LayerVoice {
   private ctx: AudioContext;
-  private node: ScriptProcessorNode | null = null;
-  private voices: Dx7Voice[] = [];
-  private currentPatch: Uint8Array | null = null;
-  private active = new Map<number, Voice>();
+  private node: AudioWorkletNode | null = null;
+  private voices: { name: string; patch: Uint8Array }[] = [];
   readonly output: GainNode;
 
   constructor(ctx: AudioContext) {
@@ -26,74 +41,52 @@ export class Dx7LayerVoice {
   }
 
   async load(buffer: ArrayBuffer): Promise<RackPresetOption[]> {
+    await ensureWorkletModuleReady(this.ctx);
     this.dispose();
     const parsed = parse(new Uint8Array(buffer));
     if (parsed.length === 0) {
       throw new Error('Nenhuma voz DX7 válida foi encontrada neste arquivo .syx.');
     }
     this.voices = parsed;
-    this.currentPatch = parsed[0].patch;
-    this.setupNode();
-    return parsed.map((v, i) => ({ value: String(i), label: `${i + 1}. ${v.name}` }));
-  }
-
-  private setupNode() {
-    // ScriptProcessorNode é legado, mas funciona em todo Chromium/Electron sem
-    // exigir empacotar um módulo AudioWorklet separado — opção deliberada pela
-    // simplicidade e robustez do empacotamento multiplataforma deste app.
-    const node = this.ctx.createScriptProcessor(BUFFER_SIZE, 0, 2);
-    const blockBuf = new Int32Array(BLOCK);
-    node.onaudioprocess = (ev) => {
-      const left = ev.outputBuffer.getChannelData(0);
-      const right = ev.outputBuffer.getChannelData(1);
-      for (let offset = 0; offset < BUFFER_SIZE; offset += BLOCK) {
-        blockBuf.fill(0);
-        for (const [note, voice] of this.active) {
-          voice.block(blockBuf);
-          if (voice.done) this.active.delete(note);
-        }
-        for (let i = 0; i < BLOCK; i++) {
-          const sample = blockBuf[i] * FULL_SCALE;
-          left[offset + i] = sample;
-          right[offset + i] = sample;
-        }
-      }
-    };
+    const node = new AudioWorkletNode(this.ctx, 'dx7-processor', {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [2],
+    });
     node.connect(this.output);
     this.node = node;
+    this.selectPreset('0');
+    return parsed.map((v, i) => ({ value: String(i), label: `${i + 1}. ${v.name}` }));
   }
 
   selectPreset(value: string) {
     const idx = Number(value);
     const voice = this.voices[idx];
-    if (voice) this.currentPatch = voice.patch;
+    if (voice) this.node?.port.postMessage({ type: 'patch', patch: voice.patch });
   }
 
   noteOn(note: number, velocity: number) {
-    if (!this.node || !this.currentPatch) return;
-    this.active.delete(note); // corta a nota anterior na mesma tecla (retrigger)
-    this.active.set(note, new Voice(this.currentPatch, { note, velocity, fs: this.ctx.sampleRate }));
+    this.node?.port.postMessage({ type: 'noteOn', note, velocity });
   }
 
   noteOff(note: number) {
-    this.active.get(note)?.keyup();
+    this.node?.port.postMessage({ type: 'noteOff', note });
   }
 
   allNotesOff() {
-    for (const voice of this.active.values()) voice.keyup();
-    this.active.clear();
+    this.node?.port.postMessage({ type: 'allNotesOff' });
   }
 
   dispose() {
     if (this.node) {
-      this.node.onaudioprocess = null;
       try {
+        this.node.port.postMessage({ type: 'allNotesOff' });
         this.node.disconnect();
       } catch {
         /* já desconectado */
       }
     }
     this.node = null;
-    this.active.clear();
+    this.voices = [];
   }
 }

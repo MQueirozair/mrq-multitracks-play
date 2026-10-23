@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { Minus, Monitor, Square, X } from 'lucide-react';
 import { useStore } from '../state/useStore';
 import SessionTimer from './SessionTimer';
+import RackMidiPanel from './RackMidiPanel';
 
 export default function TitleBar() {
   const engineState = useStore((s) => s.engineState);
+  const nav = useStore((s) => s.nav);
   const [audioOk, setAudioOk] = useState(true);
   const [remoteInfo, setRemoteInfo] = useState<{ port: number; enabled: boolean } | null>(null);
   const settings = useStore((s) => s.settings);
@@ -34,6 +36,7 @@ export default function TitleBar() {
           Remoto {remoteInfo?.enabled ? `:${remoteInfo.port}` : 'desligado'}
         </div>
         {engineState.isPlaying && <div className="pill" style={{ color: 'var(--accent)' }}>▶ Tocando</div>}
+        {nav === 'rack' && <RackMidiPanel />}
         <SessionTimer />
         <button
           className={`pill stage-mode-toggle ${settings.stageMode ? 'on' : ''}`}

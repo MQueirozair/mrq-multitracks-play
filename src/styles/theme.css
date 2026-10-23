@@ -506,12 +506,6 @@ input[type="range"] { accent-color: var(--accent); }
 
 /* ---------- Rack de instrumentos (camadas ao vivo) ---------- */
 .rack-page { display: flex; gap: 12px; padding: 2px; height: 100%; overflow: auto; align-items: flex-start; }
-.rack-toolbar {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; width: 100%; margin-bottom: 2px;
-}
-.rack-toolbar .midi-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #5c2626; flex-shrink: 0; }
-.rack-toolbar .midi-status-dot.ok { background: #2f8f5a; }
-.rack-toolbar select { min-width: 220px; }
 .rack-layer-card {
   --layer-color: var(--accent);
   width: 230px; flex-shrink: 0; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-lg);
@@ -575,3 +569,73 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .rack-panic-btn:hover { filter: brightness(1.2); }
 .rack-master-legend { font-size: 9.5px; color: var(--text-2); text-align: center; margin-top: auto; }
+
+.rack-layer-art {
+  background-size: cover; background-position: center;
+}
+
+/* ---------- painel de MIDI do rack (na barra de título) ---------- */
+.rack-midi-panel-wrap { position: relative; -webkit-app-region: no-drag; }
+.rack-midi-pill { cursor: pointer; }
+.rack-midi-pill.on { border-color: var(--accent); color: var(--accent); }
+.rack-midi-popover {
+  position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  width: 260px; z-index: 50; padding: 12px; display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 10px 30px #0008; background: var(--bg-1); border: 1px solid var(--border);
+}
+.rack-midi-popover-title { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--text-1); }
+.rack-checkbox-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-1); cursor: pointer; }
+
+/* ---------- modal "Editar" por camada ---------- */
+.rack-edit-overlay {
+  position: fixed; inset: 0; background: #000a; z-index: 200;
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.rack-edit-panel {
+  width: min(780px, 100%); max-height: 86vh; overflow: auto; padding: 18px 20px;
+  background: linear-gradient(165deg, #241225, #1a0f22); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 20px 60px #000a;
+}
+.rack-edit-panel-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;
+  font-size: 13px; font-weight: 800; letter-spacing: .08em; color: var(--text-0); text-transform: uppercase;
+}
+.rack-edit-close {
+  width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-3);
+  display: flex; align-items: center; justify-content: center; color: var(--text-1);
+}
+.rack-edit-close:hover { background: #5c2626; color: #fff; }
+.rack-edit-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 18px 26px;
+  position: relative;
+}
+.rack-edit-grid::before {
+  content: ''; position: absolute; left: 50%; top: -4px; bottom: -4px; width: 1px;
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.rack-edit-cell { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
+.rack-edit-cell:nth-child(3), .rack-edit-cell:nth-child(4) {
+  border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); padding-top: 14px;
+}
+.rack-toggle-header {
+  display: block; width: 100%; text-align: center; padding: 8px 10px; border-radius: 999px; border: none;
+  background: linear-gradient(90deg, #a21f82, #7c1f9e); color: #fff; font-size: 11px; font-weight: 800;
+  letter-spacing: .06em; text-transform: uppercase; cursor: pointer;
+}
+.rack-toggle-header.on { background: linear-gradient(90deg, #2f8f5a, #1f9e7c); }
+.rack-toggle-header.compact { width: auto; padding: 3px 9px; font-size: 9px; flex-shrink: 0; }
+.rack-field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rack-field-label-row label { flex: 1; }
+.rack-edit-hint { font-size: 10px; color: var(--text-2); line-height: 1.4; }
+.rack-edit-photo-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+.rack-photo-btn {
+  flex: 1; min-width: 100px; font-size: 10.5px; padding: 7px 8px;
+  background: linear-gradient(90deg, #a21f82, #7c1f9e); border: none; color: #fff; font-weight: 700;
+}
+.rack-photo-btn:hover { filter: brightness(1.15); }
+
+@media (max-width: 680px) {
+  .rack-edit-grid { grid-template-columns: 1fr; }
+  .rack-edit-grid::before { display: none; }
+  .rack-edit-cell:nth-child(2) { border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); padding-top: 14px; }
+}

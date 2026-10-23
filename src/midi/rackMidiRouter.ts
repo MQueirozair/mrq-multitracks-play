@@ -1,4 +1,5 @@
 import { rackEngine } from '../audio/rack/RackEngine';
+import type { RackVelocityCurve } from '../../shared/types';
 
 // Roteador de MIDI dedicado ao Rack de instrumentos (camadas ao vivo). É
 // separado do midiController.ts (que só trata vínculos de ação/CC) de
@@ -10,6 +11,45 @@ let selectedInputId: string | null = null;
 const attached = new Set<MIDIInput>();
 const changeListeners = new Set<() => void>();
 
+// --- configuração "completa" do teclado MIDI físico (ver TitleBar > painel MIDI) ---
+let velocityCurve: RackVelocityCurve = 'linear';
+let transpose = 0;
+let sustainEnabled = true;
+let sustainDown = false;
+/** notas (já transpostas) soltas fisicamente enquanto o pedal estava pressionado */
+const heldBySustain = new Set<number>();
+
+export function setRackVelocityCurve(curve: RackVelocityCurve) {
+  velocityCurve = curve;
+}
+
+export function setRackTranspose(semitones: number) {
+  transpose = semitones;
+}
+
+export function setRackSustainEnabled(enabled: boolean) {
+  sustainEnabled = enabled;
+  if (!enabled && sustainDown) releaseSustainedNotes();
+}
+
+function applyVelocityCurve(v: number): number {
+  const n = Math.max(1, Math.min(127, v)) / 127;
+  switch (velocityCurve) {
+    case 'soft': // comprime velocidades baixas (resposta mais "macia")
+      return Math.max(1, Math.round(127 * Math.pow(n, 1.6)));
+    case 'hard': // realça velocidades baixas (resposta mais "sensível"/dura)
+      return Math.max(1, Math.round(127 * Math.pow(n, 0.6)));
+    case 'linear':
+    default:
+      return v;
+  }
+}
+
+function releaseSustainedNotes() {
+  for (const note of heldBySustain) rackEngine.noteOff(note);
+  heldBySustain.clear();
+}
+
 export function onRackMidiDevicesChanged(cb: () => void): () => void {
   changeListeners.add(cb);
   return () => changeListeners.delete(cb);
@@ -19,13 +59,40 @@ function handleMessage(ev: MIDIMessageEvent) {
   const data = ev.data;
   if (!data || data.length < 2) return;
   const command = data[0] & 0xf0;
-  const note = data[1];
-  const velocity = data[2] ?? 0;
-  if (command === 0x90) {
-    if (velocity > 0) rackEngine.noteOn(note, velocity);
-    else rackEngine.noteOff(note);
-  } else if (command === 0x80) {
-    rackEngine.noteOff(note);
+  const channel = (data[0] & 0x0f) + 1; // canal MIDI "humano", 1-16
+
+  if (command === 0xb0) {
+    // Control Change — só nos interessa o pedal de sustain (CC 64) aqui.
+    const controller = data[1];
+    const value = data[2] ?? 0;
+    if (controller === 64 && sustainEnabled) {
+      const down = value >= 64;
+      if (down && !sustainDown) {
+        sustainDown = true;
+      } else if (!down && sustainDown) {
+        sustainDown = false;
+        releaseSustainedNotes();
+      }
+    }
+    return;
+  }
+
+  if (command !== 0x90 && command !== 0x80) return;
+  const rawNote = data[1];
+  const rawVelocity = data[2] ?? 0;
+  const note = rawNote + transpose;
+  if (note < 0 || note > 127) return;
+
+  const isNoteOn = command === 0x90 && rawVelocity > 0;
+  if (isNoteOn) {
+    heldBySustain.delete(note);
+    rackEngine.noteOn(note, applyVelocityCurve(rawVelocity), channel);
+  } else {
+    if (sustainDown && sustainEnabled) {
+      heldBySustain.add(note);
+    } else {
+      rackEngine.noteOff(note, channel);
+    }
   }
 }
 

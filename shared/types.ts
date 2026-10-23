@@ -173,7 +173,7 @@ export interface MidiBinding {
  *                Clavia nunca o documentou publicamente — então não é seguro
  *                decodificá-lo aqui; ver RackLayer.rejectedNpno.
  */
-export type RackLayerFormat = 'sf2' | 'dx7' | 'sampler';
+export type RackLayerFormat = 'sf2' | 'dx7' | 'sampler' | 'npno';
 
 /** Ajuste rápido de timbre por camada (filtro + curva de velocidade, não altera o arquivo original). */
 export type RackCharacter = 'original' | 'soft' | 'bright' | 'warm';
@@ -183,6 +183,9 @@ export interface RackPresetOption {
   value: string;
   label: string;
 }
+
+/** Tipo de saturação/drive aplicado por camada no painel "Editar". */
+export type RackDriveType = 'warm' | 'hard' | 'tube';
 
 export interface RackLayer {
   id: string;
@@ -202,7 +205,45 @@ export interface RackLayer {
   solo: boolean;
   /** nota MIDI em que a amostra foi gravada (só usado no formato 'sampler') */
   rootNote: number;
+  /** imagem customizada do card (data URL), escolhida no painel "Editar"; null = ícone padrão */
+  photoDataUrl: string | null;
+
+  // --- painel "Editar" (ver InstrumentRack.tsx: <LayerEditPanel>) ---
+  /** nota MIDI mais grave que esta camada responde (0-127) */
+  noteRangeStart: number;
+  /** nota MIDI mais aguda que esta camada responde (0-127) */
+  noteRangeEnd: number;
+  /** transposição em oitavas aplicada só a esta camada (-3..3) */
+  octave: number;
+  /** canal MIDI de entrada que esta camada escuta; 0 = todos os canais */
+  midiChannel: number;
+
+  /** envelope de amplitude da camada (fade ao ligar/desligar notas, somado ao envelope nativo do motor) */
+  envelopeEnabled: boolean;
+  attackMs: number;
+  releaseMs: number;
+
+  /** filtro passa-baixa estático da camada (independente do "Caráter") */
+  filterEnabled: boolean;
+  cutoffHz: number;
+
+  /** equalizador de 3 bandas da camada */
+  eqEnabled: boolean;
+  eqBassDb: number;
+  eqMidDb: number;
+  eqTrebleDb: number;
+  eqMidFreqHz: number;
+
+  /** saturação/drive da camada */
+  driveEnabled: boolean;
+  driveType: RackDriveType;
+  driveDb: number;
+  /** mistura seco/processado, 0..1 */
+  driveMix: number;
 }
+
+/** Curva de resposta de velocidade aplicada à entrada MIDI física inteira do rack. */
+export type RackVelocityCurve = 'linear' | 'soft' | 'hard';
 
 export interface InstrumentRackState {
   layers: RackLayer[];
@@ -212,6 +253,12 @@ export interface InstrumentRackState {
   reverb: number;
   /** id do dispositivo MIDI físico escolhido para tocar o rack, ou null = todos conectados */
   midiInputId: string | null;
+  /** curva de resposta de velocidade do teclado físico conectado */
+  velocityCurve: RackVelocityCurve;
+  /** transposição global (semitons) aplicada à entrada MIDI física antes de chegar nas camadas */
+  transpose: number;
+  /** se true, segura as notas liberadas enquanto o pedal de sustain (CC64) estiver pressionado */
+  sustainEnabled: boolean;
 }
 
 export interface AppSettings {
@@ -247,6 +294,25 @@ function emptyRackLayer(id: string, color: string): RackLayer {
     muted: false,
     solo: false,
     rootNote: 60,
+    photoDataUrl: null,
+    noteRangeStart: 0,
+    noteRangeEnd: 127,
+    octave: 0,
+    midiChannel: 0,
+    envelopeEnabled: false,
+    attackMs: 5,
+    releaseMs: 350,
+    filterEnabled: false,
+    cutoffHz: 20000,
+    eqEnabled: false,
+    eqBassDb: 0,
+    eqMidDb: 0,
+    eqTrebleDb: 0,
+    eqMidFreqHz: 1000,
+    driveEnabled: false,
+    driveType: 'warm',
+    driveDb: 0,
+    driveMix: 1,
   };
 }
 
@@ -260,6 +326,9 @@ export const DEFAULT_RACK_STATE: InstrumentRackState = {
   masterVolume: 0.8,
   reverb: 0,
   midiInputId: null,
+  velocityCurve: 'linear',
+  transpose: 0,
+  sustainEnabled: true,
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {
