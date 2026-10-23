@@ -529,11 +529,11 @@ function LayerCard({
       <LayerMeter index={index} active={hasInstrument} />
 
       <div className="rack-bottom-row">
-        <button className="btn" onClick={onLoad}>
+        <button className="btn rack-load-btn" onClick={onLoad}>
           Carregar
         </button>
         <button className="btn rack-x-btn" onClick={onClear} title="Remover instrumento desta camada">
-          X
+          <XIcon size={14} strokeWidth={2.5} />
         </button>
       </div>
 

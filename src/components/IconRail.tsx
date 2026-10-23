@@ -1,4 +1,4 @@
-import { Library, ListMusic, LayoutGrid, AudioWaveform, Timer, FileText, Volume2, Hash, Mic, Piano, Layers, Settings } from 'lucide-react';
+import { Library, ListMusic, LayoutGrid, AudioWaveform, Timer, FileText, Volume2, Hash, Mic, Piano, Layers, Settings, HelpCircle } from 'lucide-react';
 import type { NavId } from '../state/useStore';
 import { useStore } from '../state/useStore';
 
@@ -33,6 +33,13 @@ export default function IconRail({ onOpenSettings }: { onOpenSettings: () => voi
         </button>
       ))}
       <div className="rail-spacer" />
+      <button
+        className={`rail-btn ${nav === 'help' ? 'active' : ''}`}
+        title="Ajuda / Sobre o MRQ"
+        onClick={() => setNav('help')}
+      >
+        <HelpCircle size={19} strokeWidth={2} />
+      </button>
       <button className="rail-btn" title="Configurações" onClick={onOpenSettings}>
         <Settings size={19} strokeWidth={2} />
       </button>

@@ -13,6 +13,7 @@ import MidiPanel from './components/MidiPanel';
 import SettingsModal from './components/SettingsModal';
 import MidiBridge from './components/MidiBridge';
 import InstrumentRack from './components/InstrumentRack';
+import HelpPanel from './components/HelpPanel';
 
 export default function App() {
   const ready = useStore((s) => s.ready);
@@ -53,6 +54,8 @@ export default function App() {
           <div className="content-main">
             {nav === 'rack' ? (
               <InstrumentRack />
+            ) : nav === 'help' ? (
+              <HelpPanel />
             ) : loadingSongTitle ? (
               <div className="empty-state">
                 <div className="spinner" />

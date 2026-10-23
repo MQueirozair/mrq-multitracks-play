@@ -31,7 +31,8 @@ export type NavId =
   | 'key'
   | 'guide'
   | 'midi'
-  | 'rack';
+  | 'rack'
+  | 'help';
 
 interface Toast {
   id: string;
