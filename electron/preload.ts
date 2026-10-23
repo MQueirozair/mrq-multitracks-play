@@ -26,6 +26,7 @@ const api = {
       ipcRenderer.invoke('fs:scanFolderTracks', folderPath),
     toFileUrl: (filePath: string): Promise<string> => ipcRenderer.invoke('fs:toFileUrl', filePath),
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke('fs:openExternal', url),
+    chooseInstrumentFile: (): Promise<string | null> => ipcRenderer.invoke('fs:chooseInstrumentFile'),
   },
   net: {
     localAddresses: (): Promise<string[]> => ipcRenderer.invoke('net:localAddresses'),

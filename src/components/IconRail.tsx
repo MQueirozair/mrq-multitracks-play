@@ -1,4 +1,4 @@
-import { Library, ListMusic, LayoutGrid, AudioWaveform, Timer, FileText, Volume2, Hash, Mic, Piano, Settings } from 'lucide-react';
+import { Library, ListMusic, LayoutGrid, AudioWaveform, Timer, FileText, Volume2, Hash, Mic, Piano, Layers, Settings } from 'lucide-react';
 import type { NavId } from '../state/useStore';
 import { useStore } from '../state/useStore';
 
@@ -13,6 +13,7 @@ const ITEMS: { id: NavId; icon: typeof Library; label: string }[] = [
   { id: 'key', icon: Hash, label: 'Tom' },
   { id: 'guide', icon: Mic, label: 'Voz guia' },
   { id: 'midi', icon: Piano, label: 'MIDI' },
+  { id: 'rack', icon: Layers, label: 'Rack de instrumentos' },
 ];
 
 export default function IconRail({ onOpenSettings }: { onOpenSettings: () => void }) {

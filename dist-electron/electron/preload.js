@@ -18,6 +18,7 @@ const api = {
         scanFolderTracks: (folderPath) => electron_1.ipcRenderer.invoke('fs:scanFolderTracks', folderPath),
         toFileUrl: (filePath) => electron_1.ipcRenderer.invoke('fs:toFileUrl', filePath),
         openExternal: (url) => electron_1.ipcRenderer.invoke('fs:openExternal', url),
+        chooseInstrumentFile: () => electron_1.ipcRenderer.invoke('fs:chooseInstrumentFile'),
     },
     net: {
         localAddresses: () => electron_1.ipcRenderer.invoke('net:localAddresses'),

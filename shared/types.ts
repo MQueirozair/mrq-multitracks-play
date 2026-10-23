@@ -161,6 +161,59 @@ export interface MidiBinding {
   partType?: PartType;
 }
 
+/**
+ * Rack de instrumentos "ao vivo" (4 camadas simultâneas tocadas por um teclado
+ * MIDI físico). Cada camada carrega um arquivo de instrumento real do usuário:
+ *  - 'sf2'     → SoundFont real (.sf2/.sf3), tocado via motor FluidSynth (WASM).
+ *  - 'dx7'     → Banco/voz real de FM Yamaha DX7 (.syx), via núcleo MSFA (o mesmo
+ *                motor que o Google abriu publicamente e que o Dexed usa).
+ *  - 'sampler' → Amostra de áudio do próprio usuário (.wav/.aiff/.flac/.ogg),
+ *                usada como "piano por amostra". Existe porque o formato .npno
+ *                da Nord Piano Library é proprietário e criptografado — a própria
+ *                Clavia nunca o documentou publicamente — então não é seguro
+ *                decodificá-lo aqui; ver RackLayer.rejectedNpno.
+ */
+export type RackLayerFormat = 'sf2' | 'dx7' | 'sampler';
+
+/** Ajuste rápido de timbre por camada (filtro + curva de velocidade, não altera o arquivo original). */
+export type RackCharacter = 'original' | 'soft' | 'bright' | 'warm';
+
+export interface RackPresetOption {
+  /** para sf2: "banco:programa"; para dx7: índice da voz no banco; para sampler: não usado */
+  value: string;
+  label: string;
+}
+
+export interface RackLayer {
+  id: string;
+  /** cor de destaque do cabeçalho da camada (combina com o print de referência) */
+  color: string;
+  format: RackLayerFormat | null;
+  filePath: string | null;
+  fileName: string | null;
+  /** nome do instrumento/timbre carregado, mostrado em destaque no card */
+  displayName: string | null;
+  presets: RackPresetOption[];
+  selectedPreset: string | null;
+  character: RackCharacter;
+  /** 0..1 */
+  volume: number;
+  muted: boolean;
+  solo: boolean;
+  /** nota MIDI em que a amostra foi gravada (só usado no formato 'sampler') */
+  rootNote: number;
+}
+
+export interface InstrumentRackState {
+  layers: RackLayer[];
+  /** 0..1 */
+  masterVolume: number;
+  /** 0..1 */
+  reverb: number;
+  /** id do dispositivo MIDI físico escolhido para tocar o rack, ou null = todos conectados */
+  midiInputId: string | null;
+}
+
 export interface AppSettings {
   outputDeviceId: string | null;
   outputChannelCount: number;
@@ -176,7 +229,38 @@ export interface AppSettings {
   };
   /** tema de alto contraste / fontes maiores, pensado para telas de palco com pouca luz */
   stageMode: boolean;
+  rack: InstrumentRackState;
 }
+
+function emptyRackLayer(id: string, color: string): RackLayer {
+  return {
+    id,
+    color,
+    format: null,
+    filePath: null,
+    fileName: null,
+    displayName: null,
+    presets: [],
+    selectedPreset: null,
+    character: 'original',
+    volume: 0.7,
+    muted: false,
+    solo: false,
+    rootNote: 60,
+  };
+}
+
+export const DEFAULT_RACK_STATE: InstrumentRackState = {
+  layers: [
+    emptyRackLayer('camada-1', '#d6455d'),
+    emptyRackLayer('camada-2', '#2fb8c6'),
+    emptyRackLayer('camada-3', '#8a5fd6'),
+    emptyRackLayer('camada-4', '#d6b23c'),
+  ],
+  masterVolume: 0.8,
+  reverb: 0,
+  midiInputId: null,
+};
 
 export const DEFAULT_SETTINGS: AppSettings = {
   outputDeviceId: null,
@@ -211,6 +295,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     outOfOrderBehavior: 'keep',
   },
   stageMode: false,
+  rack: DEFAULT_RACK_STATE,
 };
 
 export const PART_COLORS: Record<PartType, string> = {

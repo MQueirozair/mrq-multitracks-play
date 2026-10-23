@@ -1,8 +1,10 @@
 import { create } from 'zustand';
 import type {
   AppSettings,
+  InstrumentRackState,
   Library,
   MidiBinding,
+  RackLayer,
   Scene,
   Song,
   SongArrangement,
@@ -28,7 +30,8 @@ export type NavId =
   | 'outputs'
   | 'key'
   | 'guide'
-  | 'midi';
+  | 'midi'
+  | 'rack';
 
 interface Toast {
   id: string;
@@ -113,6 +116,8 @@ interface StoreState {
   toggleLoopActivePart: () => void;
 
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
+  updateRack: (patch: Partial<InstrumentRackState>) => void;
+  updateRackLayer: (index: number, patch: Partial<RackLayer>) => void;
   addMidiBinding: (binding: MidiBinding) => void;
   removeMidiBinding: (predicate: (b: MidiBinding) => boolean) => void;
 
@@ -802,6 +807,15 @@ export const useStore = create<StoreState>((set, get) => ({
       padEngine.setOutput(settings.pad.output);
       padEngine.setBreatheSeconds(settings.pad.loopCrossfadeSec);
     }
+  },
+
+  updateRack: (patch) => {
+    const rack = { ...get().settings.rack, ...patch };
+    get().updateSettings({ rack });
+  },
+  updateRackLayer: (index, patch) => {
+    const layers = get().settings.rack.layers.map((l, i) => (i === index ? { ...l, ...patch } : l));
+    get().updateRack({ layers });
   },
 
   addMidiBinding: (binding) => {

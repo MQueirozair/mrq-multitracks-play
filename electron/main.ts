@@ -353,7 +353,14 @@ ipcMain.handle('store:saveLibrary', (_e, library: Library) => {
   store.set('library', library);
   return true;
 });
-ipcMain.handle('store:getSettings', () => store.get('settings'));
+ipcMain.handle('store:getSettings', () => {
+  // Faz merge raso com os valores padrão: o `defaults` do electron-store só entra em
+  // ação quando a chave inteira "settings" não existe (1º uso). Em instalações que já
+  // tinham configurações salvas de versões antigas, campos novos adicionados depois
+  // (ex: "rack", nesta versão) ficariam `undefined` e quebrariam a tela que os usa.
+  const stored = store.get('settings');
+  return { ...DEFAULT_SETTINGS, ...stored, rack: { ...DEFAULT_SETTINGS.rack, ...(stored?.rack ?? {}) } };
+});
 ipcMain.handle('store:saveSettings', (_e, settings: AppSettings) => {
   store.set('settings', settings);
   if (remoteServer) {
@@ -390,6 +397,32 @@ ipcMain.handle('fs:scanFolderTracks', async (_e, folderPath: string) => {
 
 ipcMain.handle('fs:toFileUrl', (_e, filePath: string) => {
   return 'mrqfile://local-file/' + encodeURIComponent(filePath);
+});
+
+// Seletor de arquivo de instrumento para o Rack ao vivo (4 camadas). Aceita
+// SoundFont (.sf2/.sf3), banco/voz DX7 (.syx) e amostra de áudio do usuário
+// (.wav/.aiff/.flac/.ogg) num único diálogo — o formato real é detectado pela
+// extensão escolhida, não pelo filtro usado. ".npno" (Nord Piano Library) é
+// listado só pra o usuário conseguir enxergar o arquivo na pasta dele, mas o
+// app recusa com uma mensagem explicando o motivo (ver RackLayer no shared/types.ts).
+ipcMain.handle('fs:chooseInstrumentFile', async () => {
+  // Atalho apenas para testes automatizados (E2E) em ambientes sem interação gráfica
+  // real, ex: sandbox CI — mesmo padrão do MRQ_TEST_FOLDER acima. Nunca ativado em uso normal.
+  if (process.env.MRQ_TEST_INSTRUMENT_FILE) return process.env.MRQ_TEST_INSTRUMENT_FILE;
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ['openFile'],
+    title: 'Escolha o arquivo do instrumento',
+    filters: [
+      { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3'] },
+      { name: 'SoundFont (.sf2, .sf3)', extensions: ['sf2', 'sf3'] },
+      { name: 'Banco DX7 (.syx)', extensions: ['syx'] },
+      { name: 'Amostra de áudio (.wav, .aiff, .flac, .ogg, .mp3)', extensions: ['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3'] },
+      { name: 'Nord Piano Library (.npno) — não suportado, ver aviso no app', extensions: ['npno'] },
+      { name: 'Todos os arquivos', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
 });
 
 ipcMain.handle('fs:openExternal', (_e, url: string) => shell.openExternal(url));

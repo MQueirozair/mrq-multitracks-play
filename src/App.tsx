@@ -12,6 +12,7 @@ import GuideVoicePanel from './components/GuideVoicePanel';
 import MidiPanel from './components/MidiPanel';
 import SettingsModal from './components/SettingsModal';
 import MidiBridge from './components/MidiBridge';
+import InstrumentRack from './components/InstrumentRack';
 
 export default function App() {
   const ready = useStore((s) => s.ready);
@@ -50,7 +51,9 @@ export default function App() {
         {showSecondary && (nav === 'library' ? <LibraryPanel /> : <SetlistPanel />)}
         <div className="content-area">
           <div className="content-main">
-            {loadingSongTitle ? (
+            {nav === 'rack' ? (
+              <InstrumentRack />
+            ) : loadingSongTitle ? (
               <div className="empty-state">
                 <div className="spinner" />
                 <h3>Abrindo "{loadingSongTitle}"…</h3>

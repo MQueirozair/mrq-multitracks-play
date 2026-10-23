@@ -1,9 +1,37 @@
 "use strict";
 // Tipos compartilhados entre o processo principal (Electron/Node) e a interface (renderer).
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NOTE_NAMES = exports.PART_COLORS = exports.DEFAULT_SETTINGS = void 0;
+exports.NOTE_NAMES = exports.PART_COLORS = exports.DEFAULT_SETTINGS = exports.DEFAULT_RACK_STATE = void 0;
 exports.semitoneDistance = semitoneDistance;
 exports.normalizeNote = normalizeNote;
+function emptyRackLayer(id, color) {
+    return {
+        id,
+        color,
+        format: null,
+        filePath: null,
+        fileName: null,
+        displayName: null,
+        presets: [],
+        selectedPreset: null,
+        character: 'original',
+        volume: 0.7,
+        muted: false,
+        solo: false,
+        rootNote: 60,
+    };
+}
+exports.DEFAULT_RACK_STATE = {
+    layers: [
+        emptyRackLayer('camada-1', '#d6455d'),
+        emptyRackLayer('camada-2', '#2fb8c6'),
+        emptyRackLayer('camada-3', '#8a5fd6'),
+        emptyRackLayer('camada-4', '#d6b23c'),
+    ],
+    masterVolume: 0.8,
+    reverb: 0,
+    midiInputId: null,
+};
 exports.DEFAULT_SETTINGS = {
     outputDeviceId: null,
     outputChannelCount: 2,
@@ -37,6 +65,7 @@ exports.DEFAULT_SETTINGS = {
         outOfOrderBehavior: 'keep',
     },
     stageMode: false,
+    rack: exports.DEFAULT_RACK_STATE,
 };
 exports.PART_COLORS = {
     Intro: '#2f6f6a',
