@@ -60,9 +60,19 @@
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
-      "package.json"
+      "package.json",
+      "!dist/mac/**",
+      "!dist/mac-arm64/**",
+      "!dist/win-unpacked/**",
+      "!dist/*.exe",
+      "!dist/*.exe.blockmap",
+      "!dist/*.zip",
+      "!dist/*.zip.blockmap",
+      "!dist/*.yml",
+      "!dist/builder-*.yml"
     ],
     "directories": {
+      "output": "release",
       "buildResources": "appResources"
     },
     "win": {
