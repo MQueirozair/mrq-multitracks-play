@@ -12,7 +12,7 @@ import type {
   SongTrack,
   TrackRole,
 } from '../../shared/types';
-import { DEFAULT_SETTINGS, PART_COLORS } from '../../shared/types';
+import { DEFAULT_SETTINGS, PART_COLORS, migrateRackLayers } from '../../shared/types';
 import { newId } from '../lib/id';
 import { engine, padEngine } from '../audio/engineInstance';
 import { combinePeaks, computePeaks, decodeForAnalysis, yieldToBrowser } from '../audio/waveform';
@@ -297,7 +297,15 @@ export const useStore = create<StoreState>((set, get) => ({
   loadingSongId: null,
 
   init: async () => {
-    const [library, settings] = await Promise.all([window.api.store.getLibrary(), window.api.store.getSettings()]);
+    const [library, loadedSettings] = await Promise.all([window.api.store.getLibrary(), window.api.store.getSettings()]);
+    // Migração: sessões salvas antes do Rack passar a ter 6 camadas (era 4)
+    // só têm 4 entradas em settings.rack.layers — completa com camadas vazias
+    // em vez de travar/cortar o que o usuário já tinha configurado (no-op se
+    // já tiver as 6 camadas).
+    const settings = {
+      ...loadedSettings,
+      rack: { ...loadedSettings.rack, layers: migrateRackLayers(loadedSettings.rack.layers) },
+    };
     set({ library, settings, ready: true });
     padEngine.setOutput(settings.pad.output);
     padEngine.setBreatheSeconds(settings.pad.loopCrossfadeSec);

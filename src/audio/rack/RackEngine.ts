@@ -1,10 +1,12 @@
 import type { RackCharacter, RackDriveType, RackLayerFormat, RackPresetOption } from '../../../shared/types';
+import { RACK_LAYER_COUNT } from '../../../shared/types';
 import { Sf2LayerVoice } from './Sf2LayerVoice';
 import { Dx7LayerVoice } from './Dx7LayerVoice';
 import { SamplerLayerVoice } from './SamplerLayerVoice';
 import { NpnoLayerVoice } from './NpnoLayerVoice';
+import { NkiLayerVoice } from './NkiLayerVoice';
 
-type AnyLayerVoice = Sf2LayerVoice | Dx7LayerVoice | SamplerLayerVoice | NpnoLayerVoice;
+type AnyLayerVoice = Sf2LayerVoice | Dx7LayerVoice | SamplerLayerVoice | NpnoLayerVoice | NkiLayerVoice;
 
 /**
  * Vozes que suportam pitch bend em tempo real (afeta as notas já soando, não
@@ -28,10 +30,12 @@ const SF2_EXT = new Set(['sf2', 'sf3']);
 const DX7_EXT = new Set(['syx']);
 const SAMPLE_EXT = new Set(['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3']);
 const NPNO_EXT = new Set(['npno']);
+const NKI_EXT = new Set(['nki']);
 
 export function detectRackFormat(fileName: string): RackLayerFormat | null {
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
   if (NPNO_EXT.has(ext)) return 'npno';
+  if (NKI_EXT.has(ext)) return 'nki';
   if (SF2_EXT.has(ext)) return 'sf2';
   if (DX7_EXT.has(ext)) return 'dx7';
   if (SAMPLE_EXT.has(ext)) return 'sampler';
@@ -257,7 +261,7 @@ export class RackEngine {
     this.reverbWetGain = reverbWetGain;
 
     this.layers = [];
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < RACK_LAYER_COUNT; i++) {
       this.layers.push(this.createLayerRuntime(ctx, masterGain, reverbBus));
     }
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
@@ -431,7 +435,8 @@ export class RackEngine {
     index: number,
     buffer: ArrayBuffer,
     format: RackLayerFormat,
-    rootNote = 60
+    rootNote = 60,
+    sourcePath?: string
   ): Promise<RackPresetOption[]> {
     const ctx = this.context;
     const layer = this.layers[index];
@@ -450,6 +455,10 @@ export class RackEngine {
     } else if (format === 'npno') {
       const v = new NpnoLayerVoice(ctx);
       presets = await v.load(buffer);
+      voice = v;
+    } else if (format === 'nki') {
+      const v = new NkiLayerVoice(ctx);
+      presets = await v.load(buffer, sourcePath);
       voice = v;
     } else {
       const v = new SamplerLayerVoice(ctx);

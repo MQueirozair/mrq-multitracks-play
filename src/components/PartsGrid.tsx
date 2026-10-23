@@ -19,7 +19,7 @@ export default function PartsGrid({ song, activePartId, pendingPartId, loopActiv
         title="Repetir a parte ativa"
         onClick={onToggleLoop}
       >
-        <Repeat size={22} />
+        <Repeat size={17} />
       </button>
       {song.parts.map((part, i) => (
         <button

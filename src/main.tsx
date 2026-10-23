@@ -7,7 +7,8 @@ import { engine } from './audio/engineInstance';
 
 // Ganchos de depuração, úteis para suporte/diagnóstico (ex: via DevTools).
 // Não afetam o funcionamento normal do app.
-(window as any).__mrqDebug = { useStore, engine };
+import { rackEngine } from './audio/rack/RackEngine';
+(window as any).__mrqDebug = { useStore, engine, rackEngine };
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

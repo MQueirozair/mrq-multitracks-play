@@ -41,7 +41,7 @@ export async function reloadLayerFromDisk(
   const res = await fetch(url);
   if (!res.ok) throw new Error('arquivo não encontrado no disco');
   const buffer = await res.arrayBuffer();
-  const presets = await rackEngine.loadLayer(index, buffer, format, layer.rootNote);
+  const presets = await rackEngine.loadLayer(index, buffer, format, layer.rootNote, filePath);
   const presetToUse = layer.selectedPreset ?? (presets.length ? presets[0].value : null);
   if (presetToUse) rackEngine.selectPreset(index, presetToUse);
   applyLayerParamsToEngine(index, layer);

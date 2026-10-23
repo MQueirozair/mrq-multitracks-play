@@ -162,7 +162,7 @@ export interface MidiBinding {
 }
 
 /**
- * Rack de instrumentos "ao vivo" (4 camadas simultâneas tocadas por um teclado
+ * Rack de instrumentos "ao vivo" (6 camadas simultâneas tocadas por um teclado
  * MIDI físico). Cada camada carrega um arquivo de instrumento real do usuário:
  *  - 'sf2'     → SoundFont real (.sf2/.sf3), tocado via motor FluidSynth (WASM).
  *  - 'dx7'     → Banco/voz real de FM Yamaha DX7 (.syx), via núcleo MSFA (o mesmo
@@ -176,8 +176,16 @@ export interface MidiBinding {
  *                Rust "nord-format" compilado pra WebAssembly — ver NpnoLayerVoice.ts.
  *                Projeto comunitário/não-oficial (a Clavia nunca documentou o
  *                formato publicamente), mas decodifica o layout real do arquivo.
+ *  - 'nki'     → Instrumento Kontakt real (.nki), decodificado de fato (samples +
+ *                mapeamento de zonas/grupos por nota e velocidade) via parser
+ *                próprio — ver NkiLayerVoice.ts. Só cobre Kontakt 1 a 4 (formato
+ *                documentado publicamente, sem criptografia); bibliotecas
+ *                comerciais modernas (Kontakt 4.2.2+) usam um formato
+ *                criptografado pela própria Native Instruments e dão erro claro
+ *                em vez de tentar (e falhar) decodificar.
  */
-export type RackLayerFormat = 'sf2' | 'dx7' | 'sampler' | 'npno';
+export type RackLayerFormat = 'sf2' | 'dx7' | 'sampler' | 'npno' | 'nki';
+
 
 /** Ajuste rápido de timbre por camada (filtro + curva de velocidade, não altera o arquivo original). */
 export type RackCharacter = 'original' | 'soft' | 'bright' | 'warm';
@@ -311,7 +319,7 @@ export interface AppSettings {
   rack: InstrumentRackState;
 }
 
-function emptyRackLayer(id: string, color: string): RackLayer {
+export function emptyRackLayer(id: string, color: string): RackLayer {
   return {
     id,
     color,
@@ -349,12 +357,17 @@ function emptyRackLayer(id: string, color: string): RackLayer {
   };
 }
 
+/** Quantidade de camadas do Rack de instrumentos — única fonte da verdade, usada tanto pro estado inicial quanto pelo motor de áudio (RackEngine). */
+export const RACK_LAYER_COUNT = 6;
+
 export const DEFAULT_RACK_STATE: InstrumentRackState = {
   layers: [
     emptyRackLayer('camada-1', '#d6455d'),
     emptyRackLayer('camada-2', '#2fb8c6'),
     emptyRackLayer('camada-3', '#8a5fd6'),
     emptyRackLayer('camada-4', '#d6b23c'),
+    emptyRackLayer('camada-5', '#4fae5e'),
+    emptyRackLayer('camada-6', '#d6782e'),
   ],
   masterVolume: 0.8,
   reverb: 0,
@@ -365,6 +378,22 @@ export const DEFAULT_RACK_STATE: InstrumentRackState = {
   bufferFrames: 0,
   scenes: [],
 };
+
+/**
+ * Migra o array de camadas do Rack salvo de uma sessão anterior (ex.: só 4
+ * camadas, de antes do app passar a ter RACK_LAYER_COUNT=6) pra ter sempre
+ * RACK_LAYER_COUNT entradas — preservando intactas as camadas já existentes
+ * (instrumento carregado, EQ, etc.) e só completando o restante com camadas
+ * vazias, nunca descartando configuração do usuário.
+ */
+export function migrateRackLayers(layers: RackLayer[]): RackLayer[] {
+  if (layers.length === RACK_LAYER_COUNT) return layers;
+  const next = layers.slice(0, RACK_LAYER_COUNT);
+  for (let i = next.length; i < RACK_LAYER_COUNT; i++) {
+    next.push(DEFAULT_RACK_STATE.layers[i] ?? emptyRackLayer(`camada-${i + 1}`, '#888888'));
+  }
+  return next;
+}
 
 export const DEFAULT_SETTINGS: AppSettings = {
   outputDeviceId: null,

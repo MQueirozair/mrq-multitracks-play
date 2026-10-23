@@ -1,10 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { AudioLines, Copy, Image as ImageIcon, Piano, Plus, RotateCcw, Volume2, X as XIcon } from 'lucide-react';
+import {
+  AudioLines,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Image as ImageIcon,
+  Piano,
+  Plus,
+  RotateCcw,
+  Volume2,
+  X as XIcon,
+} from 'lucide-react';
 import { useStore } from '../state/useStore';
 import type { RackCharacter, RackDriveType, RackLayer, RackLayerFormat, RackScene } from '../../shared/types';
 import { rackEngine, detectRackFormat } from '../audio/rack/RackEngine';
 import { applyLayerParamsToEngine, reloadAllRackLayers, reloadLayerFromDisk as reloadLayerFromDiskShared } from '../audio/rack/rackReload';
 import { onRackProgramChange, onRackRawNoteOn } from '../midi/rackMidiRouter';
+import TransportBar from './TransportBar';
+import PartsGrid from './PartsGrid';
 
 const DEFAULT_LAYER_FX: Partial<RackLayer> = {
   envelopeEnabled: false,
@@ -42,6 +55,7 @@ const FORMAT_BADGE: Record<RackLayerFormat, string> = {
   dx7: 'FM YAMAHA / DX7',
   sampler: 'PIANO / AMOSTRA',
   npno: 'PIANO NORD / NPNO',
+  nki: 'KONTAKT 1-4 / NKI',
 };
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -342,6 +356,7 @@ export default function InstrumentRack() {
         onDeleteScene={handleDeleteScene}
       />
     </div>
+    <RackMusicPanel />
     <RackKeyboardStrip layers={rack.layers} />
     {sceneNameDraft !== null && (
       <SceneNameModal initialName={sceneNameDraft} onConfirm={confirmSaveScene} onCancel={() => setSceneNameDraft(null)} />
@@ -537,6 +552,55 @@ function LayerCard({
   );
 }
 
+/**
+ * Painel de música dentro da aba Rack: deixa tocar/pausar/parar a música do
+ * Setlist e pular entre as partes sem precisar sair pra aba de reprodução —
+ * essencial pra quem está tocando ao vivo usando os instrumentos do Rack mas
+ * ainda precisa comandar a faixa/backing track. Reaproveita TransportBar e
+ * PartsGrid (mesmos componentes da aba de reprodução) e tem botão próprio
+ * pra minimizar e economizar espaço de tela.
+ */
+function RackMusicPanel() {
+  const currentSong = useStore((s) => s.currentSong);
+  const engineState = useStore((s) => s.engineState);
+  const jumpToPart = useStore((s) => s.jumpToPart);
+  const toggleLoopActivePart = useStore((s) => s.toggleLoopActivePart);
+  const [collapsed, setCollapsed] = useState(false);
+
+  return (
+    <div className={`rack-music-panel ${collapsed ? 'collapsed' : ''}`}>
+      <div className="rack-strip-header">
+        <span className="rack-strip-title">
+          <Piano size={14} /> Música {currentSong ? `— ${currentSong.title}` : ''}
+        </span>
+        <button
+          className="rack-strip-toggle"
+          title={collapsed ? 'Mostrar controles de música' : 'Minimizar controles de música'}
+          onClick={() => setCollapsed((v) => !v)}
+        >
+          {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+      </div>
+      {!collapsed &&
+        (currentSong ? (
+          <div className="rack-music-panel-body">
+            <TransportBar />
+            <PartsGrid
+              song={currentSong}
+              activePartId={engineState.activePartId}
+              pendingPartId={engineState.pendingPartId}
+              loopActive={engineState.loopActivePart}
+              onJump={(id) => jumpToPart(id)}
+              onToggleLoop={() => toggleLoopActivePart()}
+            />
+          </div>
+        ) : (
+          <div className="rack-music-panel-empty">Nenhuma música carregada no Setlist.</div>
+        ))}
+    </div>
+  );
+}
+
 const KEYBOARD_LOW = 21; // A0
 const KEYBOARD_HIGH = 108; // C8 (piano de 88 teclas)
 const KEYBOARD_TOTAL = KEYBOARD_HIGH - KEYBOARD_LOW + 1;
@@ -544,14 +608,40 @@ function isBlackKey(note: number) {
   return [1, 3, 6, 8, 10].includes(note % 12);
 }
 
+// Posicionamento proporcional de piano de verdade: as teclas brancas dividem
+// a largura total em partes iguais; as pretas são mais estreitas e ficam
+// centradas sobre a divisa entre as duas brancas vizinhas (nunca do mesmo
+// tamanho/alinhamento das brancas — era isso que deixava o teclado antigo
+// com cara de "blocos" desalinhados).
+const ALL_KEYBOARD_NOTES = Array.from({ length: KEYBOARD_TOTAL }, (_, i) => KEYBOARD_LOW + i);
+const WHITE_KEY_NOTES = ALL_KEYBOARD_NOTES.filter((n) => !isBlackKey(n));
+const WHITE_KEY_COUNT = WHITE_KEY_NOTES.length;
+const WHITE_KEY_INDEX = new Map(WHITE_KEY_NOTES.map((n, i) => [n, i]));
+const WHITE_KEY_WIDTH_PCT = 100 / WHITE_KEY_COUNT;
+const BLACK_KEY_WIDTH_PCT = WHITE_KEY_WIDTH_PCT * 0.62;
+
+function keyPositionPct(note: number): { leftPct: number; widthPct: number } {
+  if (!isBlackKey(note)) {
+    const idx = WHITE_KEY_INDEX.get(note) ?? 0;
+    return { leftPct: idx * WHITE_KEY_WIDTH_PCT, widthPct: WHITE_KEY_WIDTH_PCT };
+  }
+  // A tecla preta fica sempre logo após uma branca (note - 1), centrada na divisa.
+  const prevWhiteIdx = WHITE_KEY_INDEX.get(note - 1) ?? 0;
+  const boundaryPct = (prevWhiteIdx + 1) * WHITE_KEY_WIDTH_PCT;
+  return { leftPct: boundaryPct - BLACK_KEY_WIDTH_PCT / 2, widthPct: BLACK_KEY_WIDTH_PCT };
+}
+
 /**
  * Tira de teclado virtual: mostra as faixas de nota configuradas em cada
  * camada (barra colorida embaixo das teclas) e acende em tempo real as
  * notas que estão soando agora — não é tocável, é só visualização/feedback
- * pra quem está tocando no teclado físico conectado.
+ * pra quem está tocando no teclado físico conectado. As teclas são
+ * posicionadas em porcentagem (brancas = divisões iguais, pretas = mais
+ * estreitas e centradas na divisa entre duas brancas), igual um piano real.
  */
 function RackKeyboardStrip({ layers }: { layers: RackLayer[] }) {
   const keyRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     let raf = 0;
@@ -576,36 +666,72 @@ function RackKeyboardStrip({ layers }: { layers: RackLayer[] }) {
   }, []);
 
   const loadedLayers = layers.filter((l) => l.format);
+  const whiteKeys = ALL_KEYBOARD_NOTES.filter((n) => !isBlackKey(n));
+  const blackKeys = ALL_KEYBOARD_NOTES.filter((n) => isBlackKey(n));
 
   return (
-    <div className="rack-keyboard-strip">
-      <div className="rack-keyboard-keys">
-        {Array.from({ length: KEYBOARD_TOTAL }, (_, i) => KEYBOARD_LOW + i).map((note) => (
-          <div
-            key={note}
-            ref={(el) => (keyRefs.current[note - KEYBOARD_LOW] = el)}
-            className={`rack-key ${isBlackKey(note) ? 'rack-key-black' : 'rack-key-white'}`}
-            title={`Nota MIDI ${note}`}
-          />
-        ))}
+    <div className={`rack-keyboard-strip ${collapsed ? 'collapsed' : ''}`}>
+      <div className="rack-strip-header">
+        <span className="rack-strip-title">
+          <Piano size={14} /> Teclado virtual
+        </span>
+        <button
+          className="rack-strip-toggle"
+          title={collapsed ? 'Mostrar teclado virtual' : 'Minimizar teclado virtual'}
+          onClick={() => setCollapsed((v) => !v)}
+        >
+          {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
       </div>
-      <div className="rack-keyboard-ranges">
-        {loadedLayers.map((layer) => {
-          const start = Math.max(KEYBOARD_LOW, layer.noteRangeStart);
-          const end = Math.min(KEYBOARD_HIGH, layer.noteRangeEnd);
-          if (end < start) return null;
-          const leftPct = ((start - KEYBOARD_LOW) / KEYBOARD_TOTAL) * 100;
-          const widthPct = ((end - start + 1) / KEYBOARD_TOTAL) * 100;
-          return (
-            <div
-              key={layer.id}
-              className="rack-key-range"
-              style={{ left: `${leftPct}%`, width: `${widthPct}%`, background: layer.color }}
-              title={`Faixa da ${layer.id}`}
-            />
-          );
-        })}
-      </div>
+      {!collapsed && (
+        <div className="rack-keyboard-body">
+          <div className="rack-keyboard-keys">
+            {whiteKeys.map((note) => {
+              const { leftPct, widthPct } = keyPositionPct(note);
+              return (
+                <div
+                  key={note}
+                  ref={(el) => (keyRefs.current[note - KEYBOARD_LOW] = el)}
+                  className="rack-key rack-key-white"
+                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                  title={`Nota MIDI ${note}`}
+                />
+              );
+            })}
+            {blackKeys.map((note) => {
+              const { leftPct, widthPct } = keyPositionPct(note);
+              return (
+                <div
+                  key={note}
+                  ref={(el) => (keyRefs.current[note - KEYBOARD_LOW] = el)}
+                  className="rack-key rack-key-black"
+                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                  title={`Nota MIDI ${note}`}
+                />
+              );
+            })}
+          </div>
+          <div className="rack-keyboard-ranges">
+            {loadedLayers.map((layer) => {
+              const start = Math.max(KEYBOARD_LOW, layer.noteRangeStart);
+              const end = Math.min(KEYBOARD_HIGH, layer.noteRangeEnd);
+              if (end < start) return null;
+              const startPos = keyPositionPct(start);
+              const endPos = keyPositionPct(end);
+              const leftPct = startPos.leftPct;
+              const widthPct = endPos.leftPct + endPos.widthPct - startPos.leftPct;
+              return (
+                <div
+                  key={layer.id}
+                  className="rack-key-range"
+                  style={{ left: `${leftPct}%`, width: `${widthPct}%`, background: layer.color }}
+                  title={`Faixa da ${layer.id}`}
+                />
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

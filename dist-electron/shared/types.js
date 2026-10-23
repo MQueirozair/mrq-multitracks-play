@@ -1,7 +1,9 @@
 "use strict";
 // Tipos compartilhados entre o processo principal (Electron/Node) e a interface (renderer).
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NOTE_NAMES = exports.PART_COLORS = exports.DEFAULT_SETTINGS = exports.DEFAULT_RACK_STATE = void 0;
+exports.NOTE_NAMES = exports.PART_COLORS = exports.DEFAULT_SETTINGS = exports.DEFAULT_RACK_STATE = exports.RACK_LAYER_COUNT = void 0;
+exports.emptyRackLayer = emptyRackLayer;
+exports.migrateRackLayers = migrateRackLayers;
 exports.semitoneDistance = semitoneDistance;
 exports.normalizeNote = normalizeNote;
 function emptyRackLayer(id, color) {
@@ -41,12 +43,16 @@ function emptyRackLayer(id, color) {
         driveMix: 1,
     };
 }
+/** Quantidade de camadas do Rack de instrumentos — única fonte da verdade, usada tanto pro estado inicial quanto pelo motor de áudio (RackEngine). */
+exports.RACK_LAYER_COUNT = 6;
 exports.DEFAULT_RACK_STATE = {
     layers: [
         emptyRackLayer('camada-1', '#d6455d'),
         emptyRackLayer('camada-2', '#2fb8c6'),
         emptyRackLayer('camada-3', '#8a5fd6'),
         emptyRackLayer('camada-4', '#d6b23c'),
+        emptyRackLayer('camada-5', '#4fae5e'),
+        emptyRackLayer('camada-6', '#d6782e'),
     ],
     masterVolume: 0.8,
     reverb: 0,
@@ -57,6 +63,22 @@ exports.DEFAULT_RACK_STATE = {
     bufferFrames: 0,
     scenes: [],
 };
+/**
+ * Migra o array de camadas do Rack salvo de uma sessão anterior (ex.: só 4
+ * camadas, de antes do app passar a ter RACK_LAYER_COUNT=6) pra ter sempre
+ * RACK_LAYER_COUNT entradas — preservando intactas as camadas já existentes
+ * (instrumento carregado, EQ, etc.) e só completando o restante com camadas
+ * vazias, nunca descartando configuração do usuário.
+ */
+function migrateRackLayers(layers) {
+    if (layers.length === exports.RACK_LAYER_COUNT)
+        return layers;
+    const next = layers.slice(0, exports.RACK_LAYER_COUNT);
+    for (let i = next.length; i < exports.RACK_LAYER_COUNT; i++) {
+        next.push(exports.DEFAULT_RACK_STATE.layers[i] ?? emptyRackLayer(`camada-${i + 1}`, '#888888'));
+    }
+    return next;
+}
 exports.DEFAULT_SETTINGS = {
     outputDeviceId: null,
     outputChannelCount: 2,

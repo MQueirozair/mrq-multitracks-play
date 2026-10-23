@@ -26,11 +26,11 @@ export default function TransportBar() {
         {formatTime(engineState.realSeconds)}
       </div>
       <div className="spacer" />
-      <button className="transport-btn" title="Parte anterior" onClick={() => jumpRelative(-1)}><SkipBack size={16} /></button>
-      <button className="transport-btn" title="Parar" onClick={() => stop()}><Square size={15} /></button>
-      <button className="transport-btn play" title="Tocar" onClick={() => play()}><Play size={20} /></button>
-      <button className="transport-btn" title="Pausar" onClick={() => pause()}><Pause size={16} /></button>
-      <button className="transport-btn" title="Próxima parte" onClick={() => jumpRelative(1)}><SkipForward size={16} /></button>
+      <button className="transport-btn" title="Parte anterior" onClick={() => jumpRelative(-1)}><SkipBack size={13} /></button>
+      <button className="transport-btn" title="Parar" onClick={() => stop()}><Square size={12} /></button>
+      <button className="transport-btn play" title="Tocar" onClick={() => play()}><Play size={16} /></button>
+      <button className="transport-btn" title="Pausar" onClick={() => pause()}><Pause size={13} /></button>
+      <button className="transport-btn" title="Próxima parte" onClick={() => jumpRelative(1)}><SkipForward size={13} /></button>
       <div className="spacer" />
       <div style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--text-2)', fontSize: 13 }}>
         -{formatTime(Math.max(0, engineState.realTotalSeconds - engineState.realSeconds))}
