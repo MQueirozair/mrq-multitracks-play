@@ -92,12 +92,86 @@ async function applyRemoteConfigFromSettings(settings: AppSettings) {
   }
 }
 
-// Ao abrir o app, se o controle remoto estiver habilitado nas configurações
+// Validação mínima do formato antes de gravar no store: o app React não tem
+// nenhum error boundary, então um Song com campos faltando (ex.: de uma
+// versão bem antiga do config.json, ou um arquivo corrompido) derruba a
+// árvore de componentes inteira na renderização — tela em branco pra sempre,
+// já que os dados ruins ficariam permanentemente salvos no store do Tauri e
+// seriam recarregados (e travariam de novo) em toda abertura seguinte do
+// app. Então: só aceitamos a biblioteca legada se ela tiver, no mínimo, o
+// formato básico esperado; caso contrário descartamos silenciosamente (o
+// usuário começa com a biblioteca vazia, igual a uma instalação nova — bem
+// melhor do que um app que não abre mais).
+function isPlausibleLibrary(value: unknown): value is Library {
+  if (!value || typeof value !== 'object') return false;
+  const lib = value as Partial<Library>;
+  if (!Array.isArray(lib.songs)) return false;
+  return lib.songs.every(
+    (s) =>
+      s &&
+      typeof s === 'object' &&
+      typeof (s as { id?: unknown }).id === 'string' &&
+      typeof (s as { title?: unknown }).title === 'string' &&
+      Array.isArray((s as { tracks?: unknown }).tracks)
+  );
+}
+
+function isPlausibleSettings(value: unknown): value is Partial<AppSettings> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+// Migração única de uma instalação ANTERIOR em Electron: o Tauri guarda
+// configurações/biblioteca num diretório de dados diferente do que o
+// electron-store usava, então sem isso quem já usa o MRQ perderia a
+// biblioteca inteira (e as configs) ao trocar pra versão Tauri. Só roda
+// quando o store do Tauri ainda está vazio (primeira execução de verdade),
+// pra nunca sobrescrever dados mais novos já salvos pelo próprio Tauri.
+async function migrateFromElectronIfNeeded(store: Store): Promise<void> {
+  const alreadyHasSettings = (await store.has('settings')) || (await store.has('library'));
+  if (alreadyHasSettings) return;
+  try {
+    const legacyRaw = await invoke<string | null>('find_legacy_electron_config');
+    if (!legacyRaw) return;
+    const legacy = JSON.parse(legacyRaw) as { settings?: unknown; library?: unknown };
+    let migratedSomething = false;
+    if (isPlausibleSettings(legacy.settings)) {
+      await store.set('settings', legacy.settings);
+      migratedSomething = true;
+    } else if (legacy.settings) {
+      console.warn('[migração] configurações da instalação Electron anterior com formato inesperado, ignoradas.');
+    }
+    if (isPlausibleLibrary(legacy.library)) {
+      await store.set('library', legacy.library);
+      migratedSomething = true;
+    } else if (legacy.library) {
+      console.warn('[migração] biblioteca da instalação Electron anterior com formato inesperado, ignorada.');
+    }
+    if (migratedSomething) {
+      await store.save();
+      console.info('[migração] configurações/biblioteca importadas da instalação Electron anterior.');
+    }
+  } catch (err) {
+    console.error('[migração] falha ao importar dados da instalação Electron anterior', err);
+  }
+}
+
+// Ao abrir o app: migra dados de uma instalação Electron anterior (se for a
+// primeira vez) e, se o controle remoto estiver habilitado nas configurações
 // salvas, já sobe o servidor — mesmo comportamento do `createWindow()` do
 // Electron (`if (store.get('settings').remote.enabled) remoteServer.start()`).
-(async () => {
+//
+// IMPORTANTE: isso é exportado como uma Promise (`ready`) que main.tsx
+// AGUARDA antes de renderizar qualquer componente React. Sem isso existe uma
+// corrida real: componentes como o TitleBar chamam window.api.remote.getInfo()
+// uma única vez, no mount — se isso rodasse antes da migração escrever as
+// configurações no store, a tela mostraria a porta/PIN padrão em vez dos
+// valores de verdade (ou os recém-migrados). No Electron essa corrida nunca
+// existiu porque o electron-store já estava carregado, de forma síncrona, bem
+// antes do processo de renderer sequer começar a rodar JS.
+export const ready: Promise<void> = (async () => {
   try {
     const store = await getStore();
+    await migrateFromElectronIfNeeded(store);
     const stored = (await store.get<AppSettings>('settings')) ?? undefined;
     const settings = mergeSettingsWithDefaults(stored);
     await applyRemoteConfigFromSettings(settings);

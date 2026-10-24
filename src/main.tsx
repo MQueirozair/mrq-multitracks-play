@@ -17,7 +17,19 @@ async function bootstrap() {
   // só nesse ambiente), montamos a mesma API (ver tauriBridge.ts) ANTES de
   // renderizar qualquer componente que dependa de window.api.
   if (!window.api && '__TAURI_INTERNALS__' in window) {
-    await import('./tauriBridge');
+    const bridge = await import('./tauriBridge');
+    // Espera a migração de dados do Electron (se houver) e a configuração
+    // inicial do servidor remoto terminarem ANTES de montar qualquer
+    // componente — ver o comentário em tauriBridge.ts sobre a corrida que
+    // isso evita (ex.: TitleBar mostrando a porta/PIN errados por um instante).
+    // Em try/catch pra NUNCA travar a tela em branco pra sempre: se a
+    // migração falhar por algum motivo inesperado, o app ainda deve abrir
+    // (com as configurações padrão) em vez de ficar preso aqui.
+    try {
+      await bridge.ready;
+    } catch (err) {
+      console.error('[bootstrap] falha ao aguardar tauriBridge.ready, prosseguindo mesmo assim', err);
+    }
   }
 
   ReactDOM.createRoot(document.getElementById('root')!).render(
