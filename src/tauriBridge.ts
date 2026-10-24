@@ -17,6 +17,8 @@ import { listen } from '@tauri-apps/api/event';
 import { open as openDialog, ask } from '@tauri-apps/plugin-dialog';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { load as loadStore, type Store } from '@tauri-apps/plugin-store';
+import { check as checkForUpdate, type Update } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 import type { AppSettings, Library, RemoteStateSnapshot, RemoteCommand } from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/types';
 import type { MrqApi, UpdateStatusPayload } from '../electron/preload';
@@ -119,6 +121,72 @@ const INSTRUMENT_FILTERS = [
   { name: 'Todos os arquivos', extensions: ['*'] },
 ];
 
+// ---------- Auto-atualização (tauri-plugin-updater + GitHub Releases) ----------
+// Equivalente ao setupAutoUpdater() do electron/main.ts: autoDownload=true
+// (baixa assim que encontra uma versão nova) e checagem automática ao abrir
+// + a cada 4 horas. A diferença de comportamento em relação ao Electron:
+// autoInstallOnAppQuit (instalar sozinho ao fechar o app, sem o usuário
+// clicar em nada) não tem equivalente direto na API do plugin — aqui a
+// instalação final sempre depende de uma chamada explícita a update.install()
+// (ex.: o usuário clicando em "Reiniciar e atualizar" na tela de ajuda).
+const updateStatusListeners = new Set<(payload: UpdateStatusPayload) => void>();
+let pendingUpdate: Update | null = null;
+
+function emitUpdateStatus(payload: UpdateStatusPayload) {
+  updateStatusListeners.forEach((cb) => cb(payload));
+}
+
+async function performUpdateCheck(): Promise<UpdateStatusPayload> {
+  if (import.meta.env.DEV) return { status: 'dev' };
+  emitUpdateStatus({ status: 'checking' });
+  try {
+    const update = await checkForUpdate();
+    if (!update) {
+      emitUpdateStatus({ status: 'not-available' });
+      return { status: 'not-available' };
+    }
+    pendingUpdate = update;
+    emitUpdateStatus({ status: 'available', version: update.version });
+
+    let totalBytes = 0;
+    let downloadedBytes = 0;
+    await update.download((event) => {
+      if (event.event === 'Started') {
+        totalBytes = event.data.contentLength ?? 0;
+      } else if (event.event === 'Progress') {
+        downloadedBytes += event.data.chunkLength;
+        const percent = totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : undefined;
+        emitUpdateStatus({ status: 'downloading', percent });
+      } else if (event.event === 'Finished') {
+        emitUpdateStatus({ status: 'downloaded', version: update.version });
+      }
+    });
+    return { status: 'ok' };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    emitUpdateStatus({ status: 'error', message });
+    return { status: 'error', message };
+  }
+}
+
+async function installPendingUpdate(): Promise<boolean> {
+  if (!pendingUpdate) return false;
+  await pendingUpdate.install();
+  // No Windows o próprio install() já encerra o app (o processo nem chega a
+  // executar a linha abaixo). No macOS/Linux é preciso relançar manualmente.
+  try {
+    await relaunch();
+  } catch {
+    /* noop */
+  }
+  return true;
+}
+
+if (!import.meta.env.DEV) {
+  void performUpdateCheck();
+  setInterval(() => void performUpdateCheck(), 4 * 60 * 60 * 1000);
+}
+
 // ---------- Objeto window.api, shape idêntico ao MrqApi (electron/preload.ts) ----------
 const api: MrqApi = {
   window: {
@@ -199,14 +267,12 @@ const api: MrqApi = {
     },
   },
   update: {
-    // TODO(tauri-migration): integrar tauri-plugin-updater (GitHub Releases) —
-    // fase seguinte da migração. Por enquanto reporta "sem atualização" para
-    // não travar nem mentir sobre um download que não está realmente ocorrendo.
-    check: async (): Promise<UpdateStatusPayload> => ({ status: 'not-available' }),
-    install: async (): Promise<boolean> => false,
-    onStatus: (_cb: (payload: UpdateStatusPayload) => void) => {
+    check: () => performUpdateCheck(),
+    install: () => installPendingUpdate(),
+    onStatus: (cb: (payload: UpdateStatusPayload) => void) => {
+      updateStatusListeners.add(cb);
       return () => {
-        /* noop até o auto-updater do Tauri ser integrado */
+        updateStatusListeners.delete(cb);
       };
     },
   },

@@ -18,6 +18,11 @@ release
 src-tauri/target
 src-tauri/gen
 
+# Chave privada de assinatura do auto-updater do Tauri — NUNCA commitar.
+# Gerada com `cargo tauri signer generate`; necessária (como variável de
+# ambiente TAURI_SIGNING_PRIVATE_KEY) só na hora de publicar um release.
+.secrets/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
