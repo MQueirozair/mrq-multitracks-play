@@ -15,7 +15,6 @@ use tauri::http::{header, Request, Response, StatusCode};
 use tauri::{UriSchemeContext, UriSchemeResponder};
 use tauri::Runtime;
 
-const CHUNK_READ_LIMIT: u64 = 8 * 1024 * 1024; // 8MB por resposta quando não há Range (evita carregar arquivos enormes inteiros de uma vez)
 
 pub fn handle<R: Runtime>(
     _ctx: UriSchemeContext<'_, R>,
@@ -137,10 +136,25 @@ async fn serve_file(path: &PathBuf, range_header: Option<&str>) -> Response<Vec<
             (s, e, StatusCode::PARTIAL_CONTENT)
         }
         None => {
-            // Sem Range: ainda assim limitamos o tamanho da primeira resposta pra
-            // não travar em arquivos gigantes; o player vai pedir o resto via Range.
-            let e = (total_len.saturating_sub(1)).min(CHUNK_READ_LIMIT.saturating_sub(1));
-            (0, e, StatusCode::OK)
+            // Sem Range: devolve o arquivo INTEIRO (status 200, Content-Length real).
+            // ANTES disto limitávamos a 8MB "pra não travar em arquivos gigantes,
+            // já que o player pediria o resto via Range" — só que isso só é verdade
+            // pra elementos <audio>/<video> (que de fato re-pedem via Range quando
+            // precisam de mais). Todo o resto do app (carregar instrumento do Rack,
+            // gerar forma de onda, ler amostra do Kontakt/SFZ, e até o carregamento
+            // principal de faixas em AudioEngine.loadSong) usa um fetch() simples
+            // seguido de .arrayBuffer() — SEM nunca mandar Range — e não tem como
+            // saber que a resposta "200 OK com Content-Length X" na verdade só
+            // trouxe os primeiros 8MB de um arquivo maior. Isso corrompia
+            // silenciosamente qualquer arquivo >8MB (bibliotecas Nord grandes,
+            // SoundFonts grandes e até faixas de áudio do multitrack), fazendo
+            // formatos com verificação de integridade (.npno) falharem com erro de
+            // checksum, e os demais tocarem/decodificarem truncados sem aviso
+            // nenhum. Elementos de mídia HTML continuam funcionando normalmente
+            // aqui: eles mandam Range desde a primeira requisição quando o servidor
+            // anuncia "Accept-Ranges: bytes" (como fazemos), então não dependem
+            // deste branch pra nada.
+            (0, total_len.saturating_sub(1), StatusCode::OK)
         }
     };
 
