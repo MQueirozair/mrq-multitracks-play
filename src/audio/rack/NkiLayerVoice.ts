@@ -114,25 +114,47 @@ function looksLikeSamplePath(value: string): boolean {
   return /\.(wav|wave|aif|aiff|ncw)$/i.test(value.trim());
 }
 
-/** Varre toda a árvore do XML procurando, em cada elemento, um valor de
- *  propriedade que pareça caminho de amostra — sem depender do nome exato
+/** Sobe pela árvore a partir de `el` (sem passar de `stopAt`, exclusive) juntando
+ *  a "mala de propriedades" de cada ancestral — zona, grupo e programa costumam
+ *  compartilhar campos (faixa de tecla/velocidade, afinação, volume, pan) em
+ *  níveis diferentes dependendo de como o patch foi montado, então em vez de
+ *  olhar só o pai imediato (que perdia campos definidos no Grupo/Programa),
+ *  mesclamos até 5 níveis acima — o nível mais próximo da zona sempre vence. */
+function collectAncestryBag(el: Element, stopAt: Element | null): Map<string, string> {
+  const chain: Element[] = [];
+  let cur: Element | null = el;
+  for (let depth = 0; depth < 5 && cur && cur !== stopAt; depth++) {
+    chain.push(cur);
+    cur = cur.parentElement;
+  }
+  // do mais distante (Programa) pro mais próximo (Zona), pra que o campo da
+  // zona sempre sobrescreva o do grupo/programa quando os dois existirem.
+  const merged = new Map<string, string>();
+  for (const node of chain.reverse()) {
+    for (const [k, v] of collectPropertyBag(node)) merged.set(k, v);
+  }
+  return merged;
+}
+
+/** Varre a subárvore a partir de `root` procurando, em cada elemento, um valor
+ *  de propriedade que pareça caminho de amostra — sem depender do nome exato
  *  da tag ("Zone", "Sample" etc. nunca foram confirmados publicamente pela
- *  NI para essa versão do formato). Quando acha, usa as outras propriedades
- *  do mesmo elemento (ou, na falta delas, do elemento pai) pra montar o
- *  mapeamento de tecla/velocidade da zona. */
-function extractZones(doc: Document): NkiZone[] {
+ *  NI para essa versão do formato). Quando acha, mescla os campos dos
+ *  ancestrais mais próximos (zona → grupo → programa) pra montar o
+ *  mapeamento de tecla/velocidade/afinação da zona. Se `boundary` for
+ *  passado, a varredura não desce dentro de nenhum outro elemento que também
+ *  bata com `boundary` (usado pra não misturar zonas de programas/grupos de
+ *  timbre diferentes quando o .nki tem mais de um). */
+function extractZones(root: Element, opts?: { boundary?: (el: Element) => boolean }): NkiZone[] {
   const zones: NkiZone[] = [];
   const seen = new Set<Element>();
-  const walk = (el: Element) => {
+  const walk = (el: Element, isSubroot: boolean) => {
+    if (!isSubroot && opts?.boundary?.(el)) return; // outro grupo/programa — não entra
     const bag = collectPropertyBag(el);
     const sampleValue = readField(bag, FIELD_ALIASES.sample);
     if (sampleValue && looksLikeSamplePath(sampleValue) && !seen.has(el)) {
       seen.add(el);
-      // Se as propriedades de nota/velocidade não estiverem no mesmo elemento
-      // (podem estar no pai, que é o padrão mais comum em formatos
-      // Zona-dentro-de-Grupo), funde com o pai antes de ler os campos.
-      const parentBag = el.parentElement ? collectPropertyBag(el.parentElement) : new Map<string, string>();
-      const merged = new Map([...parentBag, ...bag]);
+      const merged = collectAncestryBag(el, root.parentElement);
       const fileName = sampleValue.split(/[\\/]/).pop() ?? sampleValue;
       const guessedRoot = guessRootNoteFromFileName(fileName);
       zones.push({
@@ -148,10 +170,44 @@ function extractZones(doc: Document): NkiZone[] {
       });
       return; // já é folha (zona); não precisa descer mais nesse ramo
     }
+    for (const child of Array.from(el.children)) walk(child, false);
+  };
+  walk(root, true);
+  return zones;
+}
+
+/** Identifica, dentro do XML, possíveis "grupos de timbre" (Programas) — um
+ *  .nki pode conter mais de um instrumento/variação dentro do mesmo arquivo
+ *  (ex.: "Piano Soft" e "Piano Hard" como programas separados de um mesmo
+ *  banco). Isso é detectado de forma tolerante: qualquer elemento cujo nome
+ *  da tag contenha "program" (maiúsc./minúsc. não importa) e que tenha pelo
+ *  menos uma amostra dentro vira um grupo selecionável. Se só um programa
+ *  for encontrado (o caso mais comum, de longe), devolve lista vazia — quem
+ *  chama cai de volta pro modo "um timbre só", sem mudar nada do
+ *  comportamento de patches simples de uma única camada/instrumento. */
+function extractProgramGroups(doc: Document): { name: string; zones: NkiZone[] }[] {
+  const programEls: Element[] = [];
+  const isProgramTag = (el: Element) => /program/i.test(el.tagName);
+  const walk = (el: Element) => {
+    if (isProgramTag(el)) {
+      programEls.push(el);
+      return; // não entra em programas aninhados dentro de programas
+    }
     for (const child of Array.from(el.children)) walk(child);
   };
   walk(doc.documentElement);
-  return zones;
+
+  if (programEls.length < 2) return [];
+
+  const groups = programEls.map((programEl, i) => {
+    const zones = extractZones(programEl, { boundary: isProgramTag });
+    const bag = collectPropertyBag(programEl);
+    const name = readField(bag, ['name']) ?? `Grupo ${i + 1}`;
+    return { name, zones };
+  });
+  // só vale a pena expor como grupos separados se pelo menos 2 deles
+  // realmente trouxeram amostra — senão é mais seguro cair no modo simples.
+  return groups.filter((g) => g.zones.length > 0).length >= 2 ? groups : [];
 }
 
 /** Tenta achar o nome do instrumento (propriedade "Name" perto da raiz do XML) pra exibir como preset. */
@@ -227,6 +283,10 @@ export class NkiLayerVoice {
   private active = new Map<number, { src: AudioBufferSourceNode; gain: GainNode; baseRate: number }[]>();
   private bendSemitones = 0;
   private instrumentName = '';
+  /** Quando o .nki tem mais de um "grupo de timbre" (Programa), guarda cada
+   *  um separadamente pra permitir trocar via selectPreset() sem recarregar
+   *  o arquivo do disco de novo (todas as amostras já ficam resolvidas). */
+  private programGroups: { name: string; zones: NkiZone[] }[] = [];
   readonly output: GainNode;
 
   constructor(ctx: AudioContext) {
@@ -247,8 +307,18 @@ export class NkiLayerVoice {
       throw new Error('O XML interno deste .nki veio corrompido ou incompleto.');
     }
     this.instrumentName = guessInstrumentName(doc) ?? (sourcePath ? sourcePath.split(/[\\/]/).pop() ?? '' : '');
-    const zones = extractZones(doc);
-    if (zones.length === 0) {
+
+    // Primeiro tenta achar vários "grupos de timbre" (Programas) dentro do
+    // mesmo arquivo; se só houver um (o caso mais comum), cai pro modo
+    // simples de sempre (todas as zonas do arquivo inteiro num timbre só).
+    const detectedGroups = extractProgramGroups(doc);
+    const rawGroups =
+      detectedGroups.length > 0
+        ? detectedGroups
+        : [{ name: this.instrumentName || 'Instrumento Kontakt', zones: extractZones(doc.documentElement) }];
+
+    const totalZones = rawGroups.reduce((n, g) => n + g.zones.length, 0);
+    if (totalZones === 0) {
       throw new Error(
         'O .nki foi aberto, mas nenhuma amostra foi reconhecida dentro dele (estrutura interna não reconhecida, ou é um arquivo "monolito" com amostras embutidas — ainda não suportado).'
       );
@@ -257,16 +327,22 @@ export class NkiLayerVoice {
     const baseDir = sourcePath ? sourcePath.replace(/[\\/][^\\/]*$/, '') : '';
     let resolved = 0;
     const failures: string[] = [];
-    for (const zone of zones) {
-      const audioBuffer = await this.resolveSample(zone.samplePath, baseDir);
-      if (audioBuffer) {
-        this.buffers.set(zone, audioBuffer);
-        resolved++;
-      } else {
-        failures.push(zone.samplePath.split(/[\\/]/).pop() ?? zone.samplePath);
+    for (const group of rawGroups) {
+      for (const zone of group.zones) {
+        const audioBuffer = await this.resolveSample(zone.samplePath, baseDir);
+        if (audioBuffer) {
+          this.buffers.set(zone, audioBuffer);
+          resolved++;
+        } else {
+          failures.push(zone.samplePath.split(/[\\/]/).pop() ?? zone.samplePath);
+        }
       }
     }
-    this.zones = zones.filter((z) => this.buffers.has(z));
+
+    this.programGroups = rawGroups
+      .map((g) => ({ name: g.name, zones: g.zones.filter((z) => this.buffers.has(z)) }))
+      .filter((g) => g.zones.length > 0);
+    this.zones = this.programGroups[0]?.zones ?? [];
 
     if (resolved === 0) {
       throw new Error(
@@ -279,7 +355,20 @@ export class NkiLayerVoice {
       console.warn(`[nki] ${failures.length} amostra(s) não encontrada(s) e ficarão mudas: ${failures.join(', ')}`);
     }
 
+    if (this.programGroups.length > 1) {
+      return this.programGroups.map((g, i) => ({ value: String(i), label: g.name }));
+    }
     return [{ value: 'default', label: this.instrumentName || 'Instrumento Kontakt' }];
+  }
+
+  /** Troca o grupo de timbre ativo quando o .nki tem mais de um Programa
+   *  (ver extractProgramGroups) — chamado pelo RackEngine quando o usuário
+   *  escolhe outro item no seletor de instrumento/preset da camada. */
+  selectPreset(value: string) {
+    if (this.programGroups.length <= 1) return;
+    const idx = Number(value);
+    const group = Number.isFinite(idx) ? this.programGroups[idx] : undefined;
+    if (group) this.zones = group.zones;
   }
 
   /** Resolve um caminho de amostra referenciado pelo .nki (geralmente um caminho relativo do Windows, "Samples\\X.wav")

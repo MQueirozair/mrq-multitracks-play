@@ -481,7 +481,7 @@ export class RackEngine {
 
   selectPreset(index: number, value: string) {
     const voice = this.layers[index]?.voice;
-    if (voice && 'selectPreset' in voice) (voice as Sf2LayerVoice | Dx7LayerVoice).selectPreset(value);
+    if (voice && 'selectPreset' in voice) (voice as Sf2LayerVoice | Dx7LayerVoice | NkiLayerVoice).selectPreset(value);
   }
 
   setRootNote(index: number, note: number) {

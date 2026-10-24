@@ -97,7 +97,8 @@
         }
       ],
       "icon": "appResources/icon.icns",
-      "category": "public.app-category.music"
+      "category": "public.app-category.music",
+      "minimumSystemVersion": "10.15"
     },
     "nsis": {
       "oneClick": false,
