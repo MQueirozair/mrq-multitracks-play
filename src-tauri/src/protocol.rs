@@ -22,6 +22,25 @@ pub fn handle<R: Runtime>(
     request: Request<Vec<u8>>,
     responder: UriSchemeResponder,
 ) {
+    // O WebView2 no Windows (e, em menor grau, o WebKit no macOS/Linux) trata
+    // o fetch() do renderer para "mrqfile://" como uma requisição cross-origin
+    // de verdade (a página roda em https://tauri.localhost, esquema diferente
+    // de "mrqfile"). Sem "Access-Control-Allow-Origin" na resposta, o browser
+    // recusa entregar o corpo pro JS e o fetch() estoura "Failed to fetch" —
+    // é exatamente o que apareceu no log do usuário no Windows. Por isso toda
+    // resposta (sucesso, erro e preflight) precisa sair com CORS liberado.
+    if request.method() == tauri::http::Method::OPTIONS {
+        responder.respond(with_cors(
+            Response::builder()
+                .status(StatusCode::NO_CONTENT)
+                .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET, HEAD, OPTIONS")
+                .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "Range, Content-Type")
+                .body(Vec::new())
+                .unwrap(),
+        ));
+        return;
+    }
+
     let range_header = request
         .headers()
         .get(header::RANGE)
@@ -31,15 +50,30 @@ pub fn handle<R: Runtime>(
     let file_path = match resolve_path(request.uri()) {
         Ok(p) => p,
         Err(resp) => {
-            responder.respond(resp);
+            responder.respond(with_cors(resp));
             return;
         }
     };
 
     tauri::async_runtime::spawn(async move {
         let resp = serve_file(&file_path, range_header.as_deref()).await;
-        responder.respond(resp);
+        responder.respond(with_cors(resp));
     });
+}
+
+/// Garante que toda resposta do protocolo "mrqfile://" tenha os cabeçalhos de
+/// CORS necessários para o fetch() do renderer conseguir ler o corpo — sem
+/// isso o WebView2 (Windows) bloqueia a resposta inteira silenciosamente.
+fn with_cors(mut resp: Response<Vec<u8>>) -> Response<Vec<u8>> {
+    resp.headers_mut().insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        header::HeaderValue::from_static("*"),
+    );
+    resp.headers_mut().insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        header::HeaderValue::from_static("Range, Content-Type"),
+    );
+    resp
 }
 
 fn resolve_path(uri: &tauri::http::Uri) -> Result<PathBuf, Response<Vec<u8>>> {
