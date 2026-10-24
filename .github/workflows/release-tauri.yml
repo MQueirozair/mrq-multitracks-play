@@ -15,6 +15,8 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Windows e macOS: usa a action oficial, que builda, assina os artefatos
+  # do updater e já publica tudo (incluindo o latest.json) no release.
   release:
     permissions:
       contents: write
@@ -24,19 +26,11 @@ jobs:
         include:
           - platform: 'macos-latest'
             args: '--target universal-apple-darwin'
-          - platform: 'ubuntu-22.04'
-            args: ''
           - platform: 'windows-latest'
             args: ''
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: instalar dependências de sistema (Ubuntu)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev
 
       - name: Node.js
         uses: actions/setup-node@v4
@@ -57,8 +51,6 @@ jobs:
         run: npm ci
 
       - uses: tauri-apps/tauri-action@v0
-        id: tauri_action
-        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -77,10 +69,60 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
-      - name: listar bundles gerados (diagnóstico, só roda se a action acima falhou)
-        if: steps.tauri_action.outcome == 'failure'
-        shell: bash
-        run: |
-          find src-tauri/target -type d -iname bundle -exec find {} -type f \; 2>&1 || true
-          exit 1
+  # Linux: builda e publica os pacotes manualmente, à parte. O tauri-action
+  # tem um bug conhecido de detecção de nomes de artefato especificamente no
+  # Linux quando o productName tem espaço — ele monta dois nomes candidatos
+  # (nenhum bate com o nome real gerado pelo bundler) e falha o upload
+  # inteiro. Builda igual, só não usa a action pra publicar: sobe os
+  # pacotes brutos direto. Fica SEM o manifesto assinado do updater por
+  # enquanto (usuários Linux atualizam baixando a versão nova manualmente,
+  # não recebem o aviso automático de atualização).
+  release-linux:
+    needs: release
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: instalar dependências de sistema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: cache do cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: dependências do frontend
+        run: npm ci
+
+      - name: build do frontend
+        run: npm run build
+
+      - name: build + bundle (Tauri CLI direto, sem passar pela tauri-action)
+        run: npx tauri build --bundles deb,rpm,appimage
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: publicar pacotes Linux no release (rascunho) já criado acima
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: |
+            src-tauri/target/release/bundle/deb/*.deb
+            src-tauri/target/release/bundle/rpm/*.rpm
+            src-tauri/target/release/bundle/appimage/*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
