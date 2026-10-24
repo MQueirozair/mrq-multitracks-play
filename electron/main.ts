@@ -1,8 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog, protocol, shell, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, protocol, shell } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
-import { pathToFileURL } from 'node:url';
 import Store from 'electron-store';
 import { autoUpdater } from 'electron-updater';
 import type { AppSettings, Library } from '../shared/types';
@@ -288,7 +287,13 @@ app.whenReady().then(() => {
     `=== MRQ iniciado === versão=${app.getVersion()} plataforma=${process.platform} arch=${process.arch} electron=${process.versions.electron} chrome=${process.versions.chrome}`
   );
 
-  protocol.handle('mrqfile', (request) => {
+  // Protocolo "mrqfile" usando a API legada protocol.registerFileProtocol —
+  // obrigatório porque protocol.handle()/net.fetch() só existem a partir do
+  // Electron 25, e este app agora usa Electron 19 (requisito: suporte a
+  // macOS Sierra 10.12, que o Electron 20+ já não roda mais). A função
+  // registerFileProtocol recebe (request, callback) e o callback aceita
+  // diretamente um caminho de arquivo local (não uma URL file://).
+  protocol.registerFileProtocol('mrqfile', (request, callback) => {
     try {
       // Formato da URL: mrqfile://local-file/<caminho inteiro em encodeURIComponent>
       // Usamos um host FIXO ("local-file") e codificamos o caminho inteiro como um
@@ -302,14 +307,14 @@ app.whenReady().then(() => {
       const url = new URL(request.url);
       const encoded = url.pathname.replace(/^\/+/, '');
       const filePath = decodeURIComponent(encoded);
-      const fileUrl = pathToFileURL(filePath).toString();
-      appendLog(`[mrqfile] request.url="${request.url}" filePath="${filePath}" fileUrl="${fileUrl}"`);
-      return net.fetch(fileUrl);
+      appendLog(`[mrqfile] request.url="${request.url}" filePath="${filePath}"`);
+      callback({ path: filePath });
     } catch (err) {
       appendLog(`[mrqfile] ERRO ao resolver "${request.url}": ${err instanceof Error ? err.stack : err}`);
-      return new Response('not found', { status: 404 });
+      callback({ error: -6 }); // net::ERR_FILE_NOT_FOUND
     }
   });
+
 
   createWindow();
   setupAutoUpdater();

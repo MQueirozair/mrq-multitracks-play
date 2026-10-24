@@ -596,6 +596,17 @@ export default function HelpPanel() {
             </div>
             <Figure src="help-settings-update.png" alt="Painel de atualizações e versão instalada" caption="Versão instalada, verificação manual de atualizações e acesso ao log de diagnóstico." />
           </div>
+          <div className="help-callout warn">
+            <b>No Mac, o Gatekeeper pode bloquear a primeira abertura</b> com uma mensagem do tipo <i>"não é possível
+            abrir porque vem de um desenvolvedor não identificado"</i> ou <i>"o app está danificado e deve ser movido
+            para o Lixo"</i>. Isso acontece com qualquer app baixado fora da App Store que não tenha certificado pago
+            da Apple — não é um problema de versão do macOS nem de ser Intel ou Apple Silicon, e acontece até em Macs
+            novos. Pra abrir mesmo assim: <b>clique com o botão direito (ou Control+clique) no ícone do app → "Abrir"
+            → confirme "Abrir"</b> na caixa de diálogo (em vez de dar duplo-clique normal). Se ainda aparecer
+            "danificado", abra o <b>Terminal</b> e rode (ajustando o caminho se necessário):{' '}
+            <code>xattr -cr "/Applications/MRQ - Multitracks Play.app"</code>. Esse passo só é necessário na primeira
+            instalação de cada versão baixada manualmente — as atualizações automáticas depois disso não pedem isso de novo.
+          </div>
         </section>
 
         {/* ---------------- CASOS DE USO ---------------- */}

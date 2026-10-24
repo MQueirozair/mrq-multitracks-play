@@ -46,7 +46,7 @@
     "@types/uuid": "^9.0.8",
     "@types/ws": "^8.5.10",
     "@vitejs/plugin-react": "^4.3.1",
-    "electron": "^31.2.1",
+    "electron": "19.1.9",
     "electron-builder": "^24.13.3",
     "esbuild": "^0.21.5",
     "png2icons": "^2.0.1",
@@ -98,7 +98,7 @@
       ],
       "icon": "appResources/icon.icns",
       "category": "public.app-category.music",
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.12"
     },
     "nsis": {
       "oneClick": false,

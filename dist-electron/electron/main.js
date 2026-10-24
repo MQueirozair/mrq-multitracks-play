@@ -7,7 +7,6 @@ const electron_1 = require("electron");
 const node_path_1 = __importDefault(require("node:path"));
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_os_1 = __importDefault(require("node:os"));
-const node_url_1 = require("node:url");
 const electron_store_1 = __importDefault(require("electron-store"));
 const electron_updater_1 = require("electron-updater");
 const types_1 = require("../shared/types");
@@ -265,7 +264,13 @@ process.on('unhandledRejection', (reason) => {
 });
 electron_1.app.whenReady().then(() => {
     appendLog(`=== MRQ iniciado === versão=${electron_1.app.getVersion()} plataforma=${process.platform} arch=${process.arch} electron=${process.versions.electron} chrome=${process.versions.chrome}`);
-    electron_1.protocol.handle('mrqfile', (request) => {
+    // Protocolo "mrqfile" usando a API legada protocol.registerFileProtocol —
+    // obrigatório porque protocol.handle()/net.fetch() só existem a partir do
+    // Electron 25, e este app agora usa Electron 19 (requisito: suporte a
+    // macOS Sierra 10.12, que o Electron 20+ já não roda mais). A função
+    // registerFileProtocol recebe (request, callback) e o callback aceita
+    // diretamente um caminho de arquivo local (não uma URL file://).
+    electron_1.protocol.registerFileProtocol('mrqfile', (request, callback) => {
         try {
             // Formato da URL: mrqfile://local-file/<caminho inteiro em encodeURIComponent>
             // Usamos um host FIXO ("local-file") e codificamos o caminho inteiro como um
@@ -279,13 +284,12 @@ electron_1.app.whenReady().then(() => {
             const url = new URL(request.url);
             const encoded = url.pathname.replace(/^\/+/, '');
             const filePath = decodeURIComponent(encoded);
-            const fileUrl = (0, node_url_1.pathToFileURL)(filePath).toString();
-            appendLog(`[mrqfile] request.url="${request.url}" filePath="${filePath}" fileUrl="${fileUrl}"`);
-            return electron_1.net.fetch(fileUrl);
+            appendLog(`[mrqfile] request.url="${request.url}" filePath="${filePath}"`);
+            callback({ path: filePath });
         }
         catch (err) {
             appendLog(`[mrqfile] ERRO ao resolver "${request.url}": ${err instanceof Error ? err.stack : err}`);
-            return new Response('not found', { status: 404 });
+            callback({ error: -6 }); // net::ERR_FILE_NOT_FOUND
         }
     });
     createWindow();
