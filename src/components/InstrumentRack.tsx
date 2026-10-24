@@ -56,6 +56,7 @@ const FORMAT_BADGE: Record<RackLayerFormat, string> = {
   sampler: 'PIANO / AMOSTRA',
   npno: 'PIANO NORD / NPNO',
   nki: 'KONTAKT 1-4 / NKI',
+  sfz: 'SFZ (K5-8 exportado)',
 };
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];

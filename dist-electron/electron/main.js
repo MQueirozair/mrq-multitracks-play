@@ -392,13 +392,17 @@ electron_1.ipcMain.handle('fs:toFileUrl', (_e, filePath) => {
 });
 // Seletor de arquivo de instrumento para o Rack ao vivo (6 camadas). Aceita
 // SoundFont (.sf2/.sf3), banco/voz DX7 (.syx), amostra de áudio do usuário
-// (.wav/.aiff/.flac/.ogg), biblioteca de piano Nord (.npno) e patch legado do
-// Kontakt 1-4 (.nki) num único diálogo — o formato real é detectado pela
-// extensão escolhida, não pelo filtro usado. Todos esses formatos são
-// decodificados de verdade (ver Sf2LayerVoice/Dx7LayerVoice/NpnoLayerVoice/
-// NkiLayerVoice); o .nki especificamente só funciona com patches do Kontakt
-// 1 a 4 sem criptografia (anteriores à versão 4.2.2) que referenciam
-// amostras externas — ver o comentário em NkiLayerVoice.ts para o porquê.
+// (.wav/.aiff/.flac/.ogg), biblioteca de piano Nord (.npno), patch legado do
+// Kontakt 1-4 (.nki) e instrumento SFZ (.sfz) num único diálogo — o formato
+// real é detectado pela extensão escolhida, não pelo filtro usado. Todos
+// esses formatos são decodificados de verdade (ver Sf2LayerVoice/
+// Dx7LayerVoice/NpnoLayerVoice/NkiLayerVoice/SfzLayerVoice); o .nki
+// especificamente só funciona com patches do Kontakt 1 a 4 sem criptografia
+// (anteriores à versão 4.2.2) que referenciam amostras externas — ver o
+// comentário em NkiLayerVoice.ts para o porquê. O .sfz é a ponte recomendada
+// pra usar instrumentos do Kontakt 5/6/7/8: exporte-os como .sfz de dentro do
+// próprio Kontakt licenciado (Creator Tools/KSP) e carregue o resultado aqui
+// — ver HelpPanel.tsx para o passo a passo.
 electron_1.ipcMain.handle('fs:chooseInstrumentFile', async () => {
     // Atalho apenas para testes automatizados (E2E) em ambientes sem interação gráfica
     // real, ex: sandbox CI — mesmo padrão do MRQ_TEST_FOLDER acima. Nunca ativado em uso normal.
@@ -408,12 +412,13 @@ electron_1.ipcMain.handle('fs:chooseInstrumentFile', async () => {
         properties: ['openFile'],
         title: 'Escolha o arquivo do instrumento',
         filters: [
-            { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno', 'nki'] },
+            { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno', 'nki', 'sfz'] },
             { name: 'SoundFont (.sf2, .sf3)', extensions: ['sf2', 'sf3'] },
             { name: 'Banco DX7 (.syx)', extensions: ['syx'] },
             { name: 'Amostra de áudio (.wav, .aiff, .flac, .ogg, .mp3)', extensions: ['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3'] },
             { name: 'Nord Piano Library (.npno)', extensions: ['npno'] },
             { name: 'Kontakt 1-4 (.nki, sem criptografia)', extensions: ['nki'] },
+            { name: 'SFZ (.sfz) — inclui exportações do Kontakt 5-8', extensions: ['sfz'] },
             { name: 'Todos os arquivos', extensions: ['*'] },
         ],
     });

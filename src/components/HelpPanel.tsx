@@ -123,6 +123,7 @@ export default function HelpPanel() {
                 <FormatChip accent>.syx (DX7)</FormatChip>
                 <FormatChip accent>.npno (Nord)</FormatChip>
                 <FormatChip accent>.nki (Kontakt 1-4)</FormatChip>
+                <FormatChip accent>.sfz (inclui Kontakt 5-8 exportado)</FormatChip>
                 <FormatChip>.wav / .aiff / .flac / .mp3 / .ogg (amostra)</FormatChip>
               </div>
             </div>
@@ -433,12 +434,29 @@ export default function HelpPanel() {
               <h4>Kontakt (legado)</h4>
               <div className="chips"><FormatChip accent>.nki</FormatChip></div>
             </div>
+            <div className="help-formats-card">
+              <h4>SFZ (formato aberto)</h4>
+              <div className="chips"><FormatChip accent>.sfz</FormatChip></div>
+            </div>
           </div>
           <div className="help-callout warn">
             <b>Sobre o suporte a .nki:</b> o MRQ decodifica de verdade os patches <b>Kontakt 1 a 4</b> não criptografados
             (amostras/timbres — sem o motor de scripts do Kontakt). Patches protegidos por criptografia, ou salvos em
             versões 4.2.2 ou mais novas do Kontakt, não são suportados — o app mostra um erro claro nesses casos em
             vez de carregar algo incorreto.
+          </div>
+          <div className="help-callout warn">
+            <b>Quer usar um instrumento do Kontakt 5, 6, 7 ou 8?</b> O formato desses arquivos é criptografado pela
+            Native Instruments e não existe forma legítima de lê-lo de fora do Kontakt — nenhum app consegue isso sem
+            usar sua cópia licenciada do programa. O caminho seguro e gratuito é: (1) abra o instrumento no seu
+            próprio Kontakt; (2) se as amostras forem <code>.ncw</code>, use <b>Files → Batch Resave → Uncompressed
+            WAV/AIF</b> (função oficial do Kontakt) pra gerar <code>.wav</code> comuns; (3) use o <b>Creator
+            Tools / Instrument Editor</b> do Kontakt pra rodar um script de exportação pra SFZ (existem scripts
+            prontos e gratuitos, inclusive um da Chicken Systems, que leem os grupos/zonas do instrumento carregado
+            e geram o texto <code>.sfz</code>) — isso usa só a API oficial de script do Kontakt, não quebra nenhuma
+            proteção; (4) carregue o <code>.sfz</code> resultante numa camada do Rack normalmente. Scripts, efeitos e
+            interface customizada do Kontakt não são transferidos nesse processo — só o mapeamento de
+            amostras/timbres, que é o que o Rack toca.
           </div>
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Configurando cada camada</h3>

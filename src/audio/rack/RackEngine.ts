@@ -5,8 +5,10 @@ import { Dx7LayerVoice } from './Dx7LayerVoice';
 import { SamplerLayerVoice } from './SamplerLayerVoice';
 import { NpnoLayerVoice } from './NpnoLayerVoice';
 import { NkiLayerVoice } from './NkiLayerVoice';
+import { SfzLayerVoice } from './SfzLayerVoice';
 
-type AnyLayerVoice = Sf2LayerVoice | Dx7LayerVoice | SamplerLayerVoice | NpnoLayerVoice | NkiLayerVoice;
+type AnyLayerVoice = Sf2LayerVoice | Dx7LayerVoice | SamplerLayerVoice | NpnoLayerVoice | NkiLayerVoice | SfzLayerVoice;
+
 
 /**
  * Vozes que suportam pitch bend em tempo real (afeta as notas já soando, não
@@ -31,11 +33,13 @@ const DX7_EXT = new Set(['syx']);
 const SAMPLE_EXT = new Set(['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3']);
 const NPNO_EXT = new Set(['npno']);
 const NKI_EXT = new Set(['nki']);
+const SFZ_EXT = new Set(['sfz']);
 
 export function detectRackFormat(fileName: string): RackLayerFormat | null {
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
   if (NPNO_EXT.has(ext)) return 'npno';
   if (NKI_EXT.has(ext)) return 'nki';
+  if (SFZ_EXT.has(ext)) return 'sfz';
   if (SF2_EXT.has(ext)) return 'sf2';
   if (DX7_EXT.has(ext)) return 'dx7';
   if (SAMPLE_EXT.has(ext)) return 'sampler';
@@ -458,6 +462,10 @@ export class RackEngine {
       voice = v;
     } else if (format === 'nki') {
       const v = new NkiLayerVoice(ctx);
+      presets = await v.load(buffer, sourcePath);
+      voice = v;
+    } else if (format === 'sfz') {
+      const v = new SfzLayerVoice(ctx);
       presets = await v.load(buffer, sourcePath);
       voice = v;
     } else {

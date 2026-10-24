@@ -184,7 +184,7 @@ export interface MidiBinding {
  *                criptografado pela própria Native Instruments e dão erro claro
  *                em vez de tentar (e falhar) decodificar.
  */
-export type RackLayerFormat = 'sf2' | 'dx7' | 'sampler' | 'npno' | 'nki';
+export type RackLayerFormat = 'sf2' | 'dx7' | 'sampler' | 'npno' | 'nki' | 'sfz';
 
 
 /** Ajuste rápido de timbre por camada (filtro + curva de velocidade, não altera o arquivo original). */
