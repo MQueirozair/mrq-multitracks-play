@@ -13,6 +13,18 @@ export class DecodedNpno {
     readonly pcm: Uint8Array;
 }
 
+export class DecodedNsmp {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    readonly metadata_json: string;
+    /**
+     * PCM de 16 bits (little-endian, nativo do wasm) de todas as zonas,
+     * concatenadas na ordem em que aparecem em `metadata_json().zones`.
+     */
+    readonly pcm: Uint8Array;
+}
+
 /**
  * Decodifica os bytes brutos de um arquivo `.npno` (biblioteca de piano Nord).
  * Lança uma exceção JS (string) se o arquivo não for um `.npno` válido.
@@ -26,15 +38,33 @@ export function npno_decode(bytes: Uint8Array): DecodedNpno;
  */
 export function npno_sniff(bytes: Uint8Array): string;
 
+/**
+ * Decodifica os bytes brutos de um arquivo `.nsmp`/`.nsmp3`/`.nsmp4` (amostra
+ * Nord Sample Library). Lança uma exceção JS (string) se o arquivo não for
+ * uma amostra Nord válida.
+ */
+export function nsmp_decode(bytes: Uint8Array): DecodedNsmp;
+
+/**
+ * Só confere a assinatura/estrutura do contêiner, sem decodificar áudio —
+ * mesma ideia de `npno_sniff`, mas para amostras `.nsmp`/`.nsmp3`/`.nsmp4`.
+ */
+export function nsmp_sniff(bytes: Uint8Array): string;
+
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_decodednpno_free: (a: number, b: number) => void;
+    readonly __wbg_decodednsmp_free: (a: number, b: number) => void;
     readonly decodednpno_metadata_json: (a: number) => [number, number];
     readonly decodednpno_pcm: (a: number) => [number, number];
+    readonly decodednsmp_metadata_json: (a: number) => [number, number];
+    readonly decodednsmp_pcm: (a: number) => [number, number];
     readonly npno_decode: (a: number, b: number) => [number, number, number];
     readonly npno_sniff: (a: number, b: number) => [number, number, number, number];
+    readonly nsmp_decode: (a: number, b: number) => [number, number, number];
+    readonly nsmp_sniff: (a: number, b: number) => [number, number, number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;

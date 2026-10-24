@@ -437,11 +437,12 @@ ipcMain.handle('fs:chooseInstrumentFile', async () => {
     properties: ['openFile'],
     title: 'Escolha o arquivo do instrumento',
     filters: [
-      { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno', 'nki', 'sfz'] },
+      { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno', 'nsmp', 'nsmp3', 'nsmp4', 'nki', 'sfz'] },
       { name: 'SoundFont (.sf2, .sf3)', extensions: ['sf2', 'sf3'] },
       { name: 'Banco DX7 (.syx)', extensions: ['syx'] },
       { name: 'Amostra de áudio (.wav, .aiff, .flac, .ogg, .mp3)', extensions: ['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3'] },
       { name: 'Nord Piano Library (.npno)', extensions: ['npno'] },
+      { name: 'Nord Sample Library (.nsmp, .nsmp3, .nsmp4)', extensions: ['nsmp', 'nsmp3', 'nsmp4'] },
       { name: 'Kontakt 1-4 (.nki, sem criptografia)', extensions: ['nki'] },
       { name: 'SFZ (.sfz) — inclui exportações do Kontakt 5-8', extensions: ['sfz'] },
       { name: 'Todos os arquivos', extensions: ['*'] },

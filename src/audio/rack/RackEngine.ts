@@ -4,10 +4,18 @@ import { Sf2LayerVoice } from './Sf2LayerVoice';
 import { Dx7LayerVoice } from './Dx7LayerVoice';
 import { SamplerLayerVoice } from './SamplerLayerVoice';
 import { NpnoLayerVoice } from './NpnoLayerVoice';
+import { NsmpLayerVoice } from './NsmpLayerVoice';
 import { NkiLayerVoice } from './NkiLayerVoice';
 import { SfzLayerVoice } from './SfzLayerVoice';
 
-type AnyLayerVoice = Sf2LayerVoice | Dx7LayerVoice | SamplerLayerVoice | NpnoLayerVoice | NkiLayerVoice | SfzLayerVoice;
+type AnyLayerVoice =
+  | Sf2LayerVoice
+  | Dx7LayerVoice
+  | SamplerLayerVoice
+  | NpnoLayerVoice
+  | NsmpLayerVoice
+  | NkiLayerVoice
+  | SfzLayerVoice;
 
 
 /**
@@ -32,12 +40,14 @@ const SF2_EXT = new Set(['sf2', 'sf3']);
 const DX7_EXT = new Set(['syx']);
 const SAMPLE_EXT = new Set(['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3']);
 const NPNO_EXT = new Set(['npno']);
+const NSMP_EXT = new Set(['nsmp', 'nsmp3', 'nsmp4']);
 const NKI_EXT = new Set(['nki']);
 const SFZ_EXT = new Set(['sfz']);
 
 export function detectRackFormat(fileName: string): RackLayerFormat | null {
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
   if (NPNO_EXT.has(ext)) return 'npno';
+  if (NSMP_EXT.has(ext)) return 'nsmp';
   if (NKI_EXT.has(ext)) return 'nki';
   if (SFZ_EXT.has(ext)) return 'sfz';
   if (SF2_EXT.has(ext)) return 'sf2';
@@ -458,6 +468,10 @@ export class RackEngine {
       voice = v;
     } else if (format === 'npno') {
       const v = new NpnoLayerVoice(ctx);
+      presets = await v.load(buffer);
+      voice = v;
+    } else if (format === 'nsmp') {
+      const v = new NsmpLayerVoice(ctx);
       presets = await v.load(buffer);
       voice = v;
     } else if (format === 'nki') {

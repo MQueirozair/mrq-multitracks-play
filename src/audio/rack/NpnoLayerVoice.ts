@@ -1,33 +1,7 @@
 import type { RackPresetOption } from '../../../shared/types';
+import { loadNordWasmModule } from './npnoWasmModule';
 
-// Caminho relativo ao index.html publicado (ver public/vendor/npno-wasm e
-// vite.config.ts, base: './'). Diferente de `audioWorklet.addModule` (que
-// resolve relativo ao documento), o `import()` dinâmico do ES resolve
-// relativo ao módulo bundlado que o chama — então aqui é preciso montar a URL
-// a partir de `document.baseURI` explicitamente, senão o caminho acaba
-// relativo ao chunk JS dentro de `dist/assets/`, não a `dist/`.
-function wasmJsUrl(): string {
-  return new URL('vendor/npno-wasm/npno_wasm.js', document.baseURI).href;
-}
-
-interface NpnoModule {
-  default: (input?: unknown) => Promise<unknown>;
-  npno_decode: (bytes: Uint8Array) => { metadata_json: string; pcm: Uint8Array };
-  npno_sniff: (bytes: Uint8Array) => string;
-}
-
-let wasmModulePromise: Promise<NpnoModule> | null = null;
-function loadWasmModule(): Promise<NpnoModule> {
-  if (!wasmModulePromise) {
-    wasmModulePromise = (async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mod = (await import(/* @vite-ignore */ wasmJsUrl())) as any as NpnoModule;
-      await mod.default();
-      return mod;
-    })();
-  }
-  return wasmModulePromise;
-}
+const loadWasmModule = loadNordWasmModule;
 
 const UNCOVERED = 0xff;
 /** Maior valor de camada que uma velocidade qualquer ainda toca; acima disso a

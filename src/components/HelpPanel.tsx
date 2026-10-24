@@ -122,6 +122,7 @@ export default function HelpPanel() {
                 <FormatChip accent>.sf2 / .sf3</FormatChip>
                 <FormatChip accent>.syx (DX7)</FormatChip>
                 <FormatChip accent>.npno (Nord)</FormatChip>
+                <FormatChip accent>.nsmp / .nsmp3 / .nsmp4 (Nord)</FormatChip>
                 <FormatChip accent>.nki (Kontakt 1-4)</FormatChip>
                 <FormatChip accent>.sfz (inclui Kontakt 5-8 exportado)</FormatChip>
                 <FormatChip>.wav / .aiff / .flac / .mp3 / .ogg (amostra)</FormatChip>
@@ -429,6 +430,12 @@ export default function HelpPanel() {
             <div className="help-formats-card">
               <h4>Nord Piano Library</h4>
               <div className="chips"><FormatChip accent>.npno</FormatChip></div>
+            </div>
+            <div className="help-formats-card">
+              <h4>Nord Sample Library</h4>
+              <div className="chips">
+                <FormatChip accent>.nsmp</FormatChip><FormatChip accent>.nsmp3</FormatChip><FormatChip accent>.nsmp4</FormatChip>
+              </div>
             </div>
             <div className="help-formats-card">
               <h4>Kontakt (legado)</h4>

@@ -16,6 +16,7 @@ release
 # Build artefacts do backend Tauri (Rust) — grandes e 100% regeneráveis a
 # partir do código em src-tauri/src e src-tauri/Cargo.toml.
 src-tauri/target
+native/npno-wasm/target
 src-tauri/gen
 
 # Chave privada de assinatura do auto-updater do Tauri — NUNCA commitar.

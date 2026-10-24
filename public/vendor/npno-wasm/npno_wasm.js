@@ -46,6 +46,52 @@ export class DecodedNpno {
 }
 if (Symbol.dispose) DecodedNpno.prototype[Symbol.dispose] = DecodedNpno.prototype.free;
 
+export class DecodedNsmp {
+    static __wrap(ptr) {
+        const obj = Object.create(DecodedNsmp.prototype);
+        obj.__wbg_ptr = ptr;
+        DecodedNsmpFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        DecodedNsmpFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_decodednsmp_free(ptr, 0);
+    }
+    /**
+     * @returns {string}
+     */
+    get metadata_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.decodednsmp_metadata_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * PCM de 16 bits (little-endian, nativo do wasm) de todas as zonas,
+     * concatenadas na ordem em que aparecem em `metadata_json().zones`.
+     * @returns {Uint8Array}
+     */
+    get pcm() {
+        const ret = wasm.decodednsmp_pcm(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+}
+if (Symbol.dispose) DecodedNsmp.prototype[Symbol.dispose] = DecodedNsmp.prototype.free;
+
 /**
  * Decodifica os bytes brutos de um arquivo `.npno` (biblioteca de piano Nord).
  * Lança uma exceção JS (string) se o arquivo não for um `.npno` válido.
@@ -89,6 +135,50 @@ export function npno_sniff(bytes) {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
 }
+
+/**
+ * Decodifica os bytes brutos de um arquivo `.nsmp`/`.nsmp3`/`.nsmp4` (amostra
+ * Nord Sample Library). Lança uma exceção JS (string) se o arquivo não for
+ * uma amostra Nord válida.
+ * @param {Uint8Array} bytes
+ * @returns {DecodedNsmp}
+ */
+export function nsmp_decode(bytes) {
+    const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.nsmp_decode(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return DecodedNsmp.__wrap(ret[0]);
+}
+
+/**
+ * Só confere a assinatura/estrutura do contêiner, sem decodificar áudio —
+ * mesma ideia de `npno_sniff`, mas para amostras `.nsmp`/`.nsmp3`/`.nsmp4`.
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+export function nsmp_sniff(bytes) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.nsmp_sniff(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
 function __wbg_get_imports() {
     const import0 = {
         __proto__: null,
@@ -119,6 +209,9 @@ function __wbg_get_imports() {
 const DecodedNpnoFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_decodednpno_free(ptr, 1));
+const DecodedNsmpFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_decodednsmp_free(ptr, 1));
 
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;

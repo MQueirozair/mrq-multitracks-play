@@ -55,6 +55,7 @@ const FORMAT_BADGE: Record<RackLayerFormat, string> = {
   dx7: 'FM YAMAHA / DX7',
   sampler: 'PIANO / AMOSTRA',
   npno: 'PIANO NORD / NPNO',
+  nsmp: 'AMOSTRA NORD / NSMP',
   nki: 'KONTAKT 1-4 / NKI',
   sfz: 'SFZ (K5-8 exportado)',
 };

@@ -10,6 +10,8 @@
 //! pelo codec proprietário (preditor de diferenças finitas) do próprio `nord-format`.
 //! O lado JS recorta esse buffer pelos offsets do JSON e monta os `AudioBuffer`s.
 use nord_format::formats::npno::{codec, Bank, Piano};
+use nord_format::formats::nsmp::codec as nsmp_codec;
+use nord_format::{from_stream as nord_from_stream, Entity};
 use serde::Serialize;
 use std::io::Cursor;
 use wasm_bindgen::prelude::*;
@@ -144,4 +146,153 @@ pub fn npno_sniff(bytes: &[u8]) -> Result<String, JsValue> {
         .map_err(|e| JsValue::from_str(&format!("{e}")))?;
     let (name, variant) = library.name();
     Ok(format!("{name}#{variant}"))
+}
+
+// ---------------------------------------------------------------------------
+// .nsmp / .nsmp3 / .nsmp4 — Nord Sample Library (amostras, não piano)
+//
+// Usa o MESMO crate `nord-format` que já decodifica o `.npno` acima: o formato
+// das três gerações de amostras compartilha a tag `nsmp` no contêiner CBIN, e
+// o crate já expõe uma API pronta (`Entity::Sample`, `Sample::zones()`,
+// `nsmp::codec::decode`) sem precisarmos escrever nenhum parser novo do zero.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct NsmpZoneMeta {
+    root_key: u8,
+    top_note: u8,
+    /// Nota mais grave da zona, quando a geração guarda isso (v3/v4). Nas
+    /// gerações onde as zonas se encostam (só o topo é guardado), fica None —
+    /// o lado JS deriva o grave a partir do topo da zona anterior.
+    low_note: Option<u8>,
+    channels: u16,
+    frames: u32,
+    /// deslocamento, em bytes, dentro do buffer de PCM devolvido por `pcm()`
+    offset: u32,
+    /// comprimento, em bytes, do trecho de PCM desta zona (frames * channels * 2)
+    length: u32,
+}
+
+#[derive(Serialize)]
+struct NsmpMeta {
+    name: String,
+    /// "nsmp" (Sample Library 2.0 e anteriores), "nsmp3" ou "nsmp4"
+    generation: String,
+    /// taxa de amostragem fixa do codec de amostras da Nord (35002 Hz, igual
+    /// nas três gerações — ver nsmp::codec::FIELD_RATE)
+    sample_rate: u32,
+    zones: Vec<NsmpZoneMeta>,
+    /// zonas cujo áudio não pôde ser decodificado (arquivo real, mas stroke
+    /// corrompido ou em variante que este codec ainda não cobre)
+    skipped: usize,
+}
+
+#[wasm_bindgen]
+pub struct DecodedNsmp {
+    metadata_json: String,
+    pcm: Vec<u8>,
+}
+
+#[wasm_bindgen]
+impl DecodedNsmp {
+    #[wasm_bindgen(getter)]
+    pub fn metadata_json(&self) -> String {
+        self.metadata_json.clone()
+    }
+
+    /// PCM de 16 bits (little-endian, nativo do wasm) de todas as zonas,
+    /// concatenadas na ordem em que aparecem em `metadata_json().zones`.
+    #[wasm_bindgen(getter)]
+    pub fn pcm(&self) -> Vec<u8> {
+        self.pcm.clone()
+    }
+}
+
+/// Decodifica os bytes brutos de um arquivo `.nsmp`/`.nsmp3`/`.nsmp4` (amostra
+/// Nord Sample Library). Lança uma exceção JS (string) se o arquivo não for
+/// uma amostra Nord válida.
+#[wasm_bindgen]
+pub fn nsmp_decode(bytes: &[u8]) -> Result<DecodedNsmp, JsValue> {
+    let mut cursor = Cursor::new(bytes);
+    let entity =
+        nord_from_stream(&mut cursor).map_err(|e| JsValue::from_str(&format!("{e}")))?;
+    let sample = match entity {
+        Entity::Sample(s) => s,
+        _ => {
+            return Err(JsValue::from_str(
+                "o arquivo não é uma amostra Nord (.nsmp/.nsmp3/.nsmp4) válida",
+            ))
+        }
+    };
+
+    let name = sample.name().unwrap_or_default();
+    let generation = sample.generation().to_string();
+    let layout = sample
+        .layout()
+        .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+    let zones = sample
+        .zones()
+        .map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+    let mut zones_meta = Vec::new();
+    let mut pcm: Vec<u8> = Vec::new();
+    let mut skipped = 0usize;
+
+    for zone in &zones {
+        match nsmp_codec::decode(zone.stream, zone.at, layout) {
+            Ok(audio) => {
+                let offset = pcm.len() as u32;
+                pcm.reserve(audio.samples.len() * 2);
+                for sample in &audio.samples {
+                    pcm.extend_from_slice(&sample.to_le_bytes());
+                }
+                let length = (pcm.len() as u32) - offset;
+                zones_meta.push(NsmpZoneMeta {
+                    root_key: zone.root_key,
+                    top_note: zone.top_note,
+                    low_note: zone.low_note,
+                    channels: audio.channels,
+                    frames: audio.frames() as u32,
+                    offset,
+                    length,
+                });
+            }
+            Err(_) => {
+                // Zona real mas que este decodificador não reconstrói (bloco fora do
+                // que o codec documentado cobre). Não interrompe o carregamento do
+                // resto da amostra; só essa zona fica muda.
+                skipped += 1;
+            }
+        }
+    }
+
+    let meta = NsmpMeta {
+        name,
+        generation,
+        sample_rate: nsmp_codec::FIELD_RATE,
+        zones: zones_meta,
+        skipped,
+    };
+    let metadata_json =
+        serde_json::to_string(&meta).map_err(|e| JsValue::from_str(&format!("{e}")))?;
+
+    Ok(DecodedNsmp { metadata_json, pcm })
+}
+
+/// Só confere a assinatura/estrutura do contêiner, sem decodificar áudio —
+/// mesma ideia de `npno_sniff`, mas para amostras `.nsmp`/`.nsmp3`/`.nsmp4`.
+#[wasm_bindgen]
+pub fn nsmp_sniff(bytes: &[u8]) -> Result<String, JsValue> {
+    let mut cursor = Cursor::new(bytes);
+    let entity =
+        nord_from_stream(&mut cursor).map_err(|e| JsValue::from_str(&format!("{e}")))?;
+    match entity {
+        Entity::Sample(s) => {
+            let name = s.name().unwrap_or_default();
+            Ok(format!("{name}#{}", s.generation()))
+        }
+        _ => Err(JsValue::from_str(
+            "o arquivo não é uma amostra Nord (.nsmp/.nsmp3/.nsmp4) válida",
+        )),
+    }
 }
