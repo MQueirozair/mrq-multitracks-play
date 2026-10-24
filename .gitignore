@@ -13,6 +13,16 @@ dist-ssr
 release
 *.local
 
+# Build artefacts do backend Tauri (Rust) — grandes e 100% regeneráveis a
+# partir do código em src-tauri/src e src-tauri/Cargo.toml.
+src-tauri/target
+src-tauri/gen
+
+# Chave privada de assinatura do auto-updater do Tauri — NUNCA commitar.
+# Gerada com `cargo tauri signer generate`; necessária (como variável de
+# ambiente TAURI_SIGNING_PRIVATE_KEY) só na hora de publicar um release.
+.secrets/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
