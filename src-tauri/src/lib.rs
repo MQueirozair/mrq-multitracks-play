@@ -67,6 +67,14 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Polyfill da Web MIDI API via Rust (midir) — necessário no macOS
+        // (WKWebView não implementa navigator.requestMIDIAccess de jeito
+        // nenhum) e usado também no Windows/Linux pra ter um único backend
+        // nativo de MIDI consistente em vez de depender da implementação
+        // própria (e possivelmente inconsistente) de cada motor de webview.
+        // O código do Rack (src/midi/*.ts) já usa só a API padrão
+        // navigator.requestMIDIAccess — nenhuma mudança necessária lá.
+        .plugin(tauri_plugin_midi::init())
         .register_asynchronous_uri_scheme_protocol("mrqfile", protocol::handle)
         .setup(|app| {
             let log_dir = app
