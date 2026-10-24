@@ -13,6 +13,11 @@ dist-ssr
 release
 *.local
 
+# Build artefacts do backend Tauri (Rust) — grandes e 100% regeneráveis a
+# partir do código em src-tauri/src e src-tauri/Cargo.toml.
+src-tauri/target
+src-tauri/gen
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

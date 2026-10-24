@@ -1,0 +1,122 @@
+mod fsops;
+mod logging;
+mod protocol;
+mod remote;
+
+use logging::LogState;
+use remote::RemoteManager;
+use std::sync::Arc;
+use tauri::Manager;
+
+#[tauri::command]
+async fn log_append(state: tauri::State<'_, Arc<LogState>>, line: String) -> Result<bool, ()> {
+    state.append(&line).await;
+    Ok(true)
+}
+
+#[tauri::command]
+fn log_get_path(state: tauri::State<'_, Arc<LogState>>) -> String {
+    state.log_path.to_string_lossy().to_string()
+}
+
+#[tauri::command]
+async fn log_read_tail(
+    state: tauri::State<'_, Arc<LogState>>,
+    max_chars: Option<usize>,
+) -> Result<String, ()> {
+    Ok(state.read_tail(max_chars.unwrap_or(200_000)).await)
+}
+
+#[tauri::command]
+async fn log_clear(state: tauri::State<'_, Arc<LogState>>) -> Result<bool, ()> {
+    state.clear().await;
+    Ok(true)
+}
+
+#[tauri::command]
+async fn remote_configure(
+    manager: tauri::State<'_, RemoteManager>,
+    enabled: bool,
+    port: u16,
+    pin: String,
+) -> Result<(), String> {
+    manager.configure(enabled, port, pin).await
+}
+
+#[tauri::command]
+async fn remote_broadcast_state(
+    manager: tauri::State<'_, RemoteManager>,
+    snapshot: serde_json::Value,
+) -> Result<(), ()> {
+    manager.broadcast_state(snapshot).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn remote_get_current_port(manager: tauri::State<'_, RemoteManager>) -> Result<Option<u16>, ()> {
+    Ok(manager.current_port().await)
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
+        .register_asynchronous_uri_scheme_protocol("mrqfile", protocol::handle)
+        .setup(|app| {
+            let log_dir = app
+                .path()
+                .app_data_dir()
+                .expect("não foi possível resolver o diretório de dados do app")
+                .join("logs");
+            let log_state = LogState::new(log_dir);
+            app.manage(log_state);
+
+            // A pasta remote-ui (frontend servido para o celular) é empacotada
+            // como resource do app; em dev usamos o caminho direto do repo.
+            let static_dir = app
+                .path()
+                .resource_dir()
+                .map(|p| p.join("remote-ui"))
+                .unwrap_or_else(|_| std::path::PathBuf::from("electron/remote-ui"));
+            let static_dir = if static_dir.exists() {
+                static_dir
+            } else {
+                std::path::PathBuf::from("electron/remote-ui")
+            };
+
+            let remote_manager = remote::new_manager(app.handle().clone(), static_dir);
+            app.manage(remote_manager);
+
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(log) = app_handle.try_state::<Arc<LogState>>() {
+                    log.append(&format!(
+                        "=== MRQ iniciado (Tauri) === versão={} plataforma={} arch={}",
+                        app_handle.package_info().version,
+                        std::env::consts::OS,
+                        std::env::consts::ARCH,
+                    ))
+                    .await;
+                }
+            });
+
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            fsops::scan_folder_tracks,
+            fsops::local_addresses,
+            log_append,
+            log_get_path,
+            log_read_tail,
+            log_clear,
+            remote_configure,
+            remote_broadcast_state,
+            remote_get_current_port,
+        ])
+        .run(tauri::generate_context!())
+        .expect("erro ao rodar a aplicação Tauri");
+}
