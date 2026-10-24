@@ -11,7 +11,7 @@
 // `window.api` antes deste módulo sequer existir no bundle de produção.
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import { open as openDialog, ask } from '@tauri-apps/plugin-dialog';
@@ -307,7 +307,17 @@ const api: MrqApi = {
     },
     scanFolderTracks: (folderPath: string) =>
       invoke<{ name: string; filePath: string }[]>('scan_folder_tracks', { folderPath }),
-    toFileUrl: async (filePath: string): Promise<string> => 'mrqfile://local-file/' + encodeURIComponent(filePath),
+    // IMPORTANTE: NÃO montar a URL "mrqfile://..." manualmente aqui. O Chromium
+    // (motor do WebView2, usado no Windows) só permite fetch() para um conjunto
+    // fixo de esquemas (http, https, data, etc.) — qualquer protocolo custom
+    // literal como "mrqfile://" é rejeitado na hora com "Failed to fetch", ANTES
+    // de qualquer verificação de CORS (por isso o cabeçalho Access-Control-*
+    // no handler Rust não resolvia nada). No Windows/Android o Tauri espera
+    // que a URL do protocolo custom seja "http://<scheme>.localhost/<path>" —
+    // é exatamente isso que convertFileSrc() monta automaticamente pra cada
+    // plataforma (mrqfile://localhost/<path> no macOS/Linux, que o WebKit aceita
+    // de boa via fetch()). Ver: https://v2.tauri.app/reference/javascript/api/namespacecore/#convertfilesrc
+    toFileUrl: async (filePath: string): Promise<string> => convertFileSrc(filePath, 'mrqfile'),
     openExternal: (url: string) => openUrl(url),
     chooseInstrumentFile: async (): Promise<string | null> => {
       const result = await openDialog({
