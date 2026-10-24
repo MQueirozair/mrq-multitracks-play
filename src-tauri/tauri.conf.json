@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "MRQ - Multitracks Play",
+  "productName": "MRQ Multitracks Play",
   "version": "0.2.0",
   "identifier": "com.mrq.multitracksplay",
   "build": {
@@ -56,7 +56,8 @@
     },
     "macOS": {
       "minimumSystemVersion": "10.15"
-    }
+    },
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "updater": {
