@@ -3,6 +3,7 @@ import { Minus, Monitor, Square, X } from 'lucide-react';
 import { useStore } from '../state/useStore';
 import SessionTimer from './SessionTimer';
 import RackMidiPanel from './RackMidiPanel';
+import ChordIndicator from './ChordIndicator';
 
 export default function TitleBar() {
   const engineState = useStore((s) => s.engineState);
@@ -31,6 +32,7 @@ export default function TitleBar() {
           <span className={`dot ${audioOk ? '' : 'off'}`} />
           {audioOk ? 'Áudio OK' : 'Sem áudio'}
         </div>
+        {nav === 'rack' && <ChordIndicator />}
         <div className="pill">
           <span className={`dot ${remoteInfo?.enabled ? '' : 'off'}`} />
           Remoto {remoteInfo?.enabled ? `:${remoteInfo.port}` : 'desligado'}

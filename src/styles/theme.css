@@ -89,6 +89,20 @@ input[type="range"] { accent-color: var(--accent); }
 .session-timer-reset:hover { opacity: 1; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; }
 .dot.off { background: #666; }
+
+/* ---------- mostrador de acorde em tempo real (Rack) ---------- */
+.chord-indicator {
+  border-color: #6d3fb8 !important;
+  background: #241433 !important;
+  color: #c9a6ff !important;
+  min-width: 38px; justify-content: center;
+  animation: chord-pop .12s ease-out;
+}
+.chord-indicator-label { font-weight: 700; font-size: 13px; letter-spacing: .02em; white-space: nowrap; }
+@keyframes chord-pop {
+  from { transform: scale(.88); opacity: .4; }
+  to { transform: scale(1); opacity: 1; }
+}
 .win-controls { display: flex; gap: 4px; -webkit-app-region: no-drag; }
 .win-controls button {
   width: 34px; height: 30px; border: none; background: transparent; color: var(--text-1);

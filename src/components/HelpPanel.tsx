@@ -511,6 +511,12 @@ export default function HelpPanel() {
             tocando o quê" sem precisar olhar pra tela de ajustes. A tecla <kbd>Esc</kbd> funciona como "pânico" —
             corta instantaneamente qualquer nota travada.
           </p>
+          <p>
+            Ao lado da pílula "Áudio OK", uma pílula roxa mostra em tempo real o <b>acorde</b> formado por todas as
+            notas tocadas agora (juntando as notas de todas as camadas e canais MIDI) — reconhece tríades, sétimas,
+            sus2/sus4, 6ª, 9ª, add9, diminuto, aumentado, power chords e inversões (mostradas como "Acorde/Baixo", ex.:{' '}
+            <code>C/E</code>). Some automaticamente quando nenhuma tecla está pressionada.
+          </p>
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Cenas do Rack (snapshots por Program Change)</h3>
           <p>
