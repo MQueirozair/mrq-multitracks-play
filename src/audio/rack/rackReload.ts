@@ -41,6 +41,7 @@ export function applyLayerParamsToEngine(index: number, layer: RackLayer) {
     feedback: layer.delayFeedback,
     mix: layer.delayMix,
   });
+  rackEngine.setLayerOctaver(index, { enabled: layer.octaverEnabled, mode: layer.octaverMode, mix: layer.octaverMix });
 }
 
 /** Relê o arquivo do disco (via IPC) e carrega de novo o instrumento numa camada, reaplicando os parâmetros do painel "Editar". */

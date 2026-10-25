@@ -531,12 +531,29 @@ export default function HelpPanel() {
             cada camada, abaixo do Drive.
           </p>
 
-          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Oitavador do MASTER</h3>
+          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Oitavador por camada</h3>
           <p>
-            No rodapé da coluna MASTER, o <b>oitavador</b> dobra toda nota tocada em QUALQUER camada numa oitava{' '}
-            <b>abaixo</b>, <b>acima</b> ou <b>ambas</b>, com um volume relativo ajustável — útil pra engrossar o som
-            geral do rack (ex.: dar um "sub" por baixo de um piano) sem precisar duplicar manualmente o instrumento
-            numa segunda camada transposta.
+            No painel "Editar" de cada camada (abaixo do Delay), o <b>oitavador</b> dobra toda nota tocada{' '}
+            <b>nessa camada</b> numa oitava <b>abaixo</b>, <b>acima</b> ou <b>ambas</b>, com um volume relativo
+            ajustável — útil pra engrossar o timbre dela (ex.: dar um "sub" por baixo de um piano) sem precisar
+            duplicar manualmente o instrumento numa segunda camada transposta. É independente por camada: pode ligar
+            numa e deixar as outras de fora.
+          </p>
+
+          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Transposição global no MASTER</h3>
+          <p>
+            A coluna MASTER também tem um controle de <b>transposição global</b> (±24 semitons) — o mesmo das
+            configurações de MIDI do teclado físico (ícone de piano na barra de título), só que acessível direto na
+            tela do Rack. Afeta toda nota antes de chegar em qualquer camada.
+          </p>
+
+          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Mapeamento de controles por MIDI CC</h3>
+          <p>
+            No painel de MIDI do Rack (ícone de piano na barra de título), a seção <b>"Mapear controles (CC)"</b>{' '}
+            deixa associar botões/faders físicos do seu teclado controlador a ações do Rack: volume e transposição
+            do MASTER, e por camada — volume, mudo, solo e oitavador. Clique em "Aprender" e mexa o controle físico
+            — faders mandam o valor contínuo (0-127) direto pro parâmetro; botões alternam liga/desliga a cada
+            toque.
           </p>
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Cenas do Rack (snapshots por Program Change)</h3>

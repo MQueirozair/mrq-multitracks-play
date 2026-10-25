@@ -671,10 +671,6 @@ input[type="range"] { accent-color: var(--accent); }
 .rack-panic-btn:hover { filter: brightness(1.2); }
 .rack-master-legend { font-size: 9.5px; color: var(--text-2); text-align: center; margin-top: auto; }
 
-.rack-octaver {
-  width: 100%; display: flex; flex-direction: column; gap: 6px;
-  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 10px 0;
-}
 .rack-octaver-modes { display: flex; gap: 4px; }
 .rack-octaver-mode-btn {
   flex: 1; padding: 5px 2px; font-size: 9.5px; font-weight: 700; border-radius: 6px;
@@ -692,10 +688,16 @@ input[type="range"] { accent-color: var(--accent); }
 .rack-midi-pill.on { border-color: var(--accent); color: var(--accent); }
 .rack-midi-popover {
   position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%);
-  width: 260px; z-index: 50; padding: 12px; display: flex; flex-direction: column; gap: 10px;
+  width: 260px; max-height: 80vh; overflow-y: auto; z-index: 50; padding: 12px; display: flex; flex-direction: column; gap: 10px;
   box-shadow: 0 10px 30px #0008; background: var(--bg-1); border: 1px solid var(--border);
 }
 .rack-midi-popover-title { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--text-1); }
+.rack-cc-map { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+.rack-cc-map-group-title {
+  font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--text-2);
+  margin-top: 6px; display: flex; align-items: center;
+}
+.rack-cc-map .rows-panel .row { padding: 5px 0; flex-wrap: wrap; gap: 4px; }
 .rack-checkbox-row { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text-1); cursor: pointer; }
 .rack-buffer-stepper { display: flex; align-items: center; gap: 8px; }
 .rack-buffer-step-btn {
@@ -733,7 +735,8 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .rack-edit-cell { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
 .rack-edit-cell:nth-child(3), .rack-edit-cell:nth-child(4),
-.rack-edit-cell:nth-child(5), .rack-edit-cell:nth-child(6) {
+.rack-edit-cell:nth-child(5), .rack-edit-cell:nth-child(6),
+.rack-edit-cell:nth-child(7) {
   border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); padding-top: 14px;
 }
 .rack-toggle-header {

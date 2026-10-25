@@ -102,6 +102,13 @@ export interface LayerDelaySettings {
   mix: number;
 }
 
+export interface LayerOctaverSettings {
+  enabled: boolean;
+  mode: RackOctaverMode;
+  /** 0..1 */
+  mix: number;
+}
+
 interface LayerRuntime {
   format: RackLayerFormat | null;
   voice: AnyLayerVoice | null;
@@ -116,8 +123,9 @@ interface LayerRuntime {
   midiChannel: number; // 0 = todos
   /** nota original (antes de oitava) -> nota de fato disparada na voz, pra soltar a mesma depois */
   activeNotes: Map<number, number>;
-  /** nota original -> notas extras disparadas pelo oitavador do MASTER (ver RackEngine.noteOn/noteOff), pra soltar junto */
+  /** nota original -> notas extras disparadas pelo oitavador DESTA camada (ver RackEngine.noteOn/noteOff), pra soltar junto */
   octaverNotes: Map<number, number[]>;
+  octaver: LayerOctaverSettings;
 
   // cadeia de áudio (ver connectChain): voice -> envelopeGain -> cutoffFilter ->
   // eqLow -> eqMid -> eqHigh -> drivePreGain -> (dry + wet via shaper) -> driveSum
@@ -261,9 +269,6 @@ export class RackEngine {
   private layers: LayerRuntime[] = [];
   private reverbAmount = 0;
   private masterVolume = 0.8;
-  private octaverEnabled = false;
-  private octaverMode: RackOctaverMode = 'down';
-  private octaverMix = 0.7;
   /** tamanho de buffer "desejado", em amostras (0 = automático) — ver setBufferFrames() */
   private bufferFrames = 0;
 
@@ -452,25 +457,47 @@ export class RackEngine {
     driveWet.connect(volumeGain);
     volumeGain.connect(panNode);
     panNode.connect(characterFilter);
-    characterFilter.connect(compressorNode);
-    compressorNode.connect(compressorMakeupGain);
-    compressorMakeupGain.connect(delayDryGain);
-    compressorMakeupGain.connect(delayNode);
-    delayNode.connect(delayFeedbackGain);
-    delayFeedbackGain.connect(delayNode);
-    delayNode.connect(delayWetGain);
-    delayDryGain.connect(delayOutMix);
-    delayWetGain.connect(delayOutMix);
-    delayOutMix.connect(masterGain);
-    delayOutMix.connect(reverbSendGain);
-    reverbSendGain.connect(reverbBus);
+
+    // Rede de segurança: a cadeia nova (compressor/delay/envio de reverb por
+    // camada) é só "tempero" por cima do som básico — se por QUALQUER motivo
+    // (plataforma/driver específico etc.) a montagem dela falhar, a camada
+    // NUNCA pode ficar muda por causa disso. Em caso de erro, a ligação cai
+    // pro grafo simples de antes desses efeitos existirem (characterFilter
+    // direto pro master/reverb compartilhado), e os nós novos ficam criados
+    // mas sem efeito algum (os setters continuam funcionando sem travar).
+    let postCharacterOutput: AudioNode = characterFilter;
+    try {
+      characterFilter.connect(compressorNode);
+      compressorNode.connect(compressorMakeupGain);
+      compressorMakeupGain.connect(delayDryGain);
+      compressorMakeupGain.connect(delayNode);
+      delayNode.connect(delayFeedbackGain);
+      delayFeedbackGain.connect(delayNode);
+      delayNode.connect(delayWetGain);
+      delayDryGain.connect(delayOutMix);
+      delayWetGain.connect(delayOutMix);
+      delayOutMix.connect(masterGain);
+      delayOutMix.connect(reverbSendGain);
+      reverbSendGain.connect(reverbBus);
+      postCharacterOutput = delayOutMix;
+    } catch (err) {
+      console.error('[rack] falha ao montar compressor/delay/reverb por camada — usando cadeia simples pra garantir som', err);
+      try {
+        characterFilter.disconnect();
+      } catch {
+        // ignora — já estava desconectado
+      }
+      characterFilter.connect(masterGain);
+      characterFilter.connect(reverbBus);
+      postCharacterOutput = characterFilter;
+    }
 
     // Tap passivo (não precisa de .connect() pra frente) pro medidor de nível
     // de cada card — ver getLayerLevel().
     const meterAnalyser = ctx.createAnalyser();
     meterAnalyser.fftSize = 256;
     meterAnalyser.smoothingTimeConstant = 0.6;
-    delayOutMix.connect(meterAnalyser);
+    postCharacterOutput.connect(meterAnalyser);
 
     return {
       format: null,
@@ -484,6 +511,7 @@ export class RackEngine {
       midiChannel: 0,
       activeNotes: new Map(),
       octaverNotes: new Map(),
+      octaver: { enabled: false, mode: 'down', mix: 0.7 },
       envelopeGain,
       envelope: { enabled: false, attackMs: 5, releaseMs: 350 },
       cutoffFilter,
@@ -773,17 +801,19 @@ export class RackEngine {
   }
 
   /**
-   * Oitavador do MASTER: quando ligado, toda nota tocada em QUALQUER camada
-   * (que já atenda a faixa de nota/canal dela) também dispara uma cópia uma
-   * oitava abaixo e/ou acima, com volume relativo `mix` (fração da velocity
-   * original) — útil pra engrossar o som geral do rack sem duplicar o
-   * instrumento manualmente em outra camada. Só afeta notas tocadas DEPOIS
-   * da mudança; não retroage em notas já seguras no momento da troca.
+   * Oitavador DESTA camada: quando ligado, toda nota tocada nela (que já
+   * atenda a faixa de nota/canal da própria camada) também dispara uma
+   * cópia uma oitava abaixo e/ou acima, com volume relativo `mix` (fração
+   * da velocity original) — útil pra engrossar o timbre de uma camada
+   * específica sem duplicar o instrumento manualmente em outra camada. Só
+   * afeta notas tocadas DEPOIS da mudança; não retroage em notas já
+   * seguras no momento da troca. Independente por camada (era um controle
+   * único do MASTER antes, ver histórico).
    */
-  setOctaver(settings: { enabled: boolean; mode: RackOctaverMode; mix: number }) {
-    this.octaverEnabled = settings.enabled;
-    this.octaverMode = settings.mode;
-    this.octaverMix = Math.min(1, Math.max(0, settings.mix));
+  setLayerOctaver(index: number, settings: LayerOctaverSettings) {
+    const layer = this.layers[index];
+    if (!layer) return;
+    layer.octaver = { ...settings, mix: Math.min(1, Math.max(0, settings.mix)) };
   }
 
   /**
@@ -804,21 +834,21 @@ export class RackEngine {
       layer.activeNotes.set(note, shifted);
       layer.voice.noteOn(shifted, velocity);
 
-      // Oitavador do MASTER: dispara cópia(s) extra(s) da mesma nota uma
+      // Oitavador DESTA camada: dispara cópia(s) extra(s) da mesma nota uma
       // oitava abaixo/acima, com velocity reduzida por `octaverMix` — some
       // silenciosamente (sem clampar pra dentro de 0-127) quando a nota
       // extra estouraria a faixa MIDI, em vez de duplicar numa altura errada.
-      if (this.octaverEnabled) {
+      if (layer.octaver.enabled) {
         const extras: number[] = [];
-        const extraVelocity = Math.max(1, Math.min(127, Math.round(velocity * this.octaverMix)));
-        if (this.octaverMode === 'down' || this.octaverMode === 'both') {
+        const extraVelocity = Math.max(1, Math.min(127, Math.round(velocity * layer.octaver.mix)));
+        if (layer.octaver.mode === 'down' || layer.octaver.mode === 'both') {
           const down = shifted - 12;
           if (down >= 0) {
             layer.voice.noteOn(down, extraVelocity);
             extras.push(down);
           }
         }
-        if (this.octaverMode === 'up' || this.octaverMode === 'both') {
+        if (layer.octaver.mode === 'up' || layer.octaver.mode === 'both') {
           const up = shifted + 12;
           if (up <= 127) {
             layer.voice.noteOn(up, extraVelocity);

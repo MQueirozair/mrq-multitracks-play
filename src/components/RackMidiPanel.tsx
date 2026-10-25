@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Minus, Piano, Plus } from 'lucide-react';
+import { ChevronDown, ChevronUp, Minus, Piano, Plus } from 'lucide-react';
 import { useStore } from '../state/useStore';
 import { rackEngine, RACK_BUFFER_OPTIONS } from '../audio/rack/RackEngine';
 import { reloadAllRackLayers } from '../audio/rack/rackReload';
+import { armLearn, cancelLearn } from '../midi/midiController';
 import {
   initRackMidi,
   isRackMidiSupported,
@@ -13,12 +14,28 @@ import {
   setRackTranspose,
   setRackVelocityCurve,
 } from '../midi/rackMidiRouter';
-import type { RackVelocityCurve } from '../../shared/types';
+import type { MidiBinding, RackVelocityCurve } from '../../shared/types';
 
 const VELOCITY_OPTIONS: { value: RackVelocityCurve; label: string }[] = [
   { value: 'linear', label: 'Linear' },
   { value: 'soft', label: 'Suave' },
   { value: 'hard', label: 'Dura' },
+];
+
+/** Ações do MASTER mapeáveis por CC — ver dispatcher em MidiBridge.tsx. */
+const MASTER_CC_ACTIONS: { action: string; label: string }[] = [
+  { action: 'rack:master:volume', label: 'Volume do MASTER (fader)' },
+  { action: 'rack:master:reverb', label: 'Reverb do MASTER (fader)' },
+  { action: 'rack:master:transpose', label: 'Transposição do MASTER (fader)' },
+  { action: 'rack:master:panic', label: 'Parar notas — PANIC (botão)' },
+];
+
+/** Ações por camada mapeáveis por CC — `layerIndex` é preenchido na hora de montar a lista. */
+const LAYER_CC_ACTIONS: { action: string; label: string }[] = [
+  { action: 'rack:layer:volume', label: 'Volume (fader)' },
+  { action: 'rack:layer:mute', label: 'Mudo (botão)' },
+  { action: 'rack:layer:solo', label: 'Solo (botão)' },
+  { action: 'rack:layer:octaver', label: 'Oitavador liga/desliga (botão)' },
 ];
 
 function formatMs(ms: number): string {
@@ -40,14 +57,38 @@ export default function RackMidiPanel() {
   const rack = useStore((s) => s.settings.rack);
   const updateRack = useStore((s) => s.updateRack);
   const pushToast = useStore((s) => s.pushToast);
+  const midiBindings = useStore((s) => s.settings.midiBindings);
+  const addMidiBinding = useStore((s) => s.addMidiBinding);
+  const removeMidiBinding = useStore((s) => s.removeMidiBinding);
   const [open, setOpen] = useState(false);
   const [midiReady, setMidiReady] = useState(false);
   const [midiInputs, setMidiInputs] = useState<{ id: string; name: string }[]>([]);
   const [applyingBuffer, setApplyingBuffer] = useState(false);
   const [latencyMs, setLatencyMs] = useState<number | null>(null);
+  const [ccMapOpen, setCcMapOpen] = useState(false);
+  const [learningKey, setLearningKey] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const rackRef = useRef(rack);
   rackRef.current = rack;
+
+  function ccBindingLabel(action: string, layerIndex?: number): string {
+    const b = midiBindings.find((x) => x.action === action && x.layerIndex === layerIndex);
+    if (!b) return 'sem controle';
+    return `${b.type === 'note' ? 'Nota' : 'CC'} ${b.number} · ch${b.channel}`;
+  }
+
+  function learnCc(key: string, action: string, layerIndex?: number) {
+    setLearningKey(key);
+    armLearn((msg) => {
+      setLearningKey(null);
+      removeMidiBinding((b: MidiBinding) => b.action === action && b.layerIndex === layerIndex);
+      addMidiBinding({ action, layerIndex, type: msg.type, channel: msg.channel, number: msg.number });
+    });
+  }
+
+  function clearCc(action: string, layerIndex?: number) {
+    removeMidiBinding((b: MidiBinding) => b.action === action && b.layerIndex === layerIndex);
+  }
 
   // Mede a latência real (não só o pedido) do AudioContext atual pra mostrar
   // no painel — atualiza sempre que o painel abre ou o buffer muda.
@@ -230,6 +271,91 @@ export default function RackMidiPanel() {
               <button className="btn rack-panic-btn" style={{ marginTop: 4 }} onClick={() => rackEngine.panic()}>
                 PARAR NOTAS
               </button>
+
+              <button
+                type="button"
+                className="btn"
+                style={{ marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                onClick={() => setCcMapOpen((v) => !v)}
+              >
+                {ccMapOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                Mapear controles (CC)
+              </button>
+
+              {ccMapOpen && (
+                <div className="rack-cc-map">
+                  <div style={{ color: 'var(--text-2)', fontSize: 10.5, marginBottom: 2 }}>
+                    Clique em "Aprender" e mexa um botão/fader do seu teclado controlador. Faders usam o valor
+                    contínuo (0-127); botões alternam liga/desliga a cada toque.
+                  </div>
+
+                  <div className="rack-cc-map-group-title">MASTER</div>
+                  <div className="rows-panel">
+                    {MASTER_CC_ACTIONS.map(({ action, label }) => {
+                      const key = `master:${action}`;
+                      return (
+                        <div className="row" key={key}>
+                          <span className="name" style={{ fontSize: 11.5 }}>{label}</span>
+                          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                            <span style={{ fontSize: 10.5, color: 'var(--text-2)' }}>
+                              {learningKey === key ? 'aperte/mexa…' : ccBindingLabel(action)}
+                            </span>
+                            <button type="button" className="btn" onClick={() => learnCc(key, action)}>
+                              Aprender
+                            </button>
+                            <button type="button" className="btn ghost" onClick={() => clearCc(action)}>
+                              Limpar
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {rack.layers.map((layer, index) => (
+                    <div key={layer.id}>
+                      <div className="rack-cc-map-group-title">
+                        <span style={{ width: 8, height: 8, borderRadius: 3, background: layer.color, display: 'inline-block', marginRight: 6 }} />
+                        {layer.displayName ?? `Camada ${index + 1}`}
+                      </div>
+                      <div className="rows-panel">
+                        {LAYER_CC_ACTIONS.map(({ action, label }) => {
+                          const key = `layer${index}:${action}`;
+                          return (
+                            <div className="row" key={key}>
+                              <span className="name" style={{ fontSize: 11.5 }}>{label}</span>
+                              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                                <span style={{ fontSize: 10.5, color: 'var(--text-2)' }}>
+                                  {learningKey === key ? 'aperte/mexa…' : ccBindingLabel(action, index)}
+                                </span>
+                                <button type="button" className="btn" onClick={() => learnCc(key, action, index)}>
+                                  Aprender
+                                </button>
+                                <button type="button" className="btn ghost" onClick={() => clearCc(action, index)}>
+                                  Limpar
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+
+                  {learningKey && (
+                    <button
+                      className="btn danger"
+                      style={{ marginTop: 4 }}
+                      onClick={() => {
+                        cancelLearn();
+                        setLearningKey(null);
+                      }}
+                    >
+                      Cancelar aprendizado
+                    </button>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <div style={{ color: 'var(--text-2)', fontSize: 12 }}>MIDI não suportado neste ambiente.</div>

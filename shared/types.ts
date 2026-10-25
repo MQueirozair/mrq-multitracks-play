@@ -159,7 +159,29 @@ export interface MidiBinding {
   number: number;
   /** para teclas por tipo de parte: qual tipo essa tecla ativa */
   partType?: PartType;
+  /** para ações do Rack que têm uma camada específica (ex.: "rack:layer:volume"): índice da camada (0-5) */
+  layerIndex?: number;
 }
+
+/**
+ * Ações do Rack que podem ser mapeadas num CC/botão do teclado MIDI físico
+ * (ver RackMidiCcPanel). "fader" = usa o VALOR contínuo (0-127) do CC pra
+ * controlar algo direto (volume, reverb, transposição); "trigger" = qualquer
+ * mensagem (nota ligada ou CC, não importa o valor) alterna um liga/desliga.
+ */
+export const RACK_CC_FADER_ACTIONS = [
+  'rack:layer:volume',
+  'rack:master:volume',
+  'rack:master:reverb',
+  'rack:master:transpose',
+] as const;
+export const RACK_CC_TRIGGER_ACTIONS = [
+  'rack:layer:mute',
+  'rack:layer:solo',
+  'rack:layer:octaver',
+  'rack:master:panic',
+] as const;
+export type RackCcAction = (typeof RACK_CC_FADER_ACTIONS)[number] | (typeof RACK_CC_TRIGGER_ACTIONS)[number];
 
 /**
  * Rack de instrumentos "ao vivo" (6 camadas simultâneas tocadas por um teclado
@@ -199,7 +221,7 @@ export interface RackPresetOption {
 /** Tipo de saturação/drive aplicado por camada no painel "Editar". */
 export type RackDriveType = 'warm' | 'hard' | 'tube';
 
-/** Modo do oitavador do MASTER (ver InstrumentRackState.octaverMode): em qual direção dobrar cada nota tocada em qualquer camada. */
+/** Modo do oitavador da camada (ver RackLayer.octaverMode): em qual direção dobrar cada nota tocada nesta camada. */
 export type RackOctaverMode = 'down' | 'up' | 'both';
 
 export interface RackLayer {
@@ -286,6 +308,19 @@ export interface RackLayer {
   delayFeedback: number;
   /** mistura seco/processado, 0..1 */
   delayMix: number;
+
+  /**
+   * Oitavador POR CAMADA: dobra toda nota tocada nesta camada (só nesta,
+   * não nas outras) numa oitava abaixo/acima/ambas, pra engrossar o timbre
+   * dela sem precisar duplicar o instrumento em outra camada. Era um
+   * controle único do MASTER (afetava todas as camadas juntas) — por
+   * pedido do usuário, virou independente por camada, pra poder ligar numa
+   * e deixar outra de fora.
+   */
+  octaverEnabled: boolean;
+  octaverMode: RackOctaverMode;
+  /** 0..1 — volume relativo (fração da velocity original) das notas extras geradas pelo oitavador */
+  octaverMix: number;
 }
 
 /** Curva de resposta de velocidade aplicada à entrada MIDI física inteira do rack. */
@@ -304,10 +339,6 @@ export interface RackScene {
   layers: RackLayer[];
   masterVolume: number;
   reverb: number;
-  /** oitavador do master — opcional pra cenas salvas antes deste recurso existir (ver migração em loadRackScene). */
-  octaverEnabled?: boolean;
-  octaverMode?: RackOctaverMode;
-  octaverMix?: number;
 }
 
 export interface InstrumentRackState {
@@ -335,15 +366,6 @@ export interface InstrumentRackState {
   bufferFrames: number;
   /** cenas salvas (configuração completa das 4 camadas) — ver RackScene */
   scenes: RackScene[];
-  /**
-   * Oitavador do MASTER: dobra toda nota tocada em QUALQUER camada numa
-   * oitava abaixo/acima/ambas (ver RackEngine.noteOn), pra engrossar o som
-   * geral do rack sem precisar duplicar o instrumento em outra camada.
-   */
-  octaverEnabled: boolean;
-  octaverMode: RackOctaverMode;
-  /** 0..1 — volume relativo (fração da velocity original) das notas extras geradas pelo oitavador */
-  octaverMix: number;
   /** mostra (ou não) a pílula de acorde detectado ao lado de "Áudio OK", quando a aba Rack está aberta */
   chordDisplayEnabled: boolean;
 }
@@ -413,6 +435,9 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     delayTimeMs: 300,
     delayFeedback: 0.3,
     delayMix: 0.35,
+    octaverEnabled: false,
+    octaverMode: 'down',
+    octaverMix: 0.7,
   };
 }
 
@@ -436,9 +461,6 @@ export const DEFAULT_RACK_STATE: InstrumentRackState = {
   sustainEnabled: true,
   bufferFrames: 0,
   scenes: [],
-  octaverEnabled: false,
-  octaverMode: 'down',
-  octaverMix: 0.7,
   chordDisplayEnabled: true,
 };
 
