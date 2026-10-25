@@ -184,6 +184,15 @@ export default function RackMidiPanel() {
                 Pedal de sustain (CC64) segura as notas
               </label>
 
+              <label className="rack-checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={rack.chordDisplayEnabled}
+                  onChange={(e) => updateRack({ chordDisplayEnabled: e.target.checked })}
+                />
+                Mostrar acorde detectado ao lado de "Áudio OK"
+              </label>
+
               <div className="rack-field">
                 <label>
                   Buffer de áudio ({bufferLabel(rack.bufferFrames ?? 0)}

@@ -1,4 +1,4 @@
-import type { RackCharacter, RackDriveType, RackLayerFormat, RackPresetOption } from '../../../shared/types';
+import type { RackCharacter, RackDriveType, RackLayerFormat, RackOctaverMode, RackPresetOption } from '../../../shared/types';
 import { RACK_LAYER_COUNT } from '../../../shared/types';
 import { Sf2LayerVoice } from './Sf2LayerVoice';
 import { Dx7LayerVoice } from './Dx7LayerVoice';
@@ -82,6 +82,26 @@ export interface LayerDriveSettings {
   mix: number;
 }
 
+export interface LayerReverbSettings {
+  enabled: boolean;
+  /** 0..1 */
+  send: number;
+}
+
+export interface LayerCompressorSettings {
+  enabled: boolean;
+  thresholdDb: number;
+  ratio: number;
+  makeupDb: number;
+}
+
+export interface LayerDelaySettings {
+  enabled: boolean;
+  timeMs: number;
+  feedback: number;
+  mix: number;
+}
+
 interface LayerRuntime {
   format: RackLayerFormat | null;
   voice: AnyLayerVoice | null;
@@ -96,6 +116,8 @@ interface LayerRuntime {
   midiChannel: number; // 0 = todos
   /** nota original (antes de oitava) -> nota de fato disparada na voz, pra soltar a mesma depois */
   activeNotes: Map<number, number>;
+  /** nota original -> notas extras disparadas pelo oitavador do MASTER (ver RackEngine.noteOn/noteOff), pra soltar junto */
+  octaverNotes: Map<number, number[]>;
 
   // cadeia de áudio (ver connectChain): voice -> envelopeGain -> cutoffFilter ->
   // eqLow -> eqMid -> eqHigh -> drivePreGain -> (dry + wet via shaper) -> driveSum
@@ -121,6 +143,21 @@ interface LayerRuntime {
   drive: LayerDriveSettings;
   volumeGain: GainNode;
   characterFilter: BiquadFilterNode;
+
+  // cadeia pós-caráter (ver connectChain): characterFilter -> compressor ->
+  // makeupGain -> { delayDry -> delayOutMix, delayNode -> delayWetGain -> delayOutMix }
+  // -> { masterGain, reverbSendGain -> reverbBus (compartilhado) }
+  compressorNode: DynamicsCompressorNode;
+  compressorMakeupGain: GainNode;
+  compressor: LayerCompressorSettings;
+  delayNode: DelayNode;
+  delayFeedbackGain: GainNode;
+  delayDryGain: GainNode;
+  delayWetGain: GainNode;
+  delayOutMix: GainNode;
+  delay: LayerDelaySettings;
+  reverbSendGain: GainNode;
+  reverb: LayerReverbSettings;
 }
 
 function applyCharacter(filter: BiquadFilterNode, character: RackCharacter) {
@@ -224,6 +261,9 @@ export class RackEngine {
   private layers: LayerRuntime[] = [];
   private reverbAmount = 0;
   private masterVolume = 0.8;
+  private octaverEnabled = false;
+  private octaverMode: RackOctaverMode = 'down';
+  private octaverMix = 0.7;
   /** tamanho de buffer "desejado", em amostras (0 = automático) — ver setBufferFrames() */
   private bufferFrames = 0;
 
@@ -364,9 +404,42 @@ export class RackEngine {
     const characterFilter = ctx.createBiquadFilter();
     applyCharacter(characterFilter, 'original');
 
+    // Compressor por camada — desligado por padrão é "transparente" (ratio
+    // 1:1 não comprime nada), em vez de bypassar o nó, pra não precisar
+    // reconectar o grafo toda vez que o usuário liga/desliga.
+    const compressorNode = ctx.createDynamicsCompressor();
+    compressorNode.threshold.value = -24;
+    compressorNode.knee.value = 24;
+    compressorNode.ratio.value = 1;
+    compressorNode.attack.value = 0.003;
+    compressorNode.release.value = 0.25;
+    const compressorMakeupGain = ctx.createGain();
+    compressorMakeupGain.gain.value = 1;
+
+    // Delay (eco) por camada — via barramento seco/molhado em paralelo, pra
+    // poder ter mix 0 (totalmente limpo) sem desconectar nada.
+    const delayNode = ctx.createDelay(2);
+    delayNode.delayTime.value = 0.3;
+    const delayFeedbackGain = ctx.createGain();
+    delayFeedbackGain.gain.value = 0;
+    const delayDryGain = ctx.createGain();
+    delayDryGain.gain.value = 1;
+    const delayWetGain = ctx.createGain();
+    delayWetGain.gain.value = 0;
+    const delayOutMix = ctx.createGain();
+    delayOutMix.gain.value = 1;
+
+    // Envio por camada pro barramento de reverb compartilhado do rack (ver
+    // MASTER > Reverb, que controla o retorno geral) — padrão 1 (100%)
+    // preserva o comportamento de antes deste controle existir.
+    const reverbSendGain = ctx.createGain();
+    reverbSendGain.gain.value = 1;
+
     // voice.output (ligado depois, em loadLayer) -> envelopeGain -> cutoffFilter
     // -> eqLow -> eqMid -> eqHigh -> drivePreGain -> { driveDry, driveShaper->driveWet }
-    // -> volumeGain -> panNode -> characterFilter -> masterGain/reverbBus
+    // -> volumeGain -> panNode -> characterFilter -> compressorNode -> compressorMakeupGain
+    // -> { delayDryGain, delayNode(+feedback)->delayWetGain } -> delayOutMix
+    // -> { masterGain, reverbSendGain -> reverbBus (compartilhado) }
     envelopeGain.connect(cutoffFilter);
     cutoffFilter.connect(eqLow);
     eqLow.connect(eqMid);
@@ -379,15 +452,25 @@ export class RackEngine {
     driveWet.connect(volumeGain);
     volumeGain.connect(panNode);
     panNode.connect(characterFilter);
-    characterFilter.connect(masterGain);
-    characterFilter.connect(reverbBus);
+    characterFilter.connect(compressorNode);
+    compressorNode.connect(compressorMakeupGain);
+    compressorMakeupGain.connect(delayDryGain);
+    compressorMakeupGain.connect(delayNode);
+    delayNode.connect(delayFeedbackGain);
+    delayFeedbackGain.connect(delayNode);
+    delayNode.connect(delayWetGain);
+    delayDryGain.connect(delayOutMix);
+    delayWetGain.connect(delayOutMix);
+    delayOutMix.connect(masterGain);
+    delayOutMix.connect(reverbSendGain);
+    reverbSendGain.connect(reverbBus);
 
     // Tap passivo (não precisa de .connect() pra frente) pro medidor de nível
     // de cada card — ver getLayerLevel().
     const meterAnalyser = ctx.createAnalyser();
     meterAnalyser.fftSize = 256;
     meterAnalyser.smoothingTimeConstant = 0.6;
-    characterFilter.connect(meterAnalyser);
+    delayOutMix.connect(meterAnalyser);
 
     return {
       format: null,
@@ -400,6 +483,7 @@ export class RackEngine {
       octave: 0,
       midiChannel: 0,
       activeNotes: new Map(),
+      octaverNotes: new Map(),
       envelopeGain,
       envelope: { enabled: false, attackMs: 5, releaseMs: 350 },
       cutoffFilter,
@@ -416,6 +500,17 @@ export class RackEngine {
       volumeGain,
       panNode,
       characterFilter,
+      compressorNode,
+      compressorMakeupGain,
+      compressor: { enabled: false, thresholdDb: -24, ratio: 4, makeupDb: 0 },
+      delayNode,
+      delayFeedbackGain,
+      delayDryGain,
+      delayWetGain,
+      delayOutMix,
+      delay: { enabled: false, timeMs: 300, feedback: 0.3, mix: 0.35 },
+      reverbSendGain,
+      reverb: { enabled: true, send: 1 },
       pitchBendSemitones: 0,
       meterAnalyser,
       meterBuf: new Float32Array(meterAnalyser.fftSize),
@@ -456,6 +551,7 @@ export class RackEngine {
     const layer = this.layers[index];
     layer.voice?.dispose();
     layer.activeNotes.clear();
+    layer.octaverNotes.clear();
     let voice: AnyLayerVoice;
     let presets: RackPresetOption[] = [];
     if (format === 'sf2') {
@@ -499,6 +595,7 @@ export class RackEngine {
     layer.voice = null;
     layer.format = null;
     layer.activeNotes.clear();
+    layer.octaverNotes.clear();
   }
 
   selectPreset(index: number, value: string) {
@@ -593,6 +690,48 @@ export class RackEngine {
     layer.driveDry.gain.setTargetAtTime(1 - wetAmount, now, 0.01);
   }
 
+  // --- reverb (envio por camada pro barramento compartilhado) ---
+
+  setLayerReverb(index: number, settings: LayerReverbSettings) {
+    const layer = this.layers[index];
+    if (!layer || !this.ctx) return;
+    layer.reverb = settings;
+    const send = settings.enabled ? settings.send : 0;
+    layer.reverbSendGain.gain.setTargetAtTime(send, this.ctx.currentTime, 0.01);
+  }
+
+  // --- compressor ---
+
+  setCompressor(index: number, settings: LayerCompressorSettings) {
+    const layer = this.layers[index];
+    if (!layer || !this.ctx) return;
+    layer.compressor = settings;
+    const now = this.ctx.currentTime;
+    // Desligado = transparente: threshold 0dB + ratio 1:1 não comprime nada,
+    // sem precisar desconectar o nó do grafo.
+    const threshold = settings.enabled ? settings.thresholdDb : 0;
+    const ratio = settings.enabled ? settings.ratio : 1;
+    const makeup = settings.enabled ? settings.makeupDb : 0;
+    layer.compressorNode.threshold.setTargetAtTime(threshold, now, 0.01);
+    layer.compressorNode.ratio.setTargetAtTime(ratio, now, 0.01);
+    layer.compressorMakeupGain.gain.setTargetAtTime(Math.pow(10, makeup / 20), now, 0.01);
+  }
+
+  // --- delay (eco) ---
+
+  setDelay(index: number, settings: LayerDelaySettings) {
+    const layer = this.layers[index];
+    if (!layer || !this.ctx) return;
+    layer.delay = settings;
+    const now = this.ctx.currentTime;
+    layer.delayNode.delayTime.setTargetAtTime(Math.max(0, settings.timeMs) / 1000, now, 0.01);
+    const feedback = settings.enabled ? Math.min(0.9, Math.max(0, settings.feedback)) : 0;
+    layer.delayFeedbackGain.gain.setTargetAtTime(feedback, now, 0.01);
+    const wet = settings.enabled ? settings.mix : 0;
+    layer.delayWetGain.gain.setTargetAtTime(wet, now, 0.01);
+    layer.delayDryGain.gain.setTargetAtTime(1, now, 0.01); // dry sempre 100% — o delay só soma eco por cima, nunca "rouba" o sinal limpo
+  }
+
   setLayerVolume(index: number, volume: number) {
     const layer = this.layers[index];
     if (!layer) return;
@@ -634,6 +773,20 @@ export class RackEngine {
   }
 
   /**
+   * Oitavador do MASTER: quando ligado, toda nota tocada em QUALQUER camada
+   * (que já atenda a faixa de nota/canal dela) também dispara uma cópia uma
+   * oitava abaixo e/ou acima, com volume relativo `mix` (fração da velocity
+   * original) — útil pra engrossar o som geral do rack sem duplicar o
+   * instrumento manualmente em outra camada. Só afeta notas tocadas DEPOIS
+   * da mudança; não retroage em notas já seguras no momento da troca.
+   */
+  setOctaver(settings: { enabled: boolean; mode: RackOctaverMode; mix: number }) {
+    this.octaverEnabled = settings.enabled;
+    this.octaverMode = settings.mode;
+    this.octaverMix = Math.min(1, Math.max(0, settings.mix));
+  }
+
+  /**
    * Dispara uma nota em todas as camadas compatíveis (faixa de nota + canal
    * MIDI configurados no painel "Editar"), aplicando a transposição de oitava
    * de cada camada. `channel` é 1-16 (canal MIDI "humano"), ou undefined
@@ -650,6 +803,31 @@ export class RackEngine {
       const wasEmpty = layer.activeNotes.size === 0;
       layer.activeNotes.set(note, shifted);
       layer.voice.noteOn(shifted, velocity);
+
+      // Oitavador do MASTER: dispara cópia(s) extra(s) da mesma nota uma
+      // oitava abaixo/acima, com velocity reduzida por `octaverMix` — some
+      // silenciosamente (sem clampar pra dentro de 0-127) quando a nota
+      // extra estouraria a faixa MIDI, em vez de duplicar numa altura errada.
+      if (this.octaverEnabled) {
+        const extras: number[] = [];
+        const extraVelocity = Math.max(1, Math.min(127, Math.round(velocity * this.octaverMix)));
+        if (this.octaverMode === 'down' || this.octaverMode === 'both') {
+          const down = shifted - 12;
+          if (down >= 0) {
+            layer.voice.noteOn(down, extraVelocity);
+            extras.push(down);
+          }
+        }
+        if (this.octaverMode === 'up' || this.octaverMode === 'both') {
+          const up = shifted + 12;
+          if (up <= 127) {
+            layer.voice.noteOn(up, extraVelocity);
+            extras.push(up);
+          }
+        }
+        if (extras.length) layer.octaverNotes.set(note, extras);
+      }
+
       if (layer.envelope.enabled && wasEmpty) {
         layer.envelopeGain.gain.cancelScheduledValues(ctx.currentTime);
         layer.envelopeGain.gain.setValueAtTime(layer.envelopeGain.gain.value, ctx.currentTime);
@@ -667,6 +845,11 @@ export class RackEngine {
       if (layer.midiChannel !== 0 && channel !== undefined && layer.midiChannel !== channel) continue;
       layer.activeNotes.delete(note);
       layer.voice.noteOff(shifted);
+      const extras = layer.octaverNotes.get(note);
+      if (extras) {
+        for (const extra of extras) layer.voice.noteOff(extra);
+        layer.octaverNotes.delete(note);
+      }
       if (layer.envelope.enabled && layer.activeNotes.size === 0 && ctx) {
         layer.envelopeGain.gain.cancelScheduledValues(ctx.currentTime);
         layer.envelopeGain.gain.setValueAtTime(layer.envelopeGain.gain.value, ctx.currentTime);
@@ -693,6 +876,7 @@ export class RackEngine {
     for (const layer of this.layers) {
       layer.voice?.allNotesOff();
       layer.activeNotes.clear();
+      layer.octaverNotes.clear();
       if (this.ctx) layer.envelopeGain.gain.setTargetAtTime(1, this.ctx.currentTime, 0.01);
     }
   }

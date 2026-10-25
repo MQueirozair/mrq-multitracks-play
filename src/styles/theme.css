@@ -91,18 +91,21 @@ input[type="range"] { accent-color: var(--accent); }
 .dot.off { background: #666; }
 
 /* ---------- mostrador de acorde em tempo real (Rack) ---------- */
+/* Largura e altura FIXAS de propósito (ver feedback do usuário): a pílula
+   nunca aparece/some nem muda de tamanho conforme as notas tocadas mudam —
+   só o texto do acorde dentro dela é atualizado, pra não "balançar" a barra
+   de título a cada nota tocada ao vivo. */
 .chord-indicator {
   border-color: #6d3fb8 !important;
   background: #241433 !important;
   color: #c9a6ff !important;
-  min-width: 38px; justify-content: center;
-  animation: chord-pop .12s ease-out;
+  width: 92px; box-sizing: border-box; justify-content: center; overflow: hidden;
 }
-.chord-indicator-label { font-weight: 700; font-size: 13px; letter-spacing: .02em; white-space: nowrap; }
-@keyframes chord-pop {
-  from { transform: scale(.88); opacity: .4; }
-  to { transform: scale(1); opacity: 1; }
+.chord-indicator-label {
+  font-weight: 700; font-size: 13px; letter-spacing: .02em; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 70px;
 }
+.chord-indicator-label.empty { opacity: .35; font-weight: 400; }
 .win-controls { display: flex; gap: 4px; -webkit-app-region: no-drag; }
 .win-controls button {
   width: 34px; height: 30px; border: none; background: transparent; color: var(--text-1);
@@ -668,6 +671,17 @@ input[type="range"] { accent-color: var(--accent); }
 .rack-panic-btn:hover { filter: brightness(1.2); }
 .rack-master-legend { font-size: 9.5px; color: var(--text-2); text-align: center; margin-top: auto; }
 
+.rack-octaver {
+  width: 100%; display: flex; flex-direction: column; gap: 6px;
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); padding: 10px 0;
+}
+.rack-octaver-modes { display: flex; gap: 4px; }
+.rack-octaver-mode-btn {
+  flex: 1; padding: 5px 2px; font-size: 9.5px; font-weight: 700; border-radius: 6px;
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--text-2);
+}
+.rack-octaver-mode-btn.on { background: linear-gradient(90deg, #a21f82, #7c1f9e); border-color: transparent; color: #fff; }
+
 .rack-layer-art {
   background-size: cover; background-position: center;
 }
@@ -718,7 +732,8 @@ input[type="range"] { accent-color: var(--accent); }
   background: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 .rack-edit-cell { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
-.rack-edit-cell:nth-child(3), .rack-edit-cell:nth-child(4) {
+.rack-edit-cell:nth-child(3), .rack-edit-cell:nth-child(4),
+.rack-edit-cell:nth-child(5), .rack-edit-cell:nth-child(6) {
   border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); padding-top: 14px;
 }
 .rack-toggle-header {
@@ -741,7 +756,7 @@ input[type="range"] { accent-color: var(--accent); }
 @media (max-width: 680px) {
   .rack-edit-grid { grid-template-columns: 1fr; }
   .rack-edit-grid::before { display: none; }
-  .rack-edit-cell:nth-child(2) { border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); padding-top: 14px; }
+  .rack-edit-cell:nth-child(n+2) { border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); padding-top: 14px; }
 }
 
 /* ---------- Ajuda / Sobre (aba "Ajuda") ---------- */

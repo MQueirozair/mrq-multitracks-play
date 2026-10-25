@@ -2,6 +2,10 @@
 // atualmente soando (ver ChordIndicator.tsx, que chama isto a cada frame com
 // o retorno de rackEngine.getActiveNotesSnapshot()).
 //
+// Nomenclatura: segue o padrão de CIFRA usado no Brasil (ex.: sétima maior =
+// "7M", não "maj7"; meio-diminuto = "m7(b5)"; tensões sempre entre
+// parênteses, ex.: "C7(9)"), já que o MRQ é feito pra banda/culto brasileiro.
+//
 // Algoritmo: casamento de "pitch-class set" contra uma tabela de fórmulas de
 // acorde conhecidas (intervalos em semitons a partir da fundamental), testando
 // cada nota tocada como possível fundamental. Preferimos, em ordem:
@@ -27,44 +31,54 @@ export function midiNoteName(note: number): string {
 
 /** Fórmula de acorde: intervalos em semitons a partir da fundamental (sempre contém 0). */
 interface ChordTemplate {
-  /** sufixo mostrado depois do nome da fundamental, ex.: "", "m", "7", "maj7" */
+  /** sufixo mostrado depois do nome da fundamental, ex.: "", "m", "7", "7M" */
   suffix: string;
   intervals: number[];
 }
 
-// Ordenado por "especificidade" (mais notas primeiro) e depois por frequência
-// de uso em música popular/worship — usado como critério de desempate quando
-// mais de uma fórmula bate igualmente bem.
+// Ordenado por "especificidade" (cardinalidade maior primeiro, dentro de cada
+// grupo) e depois por frequência de uso em música popular/worship — usado
+// como critério de desempate quando mais de uma fórmula bate igualmente bem.
 const TEMPLATES: ChordTemplate[] = [
-  // tétrades com nona
-  { suffix: 'maj9', intervals: [0, 2, 4, 7, 11] },
+  // --- pentades (5-6 notas): 11ª, 13ª e extensões com alteração ---
+  { suffix: '13', intervals: [0, 2, 4, 7, 9, 10] },
+  { suffix: 'm11', intervals: [0, 2, 3, 5, 7, 10] },
+  { suffix: '9(#11)', intervals: [0, 2, 4, 6, 7, 10] },
+  { suffix: '9M', intervals: [0, 2, 4, 7, 11] },
   { suffix: 'm9', intervals: [0, 2, 3, 7, 10] },
   { suffix: '9', intervals: [0, 2, 4, 7, 10] },
   { suffix: '6/9', intervals: [0, 2, 4, 7, 9] },
   { suffix: '9sus4', intervals: [0, 2, 5, 7, 10] },
-  // tétrades
+  { suffix: '7M(#11)', intervals: [0, 4, 6, 7, 11] },
+  { suffix: '7(#11)', intervals: [0, 4, 6, 7, 10] },
+  { suffix: '7(b9)', intervals: [0, 1, 4, 7, 10] },
+  { suffix: '7(#9)', intervals: [0, 3, 4, 7, 10] },
+  // --- tétrades ---
   { suffix: '7', intervals: [0, 4, 7, 10] },
-  { suffix: 'maj7', intervals: [0, 4, 7, 11] },
+  { suffix: '7M', intervals: [0, 4, 7, 11] },
   { suffix: 'm7', intervals: [0, 3, 7, 10] },
-  { suffix: 'm(maj7)', intervals: [0, 3, 7, 11] },
-  { suffix: 'm7b5', intervals: [0, 3, 6, 10] },
+  { suffix: 'm(7M)', intervals: [0, 3, 7, 11] },
+  { suffix: 'm7(b5)', intervals: [0, 3, 6, 10] },
   { suffix: 'dim7', intervals: [0, 3, 6, 9] },
-  { suffix: '7#5', intervals: [0, 4, 8, 10] },
-  { suffix: '7b5', intervals: [0, 4, 6, 10] },
+  { suffix: '7(#5)', intervals: [0, 4, 8, 10] },
+  { suffix: '7(b5)', intervals: [0, 4, 6, 10] },
   { suffix: '6', intervals: [0, 4, 7, 9] },
   { suffix: 'm6', intervals: [0, 3, 7, 9] },
   { suffix: '7sus4', intervals: [0, 5, 7, 10] },
   { suffix: 'add9', intervals: [0, 2, 4, 7] },
   { suffix: 'madd9', intervals: [0, 2, 3, 7] },
-  // tríades
+  // --- tríades ---
   { suffix: '', intervals: [0, 4, 7] }, // maior
   { suffix: 'm', intervals: [0, 3, 7] }, // menor
   { suffix: 'dim', intervals: [0, 3, 6] },
-  { suffix: 'aug', intervals: [0, 4, 8] },
+  { suffix: 'aum', intervals: [0, 4, 8] },
   { suffix: 'sus2', intervals: [0, 2, 7] },
   { suffix: 'sus4', intervals: [0, 5, 7] },
 ];
 
+// Tensões mostradas entre parênteses quando não há casamento exato (ex.:
+// "C7(9)" = C7 com uma 9ª a mais tocada por cima). Números de cifra
+// brasileira padrão (9/11/13 e suas alterações).
 const TENSION_NAMES: Record<number, string> = {
   1: 'b9', 2: '9', 3: '#9', 5: '11', 6: '#11', 8: 'b13', 9: '13',
 };
@@ -73,6 +87,9 @@ function intervalSetKey(intervals: number[]): string {
   return [...intervals].sort((a, b) => a - b).join(',');
 }
 
+// Map por chave de intervalos (pitch-class-set relativo à fundamental) — cada
+// fórmula de TEMPLATES deve ser única; ver teste manual em chordDetect caso
+// uma nova fórmula seja adicionada no futuro e colida com outra existente.
 const TEMPLATE_BY_KEY = new Map<string, ChordTemplate>();
 for (const t of TEMPLATES) TEMPLATE_BY_KEY.set(intervalSetKey(t.intervals), t);
 

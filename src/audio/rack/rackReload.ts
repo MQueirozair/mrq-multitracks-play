@@ -28,6 +28,19 @@ export function applyLayerParamsToEngine(index: number, layer: RackLayer) {
     midFreqHz: layer.eqMidFreqHz,
   });
   rackEngine.setDrive(index, { enabled: layer.driveEnabled, type: layer.driveType, driveDb: layer.driveDb, mix: layer.driveMix });
+  rackEngine.setLayerReverb(index, { enabled: layer.reverbEnabled, send: layer.reverbSend });
+  rackEngine.setCompressor(index, {
+    enabled: layer.compressorEnabled,
+    thresholdDb: layer.compressorThresholdDb,
+    ratio: layer.compressorRatio,
+    makeupDb: layer.compressorMakeupDb,
+  });
+  rackEngine.setDelay(index, {
+    enabled: layer.delayEnabled,
+    timeMs: layer.delayTimeMs,
+    feedback: layer.delayFeedback,
+    mix: layer.delayMix,
+  });
 }
 
 /** Relê o arquivo do disco (via IPC) e carrega de novo o instrumento numa camada, reaplicando os parâmetros do painel "Editar". */

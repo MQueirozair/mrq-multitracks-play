@@ -32,7 +32,7 @@ export default function TitleBar() {
           <span className={`dot ${audioOk ? '' : 'off'}`} />
           {audioOk ? 'Áudio OK' : 'Sem áudio'}
         </div>
-        {nav === 'rack' && <ChordIndicator />}
+        {nav === 'rack' && settings.rack.chordDisplayEnabled && <ChordIndicator />}
         <div className="pill">
           <span className={`dot ${remoteInfo?.enabled ? '' : 'off'}`} />
           Remoto {remoteInfo?.enabled ? `:${remoteInfo.port}` : 'desligado'}

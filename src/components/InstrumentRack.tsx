@@ -12,7 +12,7 @@ import {
   X as XIcon,
 } from 'lucide-react';
 import { useStore } from '../state/useStore';
-import type { RackCharacter, RackDriveType, RackLayer, RackLayerFormat, RackScene } from '../../shared/types';
+import type { RackCharacter, RackDriveType, RackLayer, RackLayerFormat, RackOctaverMode, RackScene } from '../../shared/types';
 import { rackEngine, detectRackFormat } from '../audio/rack/RackEngine';
 import { applyLayerParamsToEngine, reloadAllRackLayers, reloadLayerFromDisk as reloadLayerFromDiskShared } from '../audio/rack/rackReload';
 import { onRackProgramChange, onRackRawNoteOn } from '../midi/rackMidiRouter';
@@ -34,6 +34,16 @@ const DEFAULT_LAYER_FX: Partial<RackLayer> = {
   driveType: 'warm',
   driveDb: 0,
   driveMix: 1,
+  reverbEnabled: true,
+  reverbSend: 1,
+  compressorEnabled: false,
+  compressorThresholdDb: -24,
+  compressorRatio: 4,
+  compressorMakeupDb: 0,
+  delayEnabled: false,
+  delayTimeMs: 300,
+  delayFeedback: 0.3,
+  delayMix: 0.35,
   pan: 0,
 };
 
@@ -128,6 +138,10 @@ export default function InstrumentRack() {
   useEffect(() => {
     rackEngine.setReverb(rack.reverb);
   }, [rack.reverb]);
+
+  useEffect(() => {
+    rackEngine.setOctaver({ enabled: rack.octaverEnabled, mode: rack.octaverMode, mix: rack.octaverMix });
+  }, [rack.octaverEnabled, rack.octaverMode, rack.octaverMix]);
 
   // Restaura, uma única vez ao abrir a aba, os instrumentos que já estavam carregados da última sessão.
   useEffect(() => {
@@ -260,6 +274,30 @@ export default function InstrumentRack() {
     if ('driveEnabled' in patch || 'driveType' in patch || 'driveDb' in patch || 'driveMix' in patch) {
       rackEngine.setDrive(index, { enabled: layer.driveEnabled, type: layer.driveType, driveDb: layer.driveDb, mix: layer.driveMix });
     }
+    if ('reverbEnabled' in patch || 'reverbSend' in patch) {
+      rackEngine.setLayerReverb(index, { enabled: layer.reverbEnabled, send: layer.reverbSend });
+    }
+    if (
+      'compressorEnabled' in patch ||
+      'compressorThresholdDb' in patch ||
+      'compressorRatio' in patch ||
+      'compressorMakeupDb' in patch
+    ) {
+      rackEngine.setCompressor(index, {
+        enabled: layer.compressorEnabled,
+        thresholdDb: layer.compressorThresholdDb,
+        ratio: layer.compressorRatio,
+        makeupDb: layer.compressorMakeupDb,
+      });
+    }
+    if ('delayEnabled' in patch || 'delayTimeMs' in patch || 'delayFeedback' in patch || 'delayMix' in patch) {
+      rackEngine.setDelay(index, {
+        enabled: layer.delayEnabled,
+        timeMs: layer.delayTimeMs,
+        feedback: layer.delayFeedback,
+        mix: layer.delayMix,
+      });
+    }
   }
 
   // Clona a configuração inteira de uma camada (instrumento + todos os
@@ -302,6 +340,9 @@ export default function InstrumentRack() {
       layers: rack.layers.map((l) => ({ ...l })),
       masterVolume: rack.masterVolume,
       reverb: rack.reverb,
+      octaverEnabled: rack.octaverEnabled,
+      octaverMode: rack.octaverMode,
+      octaverMix: rack.octaverMix,
     };
     updateRack({ scenes: [...(rack.scenes ?? []), scene] });
     pushToast(`Cena "${trimmed}" salva (PC ${rack.scenes?.length ?? 0} no teclado físico).`);
@@ -309,9 +350,14 @@ export default function InstrumentRack() {
 
   async function handleLoadScene(scene: RackScene) {
     const layers = scene.layers.map((l) => ({ ...l }));
-    updateRack({ layers, masterVolume: scene.masterVolume, reverb: scene.reverb });
+    // ?? preserva o oitavador atual pra cenas salvas antes deste recurso existir (campos opcionais).
+    const octaverEnabled = scene.octaverEnabled ?? rack.octaverEnabled;
+    const octaverMode = scene.octaverMode ?? rack.octaverMode;
+    const octaverMix = scene.octaverMix ?? rack.octaverMix;
+    updateRack({ layers, masterVolume: scene.masterVolume, reverb: scene.reverb, octaverEnabled, octaverMode, octaverMix });
     rackEngine.setMasterVolume(scene.masterVolume);
     rackEngine.setReverb(scene.reverb);
+    rackEngine.setOctaver({ enabled: octaverEnabled, mode: octaverMode, mix: octaverMix });
     await reloadAllRackLayers(layers, (index, err) => {
       const message = err instanceof Error ? err.message : String(err);
       pushToast(`Não foi possível recarregar o instrumento da camada ${index + 1} da cena: ${message}`, 'error');
@@ -349,8 +395,12 @@ export default function InstrumentRack() {
       <MasterColumn
         masterVolume={rack.masterVolume}
         reverb={rack.reverb}
+        octaverEnabled={rack.octaverEnabled}
+        octaverMode={rack.octaverMode}
+        octaverMix={rack.octaverMix}
         onMasterVolumeChange={(v) => updateRack({ masterVolume: v })}
         onReverbChange={(v) => updateRack({ reverb: v })}
+        onOctaverChange={(patch) => updateRack(patch)}
         onPanic={() => rackEngine.panic()}
         scenes={rack.scenes ?? []}
         onSaveScene={handleSaveScene}
@@ -1007,6 +1057,100 @@ function LayerEditPanel({
               </div>
             )}
           </div>
+
+          {/* reverb (envio por camada) + compressor */}
+          <div className="rack-edit-cell">
+            <div className="rack-field-label-row">
+              <label style={{ fontWeight: 700 }}>Reverb</label>
+              <ToggleHeader compact title="Reverb" enabled={layer.reverbEnabled} onToggle={(v) => onPatch({ reverbEnabled: v })} />
+            </div>
+            <div className="rack-field">
+              <label>Envio pro reverb compartilhado {Math.round(layer.reverbSend * 100)}%</label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={layer.reverbSend}
+                onChange={(e) => onPatch({ reverbSend: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-edit-hint">A quantidade geral de retorno do reverb fica no MASTER; aqui é só o quanto desta camada entra nele.</div>
+
+            <ToggleHeader title="Compressor" enabled={layer.compressorEnabled} onToggle={(v) => onPatch({ compressorEnabled: v })} />
+            <div className="rack-field">
+              <label>Threshold (dB) {Math.round(layer.compressorThresholdDb)}</label>
+              <input
+                type="range"
+                min={-60}
+                max={0}
+                step={1}
+                value={layer.compressorThresholdDb}
+                onChange={(e) => onPatch({ compressorThresholdDb: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-field">
+              <label>Razão {layer.compressorRatio.toFixed(1)}:1</label>
+              <input
+                type="range"
+                min={1}
+                max={20}
+                step={0.5}
+                value={layer.compressorRatio}
+                onChange={(e) => onPatch({ compressorRatio: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-field">
+              <label>Ganho de compensação (dB) {layer.compressorMakeupDb.toFixed(1)}</label>
+              <input
+                type="range"
+                min={0}
+                max={24}
+                step={0.5}
+                value={layer.compressorMakeupDb}
+                onChange={(e) => onPatch({ compressorMakeupDb: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+
+          {/* delay (eco) */}
+          <div className="rack-edit-cell">
+            <ToggleHeader title="Delay" enabled={layer.delayEnabled} onToggle={(v) => onPatch({ delayEnabled: v })} />
+            <div className="rack-field">
+              <label>Tempo (ms) {Math.round(layer.delayTimeMs)}</label>
+              <input
+                type="range"
+                min={0}
+                max={1500}
+                step={10}
+                value={layer.delayTimeMs}
+                onChange={(e) => onPatch({ delayTimeMs: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-field">
+              <label>Realimentação {Math.round(layer.delayFeedback * 100)}%</label>
+              <input
+                type="range"
+                min={0}
+                max={0.9}
+                step={0.01}
+                value={layer.delayFeedback}
+                onChange={(e) => onPatch({ delayFeedback: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-field">
+              <label>Mistura (seco/eco) {Math.round(layer.delayMix * 100)}%</label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={layer.delayMix}
+                onChange={(e) => onPatch({ delayMix: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-edit-hint">Tempos maiores soam como eco separado; tempos bem curtos (abaixo de ~40ms) engrossam o timbre.</div>
+          </div>
         </div>
       </div>
     </div>
@@ -1031,11 +1175,21 @@ function ToggleHeader({
   );
 }
 
+const OCTAVER_MODE_OPTIONS: { value: RackOctaverMode; label: string }[] = [
+  { value: 'down', label: '-1 oitava' },
+  { value: 'up', label: '+1 oitava' },
+  { value: 'both', label: 'Ambas' },
+];
+
 function MasterColumn({
   masterVolume,
   reverb,
+  octaverEnabled,
+  octaverMode,
+  octaverMix,
   onMasterVolumeChange,
   onReverbChange,
+  onOctaverChange,
   onPanic,
   scenes,
   onSaveScene,
@@ -1044,8 +1198,12 @@ function MasterColumn({
 }: {
   masterVolume: number;
   reverb: number;
+  octaverEnabled: boolean;
+  octaverMode: RackOctaverMode;
+  octaverMix: number;
   onMasterVolumeChange: (v: number) => void;
   onReverbChange: (v: number) => void;
+  onOctaverChange: (patch: { octaverEnabled?: boolean; octaverMode?: RackOctaverMode; octaverMix?: number }) => void;
   onPanic: () => void;
   scenes: RackScene[];
   onSaveScene: () => void;
@@ -1092,6 +1250,34 @@ function MasterColumn({
         />
         <div className="rack-volume-value">{reverb.toFixed(2)}</div>
         <div className="rack-volume-label">Reverb</div>
+      </div>
+
+      <div className="rack-octaver">
+        <ToggleHeader compact title="Oitavador" enabled={octaverEnabled} onToggle={(v) => onOctaverChange({ octaverEnabled: v })} />
+        <div className="rack-octaver-modes">
+          {OCTAVER_MODE_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              className={`rack-octaver-mode-btn ${octaverMode === o.value ? 'on' : ''}`}
+              onClick={() => onOctaverChange({ octaverMode: o.value })}
+            >
+              {o.label}
+            </button>
+          ))}
+        </div>
+        <div className="rack-field" style={{ marginTop: 6 }}>
+          <label>Volume da oitava extra {Math.round(octaverMix * 100)}%</label>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={octaverMix}
+            onChange={(e) => onOctaverChange({ octaverMix: Number(e.target.value) })}
+          />
+        </div>
+        <div className="rack-edit-hint">Dobra toda nota tocada em QUALQUER camada numa oitava abaixo/acima, pra engrossar o som geral do rack.</div>
       </div>
 
       <button className="rack-panic-btn" onClick={onPanic}>

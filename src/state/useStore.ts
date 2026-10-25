@@ -12,7 +12,7 @@ import type {
   SongTrack,
   TrackRole,
 } from '../../shared/types';
-import { DEFAULT_SETTINGS, PART_COLORS, migrateRackLayers } from '../../shared/types';
+import { DEFAULT_SETTINGS, DEFAULT_RACK_STATE, PART_COLORS, migrateRackLayers } from '../../shared/types';
 import { newId } from '../lib/id';
 import { engine, padEngine } from '../audio/engineInstance';
 import { combinePeaks, computePeaks, decodeForAnalysis, yieldToBrowser } from '../audio/waveform';
@@ -303,9 +303,13 @@ export const useStore = create<StoreState>((set, get) => ({
     // só têm 4 entradas em settings.rack.layers — completa com camadas vazias
     // em vez de travar/cortar o que o usuário já tinha configurado (no-op se
     // já tiver as 6 camadas).
+    // Mescla com DEFAULT_RACK_STATE (e não só espalha loadedSettings.rack por
+    // cima) pra sessões salvas antes de um novo campo do rack existir (ex.:
+    // oitavador do master, mostrador de acorde) herdarem o padrão em vez de
+    // ficarem com `undefined`.
     const settings = {
       ...loadedSettings,
-      rack: { ...loadedSettings.rack, layers: migrateRackLayers(loadedSettings.rack.layers) },
+      rack: { ...DEFAULT_RACK_STATE, ...loadedSettings.rack, layers: migrateRackLayers(loadedSettings.rack.layers) },
     };
     set({ library, settings, ready: true });
     padEngine.setOutput(settings.pad.output);

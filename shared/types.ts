@@ -199,6 +199,9 @@ export interface RackPresetOption {
 /** Tipo de saturação/drive aplicado por camada no painel "Editar". */
 export type RackDriveType = 'warm' | 'hard' | 'tube';
 
+/** Modo do oitavador do MASTER (ver InstrumentRackState.octaverMode): em qual direção dobrar cada nota tocada em qualquer camada. */
+export type RackOctaverMode = 'down' | 'up' | 'both';
+
 export interface RackLayer {
   id: string;
   /** cor de destaque do cabeçalho da camada (combina com o print de referência) */
@@ -254,6 +257,35 @@ export interface RackLayer {
   driveDb: number;
   /** mistura seco/processado, 0..1 */
   driveMix: number;
+
+  /**
+   * Reverb por camada: controla quanto desta camada entra no barramento de
+   * reverb compartilhado do Rack (cuja "quantidade" geral de retorno é o
+   * knob MASTER > Reverb). Padrão enabled=true/send=1 preserva o
+   * comportamento de versões anteriores, quando toda camada ia 100% pro
+   * reverb sem controle individual.
+   */
+  reverbEnabled: boolean;
+  /** 0..1 */
+  reverbSend: number;
+
+  /** Compressor por camada — nivela a dinâmica de um timbre que varia muito de volume. */
+  compressorEnabled: boolean;
+  /** dB, -60..0 */
+  compressorThresholdDb: number;
+  /** 1..20 (1 = sem compressão) */
+  compressorRatio: number;
+  /** ganho de compensação pós-compressor, em dB, 0..24 */
+  compressorMakeupDb: number;
+
+  /** Delay (eco) por camada. */
+  delayEnabled: boolean;
+  /** ms, 0..1500 */
+  delayTimeMs: number;
+  /** 0..0.9 */
+  delayFeedback: number;
+  /** mistura seco/processado, 0..1 */
+  delayMix: number;
 }
 
 /** Curva de resposta de velocidade aplicada à entrada MIDI física inteira do rack. */
@@ -272,6 +304,10 @@ export interface RackScene {
   layers: RackLayer[];
   masterVolume: number;
   reverb: number;
+  /** oitavador do master — opcional pra cenas salvas antes deste recurso existir (ver migração em loadRackScene). */
+  octaverEnabled?: boolean;
+  octaverMode?: RackOctaverMode;
+  octaverMix?: number;
 }
 
 export interface InstrumentRackState {
@@ -299,6 +335,17 @@ export interface InstrumentRackState {
   bufferFrames: number;
   /** cenas salvas (configuração completa das 4 camadas) — ver RackScene */
   scenes: RackScene[];
+  /**
+   * Oitavador do MASTER: dobra toda nota tocada em QUALQUER camada numa
+   * oitava abaixo/acima/ambas (ver RackEngine.noteOn), pra engrossar o som
+   * geral do rack sem precisar duplicar o instrumento em outra camada.
+   */
+  octaverEnabled: boolean;
+  octaverMode: RackOctaverMode;
+  /** 0..1 — volume relativo (fração da velocity original) das notas extras geradas pelo oitavador */
+  octaverMix: number;
+  /** mostra (ou não) a pílula de acorde detectado ao lado de "Áudio OK", quando a aba Rack está aberta */
+  chordDisplayEnabled: boolean;
 }
 
 export interface AppSettings {
@@ -354,6 +401,18 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     driveType: 'warm',
     driveDb: 0,
     driveMix: 1,
+    // enabled=true/send=1 preserva o comportamento de antes deste recurso existir
+    // (toda camada ia 100% pro reverb compartilhado, sem controle individual).
+    reverbEnabled: true,
+    reverbSend: 1,
+    compressorEnabled: false,
+    compressorThresholdDb: -24,
+    compressorRatio: 4,
+    compressorMakeupDb: 0,
+    delayEnabled: false,
+    delayTimeMs: 300,
+    delayFeedback: 0.3,
+    delayMix: 0.35,
   };
 }
 
@@ -377,22 +436,33 @@ export const DEFAULT_RACK_STATE: InstrumentRackState = {
   sustainEnabled: true,
   bufferFrames: 0,
   scenes: [],
+  octaverEnabled: false,
+  octaverMode: 'down',
+  octaverMix: 0.7,
+  chordDisplayEnabled: true,
 };
 
 /**
- * Migra o array de camadas do Rack salvo de uma sessão anterior (ex.: só 4
- * camadas, de antes do app passar a ter RACK_LAYER_COUNT=6) pra ter sempre
- * RACK_LAYER_COUNT entradas — preservando intactas as camadas já existentes
- * (instrumento carregado, EQ, etc.) e só completando o restante com camadas
- * vazias, nunca descartando configuração do usuário.
+ * Migra o array de camadas do Rack salvo de uma sessão anterior pra sempre
+ * ter: (1) RACK_LAYER_COUNT entradas (ex.: sessões de antes do Rack passar a
+ * ter 6 camadas, era 4) — completando o restante com camadas vazias, nunca
+ * descartando configuração do usuário; e (2) todos os campos conhecidos de
+ * RackLayer presentes em cada camada, mesclando com os padrões de
+ * emptyRackLayer() por cima dos dados salvos — necessário pra sessões salvas
+ * antes de um novo efeito existir (ex.: reverb/compressor/delay por camada)
+ * não ficarem com `undefined` nesses campos, o que quebraria o grafo de
+ * áudio (valores inválidos em GainNode.gain etc.).
  */
 export function migrateRackLayers(layers: RackLayer[]): RackLayer[] {
-  if (layers.length === RACK_LAYER_COUNT) return layers;
-  const next = layers.slice(0, RACK_LAYER_COUNT);
-  for (let i = next.length; i < RACK_LAYER_COUNT; i++) {
-    next.push(DEFAULT_RACK_STATE.layers[i] ?? emptyRackLayer(`camada-${i + 1}`, '#888888'));
+  const trimmed = layers.slice(0, RACK_LAYER_COUNT);
+  const merged = trimmed.map((layer, i) => ({
+    ...emptyRackLayer(layer?.id ?? `camada-${i + 1}`, layer?.color ?? '#888888'),
+    ...layer,
+  }));
+  for (let i = merged.length; i < RACK_LAYER_COUNT; i++) {
+    merged.push(DEFAULT_RACK_STATE.layers[i] ?? emptyRackLayer(`camada-${i + 1}`, '#888888'));
   }
-  return next;
+  return merged;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

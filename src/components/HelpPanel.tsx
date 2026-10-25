@@ -513,9 +513,30 @@ export default function HelpPanel() {
           </p>
           <p>
             Ao lado da pílula "Áudio OK", uma pílula roxa mostra em tempo real o <b>acorde</b> formado por todas as
-            notas tocadas agora (juntando as notas de todas as camadas e canais MIDI) — reconhece tríades, sétimas,
-            sus2/sus4, 6ª, 9ª, add9, diminuto, aumentado, power chords e inversões (mostradas como "Acorde/Baixo", ex.:{' '}
-            <code>C/E</code>). Some automaticamente quando nenhuma tecla está pressionada.
+            notas tocadas agora (juntando as notas de todas as camadas e canais MIDI), na nomenclatura de{' '}
+            <b>cifra brasileira</b> (ex.: sétima maior = <code>C7M</code>, não "Cmaj7"). Reconhece tríades, sétimas
+            (7, 7M, m7, m(7M), m7(b5), dim7), sus2/sus4, 6ª, 6/9, 9ª, 9M, m9, add9, 11ª, 13ª, dominantes alteradas
+            (7(b5), 7(#5), 7(b9), 7(#9)), diminuto, aumentado, power chords e inversões (mostradas como "Acorde/Baixo",
+            ex.: <code>C/E</code>). A pílula tem tamanho fixo e fica sempre visível — só o texto do acorde dentro
+            dela muda, pra não "balançar" a barra de título a cada nota tocada. Pode ser desligada em{' '}
+            <b>"Mostrar acorde detectado"</b>, no mesmo painel do teclado MIDI físico descrito acima.
+          </p>
+
+          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Reverb, compressor e delay por camada</h3>
+          <p>
+            Além do reverb geral do MASTER (quantidade de retorno), cada camada tem seu próprio <b>envio de reverb</b>{' '}
+            (quanto dela entra no barramento compartilhado — ligado e em 100% por padrão, igual sempre foi), um{' '}
+            <b>compressor</b> (threshold, razão e ganho de compensação, pra nivelar um timbre que varia muito de
+            volume) e um <b>delay/eco</b> (tempo, realimentação e mistura seco/molhado) — tudo no painel "Editar" de
+            cada camada, abaixo do Drive.
+          </p>
+
+          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Oitavador do MASTER</h3>
+          <p>
+            No rodapé da coluna MASTER, o <b>oitavador</b> dobra toda nota tocada em QUALQUER camada numa oitava{' '}
+            <b>abaixo</b>, <b>acima</b> ou <b>ambas</b>, com um volume relativo ajustável — útil pra engrossar o som
+            geral do rack (ex.: dar um "sub" por baixo de um piano) sem precisar duplicar manualmente o instrumento
+            numa segunda camada transposta.
           </p>
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Cenas do Rack (snapshots por Program Change)</h3>
