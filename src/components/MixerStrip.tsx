@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Bell, ChevronLeft, ChevronRight, Drum, Guitar, Headphones, Infinity as InfinityIcon, Mic, Mic2, Piano, SlidersHorizontal, Square, Users, X } from 'lucide-react';
+import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Drum, Guitar, Headphones, Infinity as InfinityIcon, Mic, Mic2, Piano, SlidersHorizontal, Square, Users, X } from 'lucide-react';
 import type { Song, TrackRole } from '../../shared/types';
 import { useStore } from '../state/useStore';
 
@@ -53,6 +53,10 @@ export default function MixerStrip({ song }: { song: Song }) {
   const setTrackMuted = useStore((s) => s.setTrackMuted);
   const setTrackSolo = useStore((s) => s.setTrackSolo);
   const [soundcheckIndex, setSoundcheckIndex] = useState<number | null>(null);
+  // Esconder a mesa de mixagem (preferência local, não é salva) — útil pra
+  // ganhar espaço de tela quando não precisa mexer nos faders no momento,
+  // igual o botão de minimizar que o teclado virtual do Rack já tinha.
+  const [collapsed, setCollapsed] = useState(false);
 
   function clearAllSolos() {
     for (const t of song.tracks) if (t.solo) setTrackSolo(t.id, false);
@@ -104,7 +108,19 @@ export default function MixerStrip({ song }: { song: Song }) {
           </div>
         )}
       </div>
-      <div className="mixer-strip-wrap">
+      <div className="rack-strip-header mixer-strip-header">
+        <span className="rack-strip-title">
+          <SlidersHorizontal size={14} /> Mesa de mixagem
+        </span>
+        <button
+          className="rack-strip-toggle"
+          title={collapsed ? 'Mostrar mesa de mixagem' : 'Minimizar mesa de mixagem'}
+          onClick={() => setCollapsed((v) => !v)}
+        >
+          {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+      </div>
+      <div className="mixer-strip-wrap" style={collapsed ? { display: 'none' } : undefined}>
         <div className="mixer-strip">
           {song.tracks.map((track) => {
             const RoleIcon = ROLE_ICON[track.role];

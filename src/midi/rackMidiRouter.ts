@@ -51,9 +51,16 @@ export function setRackSustainEnabled(enabled: boolean) {
   if (!enabled && sustainDown) releaseSustainedNotes();
 }
 
-function applyVelocityCurve(v: number): number {
+/**
+ * Aplica uma curva de velocidade (linear/suave/dura) a um valor de toque
+ * 1-127. Extraída como função pura e exportada pra poder ser reaproveitada
+ * fora do roteador MIDI físico — ex.: pelo teclado virtual clicável do Rack,
+ * que calcula a própria velocity a partir da posição do clique na tecla mas
+ * precisa aplicar a MESMA curva configurada (fonte única de verdade).
+ */
+export function computeVelocityCurve(curve: RackVelocityCurve, v: number): number {
   const n = Math.max(1, Math.min(127, v)) / 127;
-  switch (velocityCurve) {
+  switch (curve) {
     case 'soft': // comprime velocidades baixas (resposta mais "macia")
       return Math.max(1, Math.round(127 * Math.pow(n, 1.6)));
     case 'hard': // realça velocidades baixas (resposta mais "sensível"/dura)
@@ -62,6 +69,10 @@ function applyVelocityCurve(v: number): number {
     default:
       return v;
   }
+}
+
+function applyVelocityCurve(v: number): number {
+  return computeVelocityCurve(velocityCurve, v);
 }
 
 function releaseSustainedNotes() {

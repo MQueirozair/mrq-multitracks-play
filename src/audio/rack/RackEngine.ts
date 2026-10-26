@@ -359,6 +359,16 @@ export class RackEngine {
     return this.bufferFrames;
   }
 
+  /** Taxa de amostragem real do AudioContext atual (null se o motor ainda não iniciou — ver ensureStarted). */
+  getSampleRate(): number | null {
+    return this.ctx?.sampleRate ?? null;
+  }
+
+  /** true assim que o AudioContext foi criado e está rodando (não suspenso) — usado só pra exibir status na UI. */
+  isRunning(): boolean {
+    return !!this.ctx && this.ctx.state === 'running';
+  }
+
   /** Latência real medida pelo navegador no AudioContext atual (null se o motor ainda não iniciou). */
   getLatencyInfoMs(): { baseLatencyMs: number; outputLatencyMs: number } | null {
     if (!this.ctx) return null;

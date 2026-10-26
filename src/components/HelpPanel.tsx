@@ -368,6 +368,12 @@ export default function HelpPanel() {
                 precisar rolar até o fim.
               </p>
               <p>
+                O cabeçalho <b>"Mesa de mixagem"</b>, logo acima dos canais, tem um botão de minimizar (seta) que
+                esconde a mesa inteira — útil pra ganhar espaço de tela quando você só precisa ver a forma de onda e
+                o roteiro de partes por um tempo, sem mexer em volume/mudo/solo. Clique de novo pra mostrar a mesa
+                outra vez (preferência rápida, não fica salva entre sessões).
+              </p>
+              <p>
                 <b>Novidade — Monitor de saúde do áudio:</b> enquanto a música toca, o MRQ fica de olho em possíveis{' '}
                 <b>soluços/falhas de áudio</b> (buffer travando, o sistema operacional suspendendo o som sozinho,
                 computador sobrecarregado). Se detectar algo, uma pílula laranja{' '}
@@ -635,12 +641,53 @@ export default function HelpPanel() {
             medida, não só a solicitada.
           </p>
           <p>
-            A tira <b>"Teclado virtual"</b>, na parte de baixo da tela, não é tocável com o mouse — ela é um{' '}
-            <b>visor em tempo real</b> de 88 teclas que acende as notas que estão soando agora no teclado físico, e
-            mostra (quando configurado) a faixa de notas de cada camada. É um feedback visual rápido de "quem está
-            tocando o quê" sem precisar olhar pra tela de ajustes. A tecla <kbd>Esc</kbd> funciona como "pânico" —
-            corta instantaneamente qualquer nota travada.
+            A tira <b>"Teclado virtual"</b>, na parte de baixo da tela, é tocável de verdade (não é só um visor) —
+            dá pra tocar com o mouse, pelo teclado do computador, ou pelo teclado MIDI físico ao mesmo tempo, e as
+            três formas acendem as teclas em tempo real. Também mostra (quando configurado) a faixa de notas de
+            cada camada embaixo do teclado. Controles disponíveis (clique no cabeçalho pra minimizar a tira):
           </p>
+          <ul>
+            <li>
+              <b>Clique/arraste nas teclas</b> — toca a nota embaixo do mouse; a <b>altura vertical do clique</b>{' '}
+              dentro da tecla define a força/velocity (clicar perto do topo = forte, perto da base = fraco), igual
+              um teclado sensível ao toque. Arrastar o botão pressionado de uma tecla pra outra faz glissando (desliza
+              a nota sem precisar soltar e clicar de novo).
+            </li>
+            <li>
+              <b>Digitação musical pelo teclado do computador</b> — clique uma vez na área das teclas pra "armar"
+              (aparece um contorno colorido) e toque com <kbd>A S D F G H J K L</kbd> (teclas brancas),{' '}
+              <kbd>W E T Y U O P</kbd> (pretas) e <kbd>Z</kbd>/<kbd>X</kbd> pra descer/subir uma oitava — mesmo mapa
+              do "Musical Typing" do GarageBand. Só funciona com o foco nessa área (clicado nela antes), pra não
+              conflitar com os atalhos globais do app (espaço, setas, <kbd>L</kbd> de loop etc.).
+            </li>
+            <li>
+              <b>Curva de velocidade</b> (linear/suave/dura) — mesmo ajuste do teclado MIDI físico (painel da pílula
+              acima), com uma mini curva desenhada ao lado; muda a força calculada tanto pro MIDI físico quanto pro
+              clique do mouse e pela digitação musical, porque é o mesmo ajuste salvo nas configurações.
+            </li>
+            <li>
+              <b>TOM</b> — régua vertical de pitch bend (dobra de afinação); arrasta pra cima/baixo enquanto toca e
+              volta sozinha ao centro ao soltar, igual a roda de pitch bend de um teclado de verdade. Afeta todas as
+              camadas, independente do canal MIDI configurado em cada uma.
+            </li>
+            <li>
+              <b>MOD</b> — régua vertical de vibrato; ao contrário do TOM, ela <b>não volta</b> sozinha — fica na
+              posição em que foi solta, controlando a intensidade de um vibrato aplicado por cima do TOM.
+            </li>
+            <li>
+              <b>OITAVA +</b>/<b>OITAVA -</b> — sobe/desce uma oitava (12 semitons) a mesma transposição global do
+              controle "Transposição global" da coluna Master; o indicador no meio mostra a nota mais grave do
+              teclado após a transposição (ex.: <code>A0</code>).
+            </li>
+            <li>
+              <b>PÂNICO</b> — equivalente ao botão "Parar notas" da coluna Master e à tecla <kbd>Esc</kbd>: corta
+              instantaneamente qualquer nota travada (física, por clique ou por digitação) e zera o TOM.
+            </li>
+            <li>
+              <b>Linha de status</b> (rodapé da tira) — mostra o motor de áudio, a taxa de amostragem real, o
+              tamanho do buffer configurado e se o motor está ativo, só informativo.
+            </li>
+          </ul>
           <p>
             Ao lado da pílula "Áudio OK", uma pílula roxa mostra em tempo real o <b>acorde</b> formado por todas as
             notas tocadas agora (juntando as notas de todas as camadas e canais MIDI), na nomenclatura de{' '}

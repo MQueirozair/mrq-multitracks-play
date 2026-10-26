@@ -283,6 +283,7 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .soundcheck-active strong { color: var(--accent); }
 .soundcheck-count { color: var(--text-2); font-size: 11px; }
+.mixer-strip-header { margin-top: 6px; padding: 2px 4px; }
 .mixer-strip-wrap { display: flex; align-items: stretch; gap: 0; min-width: 0; }
 .mixer-strip { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; min-width: 0; flex: 1; }
 .mixer-channel.mixer-master-pinned { flex-shrink: 0; margin: 4px 0 10px 14px; padding-left: 18px; border-left: 1px solid var(--border); }
@@ -554,17 +555,74 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .rack-strip-toggle:hover { color: var(--text-1); border-color: var(--text-2); }
 
-.rack-keyboard-strip { flex: none; display: flex; flex-direction: column; padding: 2px 2px 6px; background: var(--bg-1); border-radius: var(--radius-lg); border: 1px solid var(--border); }
+.rack-keyboard-strip {
+  --kbd-accent: #2dd4bf;
+  flex: none; display: flex; flex-direction: column; padding: 2px 2px 6px; background: var(--bg-1);
+  border-radius: var(--radius-lg); border: 1px solid var(--border);
+}
 .rack-keyboard-strip.collapsed { padding-bottom: 2px; }
-.rack-keyboard-body { display: flex; flex-direction: column; padding: 0 2px; }
-.rack-keyboard-keys { position: relative; width: 100%; height: 34px; }
-.rack-key { position: absolute; top: 0; border-radius: 0 0 2px 2px; transition: background-color 60ms linear; box-sizing: border-box; }
+.rack-keyboard-body { display: flex; flex-direction: column; gap: 6px; padding: 4px 6px 2px; }
+.rack-keyboard-main-row { display: flex; align-items: stretch; gap: 10px; }
+
+/* ---- painel da curva de velocidade (dropdown + mini gráfico) ---- */
+.rack-keyboard-velocity-panel {
+  flex: none; width: 108px; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-md);
+}
+.rack-keyboard-mini-label { font-size: 8.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-2); text-align: center; }
+.rack-keyboard-select { font-size: 10.5px; padding: 3px 4px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg-3); color: var(--text-1); }
+.rack-velocity-graph { width: 100%; height: 30px; }
+.rack-velocity-graph polyline { fill: none; stroke: var(--kbd-accent); stroke-width: 2; }
+
+/* ---- TOM (pitch bend) e MOD (vibrato), réguas verticais ao lado do teclado ---- */
+.rack-keyboard-wheels { flex: none; display: flex; gap: 6px; align-items: flex-end; padding: 2px 2px; }
+.rack-wheel-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.rack-wheel { writing-mode: vertical-lr; direction: rtl; height: 96px; width: 20px; cursor: ns-resize; }
+.rack-wheel-tom { accent-color: #e0a23e; }
+.rack-wheel-mod { accent-color: var(--kbd-accent); }
+
+/* ---- teclado propriamente dito ---- */
+.rack-keyboard-keys-wrap { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.rack-keyboard-keys {
+  position: relative; width: 100%; height: 86px; border-radius: 4px; outline: none; cursor: pointer;
+  touch-action: none; user-select: none;
+}
+.rack-keyboard-keys:focus-visible { box-shadow: 0 0 0 2px var(--kbd-accent); }
+.rack-key { position: absolute; top: 0; border-radius: 0 0 3px 3px; transition: background-color 40ms linear; box-sizing: border-box; }
 .rack-key-white { height: 100%; background: #e9e9ec; border: 1px solid #c9c9cf; z-index: 1; }
 .rack-key-black { height: 62%; background: #202024; border: 1px solid #000; z-index: 2; box-shadow: 0 2px 3px #0006; }
-.rack-key-active.rack-key-white { background: #3ecf6e; }
-.rack-key-active.rack-key-black { background: #2f9e55; }
+.rack-key-active.rack-key-white, .rack-key-pressed.rack-key-white { background: var(--kbd-accent); }
+.rack-key-active.rack-key-black, .rack-key-pressed.rack-key-black { background: #1d8e82; }
+.rack-keyboard-note-labels { position: relative; width: 100%; height: 12px; }
+.rack-keyboard-note-tick {
+  position: absolute; top: 0; transform: translateX(-50%); font-size: 8.5px; color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
 .rack-keyboard-ranges { position: relative; width: 100%; height: 5px; margin-top: 2px; }
 .rack-key-range { position: absolute; top: 0; height: 100%; border-radius: 2px; opacity: 0.85; }
+
+/* ---- oitava / nota atual / pânico, coluna à direita do teclado ---- */
+.rack-keyboard-side-controls { flex: none; width: 92px; display: flex; flex-direction: column; gap: 5px; justify-content: flex-start; }
+.rack-keyboard-octave-btn {
+  font-size: 10.5px; font-weight: 800; letter-spacing: .03em; padding: 7px 2px; border-radius: var(--radius-sm, 6px);
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--text-1);
+}
+.rack-keyboard-octave-btn:hover { border-color: var(--kbd-accent); color: var(--kbd-accent); }
+.rack-keyboard-note-badge {
+  text-align: center; font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--kbd-accent);
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); padding: 5px 2px;
+}
+.rack-keyboard-panic-btn {
+  margin-top: auto; font-size: 10.5px; font-weight: 800; letter-spacing: .04em; padding: 8px 2px;
+  background: #5c2626; border: 1px solid #7a3030; color: #fff; border-radius: var(--radius-sm, 6px);
+}
+.rack-keyboard-panic-btn:hover { filter: brightness(1.2); }
+
+.rack-keyboard-hint { font-size: 9.5px; color: var(--text-2); line-height: 1.4; padding: 0 2px; }
+.rack-keyboard-status {
+  font-size: 9.5px; color: var(--text-2); font-variant-numeric: tabular-nums; padding: 2px 2px 0;
+  border-top: 1px solid var(--border); padding-top: 4px;
+}
 
 /* ---- painel de música (transporte + partes) embutido na aba Rack ---- */
 .rack-music-panel { flex: none; display: flex; flex-direction: column; background: var(--bg-1); border-radius: var(--radius-lg); border: 1px solid var(--border); }

@@ -12,11 +12,11 @@ import {
   X as XIcon,
 } from 'lucide-react';
 import { useStore } from '../state/useStore';
-import type { RackCharacter, RackDriveType, RackLayer, RackLayerFormat, RackOctaverMode, RackScene } from '../../shared/types';
+import type { RackCharacter, RackDriveType, RackLayer, RackLayerFormat, RackOctaverMode, RackScene, RackVelocityCurve } from '../../shared/types';
 import { migrateRackLayers } from '../../shared/types';
-import { rackEngine, detectRackFormat } from '../audio/rack/RackEngine';
+import { rackEngine, detectRackFormat, PITCH_BEND_RANGE_SEMITONES } from '../audio/rack/RackEngine';
 import { applyLayerParamsToEngine, reloadAllRackLayers, reloadLayerFromDisk as reloadLayerFromDiskShared } from '../audio/rack/rackReload';
-import { onRackProgramChange, onRackRawNoteOn } from '../midi/rackMidiRouter';
+import { onRackProgramChange, onRackRawNoteOn, computeVelocityCurve } from '../midi/rackMidiRouter';
 import TransportBar from './TransportBar';
 import PartsGrid from './PartsGrid';
 
@@ -684,17 +684,68 @@ function keyPositionPct(note: number): { leftPct: number; widthPct: number } {
   return { leftPct: boundaryPct - BLACK_KEY_WIDTH_PCT / 2, widthPct: BLACK_KEY_WIDTH_PCT };
 }
 
+// Mapa "digitação musical" (estilo GarageBand): cada tecla do teclado físico
+// do computador toca uma nota relativa a Dó central (MIDI 60), pra quem não
+// tem um controlador MIDI por perto. Z/X descem/sobem uma oitava (atalho
+// clássico, igual ao GarageBand/vários softwares de piano virtual).
+const QWERTY_NOTE_OFFSETS: Record<string, number> = {
+  a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11,
+  k: 12, o: 13, l: 14, p: 15, ';': 16,
+};
+const QWERTY_BASE_NOTE = 60; // C4
+
+// Amostra a curva de velocidade configurada em alguns pontos pra desenhar a
+// mini curva do painel (eixo X = força do toque 0→127, eixo Y = velocity
+// resultante, invertido porque SVG cresce pra baixo).
+function velocityCurvePolyline(curve: RackVelocityCurve, w: number, h: number): string {
+  const steps = 12;
+  const pts: string[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const raw = Math.max(1, Math.round((i / steps) * 127));
+    const out = computeVelocityCurve(curve, raw) / 127;
+    pts.push(`${((i / steps) * w).toFixed(1)},${(h - out * h).toFixed(1)}`);
+  }
+  return pts.join(' ');
+}
+
 /**
  * Tira de teclado virtual: mostra as faixas de nota configuradas em cada
- * camada (barra colorida embaixo das teclas) e acende em tempo real as
- * notas que estão soando agora — não é tocável, é só visualização/feedback
- * pra quem está tocando no teclado físico conectado. As teclas são
+ * camada (barra colorida embaixo das teclas), acende em tempo real as notas
+ * que estão soando (teclado físico conectado OU tocadas aqui) e é
+ * genuinamente tocável — clique/arraste o mouse pelas teclas (a posição
+ * vertical do clique define a força/velocity, igual um teclado sensível ao
+ * toque) ou use o teclado do computador (digitação musical estilo
+ * GarageBand). Também expõe TOM (pitch bend) e MOD (vibrato), oitava e
+ * pânico, reaproveitando o motor de áudio real (rackEngine). As teclas são
  * posicionadas em porcentagem (brancas = divisões iguais, pretas = mais
  * estreitas e centradas na divisa entre duas brancas), igual um piano real.
  */
 function RackKeyboardStrip({ layers }: { layers: RackLayer[] }) {
+  const rack = useStore((s) => s.settings.rack);
+  const updateRack = useStore((s) => s.updateRack);
+  const rackRef = useRef(rack);
+  rackRef.current = rack;
+
   const keyRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [collapsed, setCollapsed] = useState(false);
+  const [tomValue, setTomValue] = useState(0);
+  const [modValue, setModValue] = useState(0);
+  const tomRef = useRef(0);
+  const modRef = useRef(0);
+  const vibratoRunningRef = useRef(false);
+  const draggingNoteRef = useRef<number | null>(null);
+  const draggingPointerIdRef = useRef<number | null>(null);
+  const qwertyNotesRef = useRef<Map<string, number>>(new Map());
+  const [engineStatus, setEngineStatus] = useState({ sampleRate: null as number | null, running: false });
+
+  // Pisca o status do motor de áudio (taxa de amostragem / rodando ou não)
+  // uma vez por segundo — não precisa de mais que isso, é só informativo.
+  useEffect(() => {
+    const id = setInterval(() => {
+      setEngineStatus({ sampleRate: rackEngine.getSampleRate(), running: rackEngine.isRunning() });
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     let raf = 0;
@@ -718,9 +769,183 @@ function RackKeyboardStrip({ layers }: { layers: RackLayer[] }) {
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  function bumpTranspose(deltaOctaves: number) {
+    const next = Math.max(-24, Math.min(24, rackRef.current.transpose + deltaOctaves * 12));
+    updateRack({ transpose: next });
+  }
+
+  function setKeyPressedVisual(note: number, pressed: boolean) {
+    const el = keyRefs.current[note - KEYBOARD_LOW];
+    if (el) el.classList.toggle('rack-key-pressed', pressed);
+  }
+
+  function velocityFromClientY(keyEl: HTMLElement, clientY: number): number {
+    const rect = keyEl.getBoundingClientRect();
+    const t = rect.height > 0 ? Math.min(1, Math.max(0, (clientY - rect.top) / rect.height)) : 0.75;
+    const raw = Math.max(1, Math.min(127, Math.round(1 + t * 126)));
+    return computeVelocityCurve(rackRef.current.velocityCurve, raw);
+  }
+
+  function findKeyElement(target: Element | null): { note: number; el: HTMLElement } | null {
+    const el = target?.closest<HTMLElement>('[data-note]') ?? null;
+    if (!el) return null;
+    const note = Number(el.dataset.note);
+    if (!Number.isFinite(note)) return null;
+    return { note, el };
+  }
+
+  function playKey(note: number, el: HTMLElement, clientY: number) {
+    const velocity = velocityFromClientY(el, clientY);
+    const played = Math.max(0, Math.min(127, note + rackRef.current.transpose));
+    rackEngine.noteOn(played, velocity);
+    draggingNoteRef.current = played;
+    setKeyPressedVisual(note, true);
+  }
+
+  function releaseDraggingKey() {
+    if (draggingNoteRef.current !== null) {
+      rackEngine.noteOff(draggingNoteRef.current);
+      draggingNoteRef.current = null;
+    }
+    for (let note = KEYBOARD_LOW; note <= KEYBOARD_HIGH; note++) setKeyPressedVisual(note, false);
+  }
+
+  function handleKeysPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    const hit = findKeyElement(e.target as Element);
+    if (!hit) return;
+    e.preventDefault();
+    draggingPointerIdRef.current = e.pointerId;
+    playKey(hit.note, hit.el, e.clientY);
+  }
+
+  // Arrastar o mouse/dedo pelas teclas com o botão pressionado faz glissando
+  // (desliza de uma nota pra outra sem precisar soltar e clicar de novo),
+  // igual um teclado de verdade. Ouvido em nível de window pra funcionar
+  // mesmo que o ponteiro saia da área do componente durante o arraste.
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      if (draggingPointerIdRef.current === null || e.pointerId !== draggingPointerIdRef.current) return;
+      const hit = findKeyElement(document.elementFromPoint(e.clientX, e.clientY));
+      if (!hit) return;
+      const played = Math.max(0, Math.min(127, hit.note + rackRef.current.transpose));
+      if (played === draggingNoteRef.current) return;
+      if (draggingNoteRef.current !== null) rackEngine.noteOff(draggingNoteRef.current);
+      for (let note = KEYBOARD_LOW; note <= KEYBOARD_HIGH; note++) setKeyPressedVisual(note, false);
+      playKey(hit.note, hit.el, e.clientY);
+    }
+    function onUp(e: PointerEvent) {
+      if (draggingPointerIdRef.current === null || e.pointerId !== draggingPointerIdRef.current) return;
+      draggingPointerIdRef.current = null;
+      releaseDraggingKey();
+    }
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+    };
+  }, []);
+
+  function releaseAllQwerty() {
+    for (const note of qwertyNotesRef.current.values()) rackEngine.noteOff(note);
+    qwertyNotesRef.current.clear();
+  }
+
+  // Digitação musical: só funciona com o foco dentro do teclado (precisa
+  // clicar nele primeiro), pra não brigar com os atalhos globais do app
+  // (espaço = tocar/pausar, L = loop, setas = navegar partes etc.) — uma vez
+  // com foco, para (stopPropagation) as teclas que a digitação musical usa.
+  function handleKeysKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const key = e.key.toLowerCase();
+    if (key === 'z') { e.stopPropagation(); e.preventDefault(); bumpTranspose(-1); return; }
+    if (key === 'x') { e.stopPropagation(); e.preventDefault(); bumpTranspose(1); return; }
+    if (!(key in QWERTY_NOTE_OFFSETS)) return;
+    e.stopPropagation();
+    e.preventDefault();
+    if (e.repeat || qwertyNotesRef.current.has(key)) return;
+    const note = Math.max(0, Math.min(127, QWERTY_BASE_NOTE + QWERTY_NOTE_OFFSETS[key] + rackRef.current.transpose));
+    const velocity = computeVelocityCurve(rackRef.current.velocityCurve, 100);
+    rackEngine.noteOn(note, velocity);
+    qwertyNotesRef.current.set(key, note);
+    setKeyPressedVisual(note - rackRef.current.transpose, true);
+  }
+
+  function handleKeysKeyUp(e: React.KeyboardEvent<HTMLDivElement>) {
+    const key = e.key.toLowerCase();
+    const note = qwertyNotesRef.current.get(key);
+    if (note !== undefined) {
+      e.stopPropagation();
+      rackEngine.noteOff(note);
+      qwertyNotesRef.current.delete(key);
+      setKeyPressedVisual(note - rackRef.current.transpose, false);
+    }
+  }
+
+  // Se o foco sair do teclado (ou o componente desmontar) com alguma tecla
+  // ainda "presa", solta tudo — evita nota entalada tocando pra sempre.
+  function handleKeysBlur() {
+    releaseAllQwerty();
+    releaseDraggingKey();
+  }
+  useEffect(() => () => { releaseAllQwerty(); releaseDraggingKey(); }, []);
+
+  function ensureVibratoLoop() {
+    if (vibratoRunningRef.current) return;
+    vibratoRunningRef.current = true;
+    const start = performance.now();
+    function tick(now: number) {
+      const t = (now - start) / 1000;
+      const vibrato = modRef.current > 0 ? Math.sin(t * 2 * Math.PI * 5.5) * modRef.current * 0.12 : 0;
+      const combined = Math.max(-1, Math.min(1, tomRef.current + vibrato));
+      rackEngine.setPitchBend(combined);
+      if (tomRef.current === 0 && modRef.current === 0) {
+        vibratoRunningRef.current = false;
+        rackEngine.setPitchBend(0);
+        return;
+      }
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function handleTomChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const v = Number(e.target.value);
+    tomRef.current = v;
+    setTomValue(v);
+    ensureVibratoLoop();
+  }
+  function resetTom() {
+    if (tomRef.current === 0) return;
+    tomRef.current = 0;
+    setTomValue(0);
+    ensureVibratoLoop();
+  }
+  function handleModChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const v = Number(e.target.value);
+    modRef.current = v;
+    setModValue(v);
+    ensureVibratoLoop();
+  }
+
+  function handlePanic() {
+    rackEngine.panic();
+    releaseAllQwerty();
+    releaseDraggingKey();
+    resetTom();
+  }
+
   const loadedLayers = layers.filter((l) => l.format);
   const whiteKeys = ALL_KEYBOARD_NOTES.filter((n) => !isBlackKey(n));
   const blackKeys = ALL_KEYBOARD_NOTES.filter((n) => isBlackKey(n));
+  const cNotes = ALL_KEYBOARD_NOTES.filter((n) => n % 12 === 0);
+  const octaveLabel = noteLabel(Math.max(0, Math.min(127, KEYBOARD_LOW + rack.transpose)));
+  const bufferLabel = rack.bufferFrames > 0 ? `${rack.bufferFrames} amostras` : 'automático';
+  const curveLabel: Record<RackVelocityCurve, string> = {
+    linear: 'Linear', soft: 'Suave', hard: 'Dura',
+  };
 
   return (
     <div className={`rack-keyboard-strip ${collapsed ? 'collapsed' : ''}`}>
@@ -738,50 +963,141 @@ function RackKeyboardStrip({ layers }: { layers: RackLayer[] }) {
       </div>
       {!collapsed && (
         <div className="rack-keyboard-body">
-          <div className="rack-keyboard-keys">
-            {whiteKeys.map((note) => {
-              const { leftPct, widthPct } = keyPositionPct(note);
-              return (
-                <div
-                  key={note}
-                  ref={(el) => (keyRefs.current[note - KEYBOARD_LOW] = el)}
-                  className="rack-key rack-key-white"
-                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                  title={`Nota MIDI ${note}`}
+          <div className="rack-keyboard-main-row">
+            <div className="rack-keyboard-velocity-panel">
+              <label className="rack-keyboard-mini-label">Curva de velocidade</label>
+              <select
+                className="rack-keyboard-select"
+                value={rack.velocityCurve}
+                onChange={(e) => updateRack({ velocityCurve: e.target.value as RackVelocityCurve })}
+              >
+                {(['linear', 'soft', 'hard'] as RackVelocityCurve[]).map((c) => (
+                  <option key={c} value={c}>{curveLabel[c]}</option>
+                ))}
+              </select>
+              <svg className="rack-velocity-graph" viewBox="0 0 56 28" preserveAspectRatio="none">
+                <polyline points={velocityCurvePolyline(rack.velocityCurve, 56, 28)} />
+              </svg>
+            </div>
+            <div className="rack-keyboard-wheels">
+              <div className="rack-wheel-col">
+                <input
+                  type="range"
+                  className="rack-wheel rack-wheel-tom"
+                  min={-1}
+                  max={1}
+                  step={0.01}
+                  value={tomValue}
+                  onChange={handleTomChange}
+                  onPointerUp={resetTom}
+                  onMouseUp={resetTom}
+                  onTouchEnd={resetTom}
+                  onBlur={resetTom}
+                  title="TOM (pitch bend) — volta ao centro ao soltar"
                 />
-              );
-            })}
-            {blackKeys.map((note) => {
-              const { leftPct, widthPct } = keyPositionPct(note);
-              return (
-                <div
-                  key={note}
-                  ref={(el) => (keyRefs.current[note - KEYBOARD_LOW] = el)}
-                  className="rack-key rack-key-black"
-                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                  title={`Nota MIDI ${note}`}
+                <span className="rack-keyboard-mini-label">TOM</span>
+              </div>
+              <div className="rack-wheel-col">
+                <input
+                  type="range"
+                  className="rack-wheel rack-wheel-mod"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={modValue}
+                  onChange={handleModChange}
+                  title="MOD (vibrato) — mantém a posição ao soltar"
                 />
-              );
-            })}
+                <span className="rack-keyboard-mini-label">MOD</span>
+              </div>
+            </div>
+            <div className="rack-keyboard-keys-wrap">
+              <div
+                className="rack-keyboard-keys"
+                tabIndex={0}
+                onPointerDown={handleKeysPointerDown}
+                onKeyDown={handleKeysKeyDown}
+                onKeyUp={handleKeysKeyUp}
+                onBlur={handleKeysBlur}
+                title="Clique/arraste pra tocar, ou toque pelo teclado do computador"
+              >
+                {whiteKeys.map((note) => {
+                  const { leftPct, widthPct } = keyPositionPct(note);
+                  return (
+                    <div
+                      key={note}
+                      ref={(el) => (keyRefs.current[note - KEYBOARD_LOW] = el)}
+                      data-note={note}
+                      className="rack-key rack-key-white"
+                      style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                      title={noteLabel(note)}
+                    />
+                  );
+                })}
+                {blackKeys.map((note) => {
+                  const { leftPct, widthPct } = keyPositionPct(note);
+                  return (
+                    <div
+                      key={note}
+                      ref={(el) => (keyRefs.current[note - KEYBOARD_LOW] = el)}
+                      data-note={note}
+                      className="rack-key rack-key-black"
+                      style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                      title={noteLabel(note)}
+                    />
+                  );
+                })}
+              </div>
+              <div className="rack-keyboard-note-labels">
+                {cNotes.map((note) => {
+                  const { leftPct, widthPct } = keyPositionPct(note);
+                  return (
+                    <span key={note} className="rack-keyboard-note-tick" style={{ left: `${leftPct + widthPct / 2}%` }}>
+                      {noteLabel(note)}
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="rack-keyboard-ranges">
+                {loadedLayers.map((layer) => {
+                  const start = Math.max(KEYBOARD_LOW, layer.noteRangeStart);
+                  const end = Math.min(KEYBOARD_HIGH, layer.noteRangeEnd);
+                  if (end < start) return null;
+                  const startPos = keyPositionPct(start);
+                  const endPos = keyPositionPct(end);
+                  const leftPct = startPos.leftPct;
+                  const widthPct = endPos.leftPct + endPos.widthPct - startPos.leftPct;
+                  return (
+                    <div
+                      key={layer.id}
+                      className="rack-key-range"
+                      style={{ left: `${leftPct}%`, width: `${widthPct}%`, background: layer.color }}
+                      title={`Faixa da ${layer.id}`}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+            <div className="rack-keyboard-side-controls">
+              <button className="rack-keyboard-octave-btn" onClick={() => bumpTranspose(1)} title="Oitava acima">
+                OITAVA +
+              </button>
+              <div className="rack-keyboard-note-badge">{octaveLabel}</div>
+              <button className="rack-keyboard-octave-btn" onClick={() => bumpTranspose(-1)} title="Oitava abaixo">
+                OITAVA -
+              </button>
+              <button className="rack-keyboard-panic-btn" onClick={handlePanic} title="Para todas as notas e zera o TOM">
+                PÂNICO
+              </button>
+            </div>
           </div>
-          <div className="rack-keyboard-ranges">
-            {loadedLayers.map((layer) => {
-              const start = Math.max(KEYBOARD_LOW, layer.noteRangeStart);
-              const end = Math.min(KEYBOARD_HIGH, layer.noteRangeEnd);
-              if (end < start) return null;
-              const startPos = keyPositionPct(start);
-              const endPos = keyPositionPct(end);
-              const leftPct = startPos.leftPct;
-              const widthPct = endPos.leftPct + endPos.widthPct - startPos.leftPct;
-              return (
-                <div
-                  key={layer.id}
-                  className="rack-key-range"
-                  style={{ left: `${leftPct}%`, width: `${widthPct}%`, background: layer.color }}
-                  title={`Faixa da ${layer.id}`}
-                />
-              );
-            })}
+          <div className="rack-keyboard-hint">
+            Clique ou arraste nas teclas pra tocar (a altura do clique define a força) — ou clique no teclado e
+            toque pelo computador: A S D F G H J K L (brancas), W E T Y U O P (pretas), Z/X = oitava.
+          </div>
+          <div className="rack-keyboard-status">
+            Motor: Web Audio · {engineStatus.sampleRate ? `${engineStatus.sampleRate.toLocaleString('pt-BR')} Hz` : '—'} ·
+            buffer {bufferLabel} · {engineStatus.running ? 'ativo' : 'em espera'} · pitch bend ±{PITCH_BEND_RANGE_SEMITONES} st
           </div>
         </div>
       )}
