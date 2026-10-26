@@ -34,6 +34,24 @@ export interface SongPart {
   /** Cue equivalente via MIDI Program Change (canal 0-15, programa 0-127), pra
    *  consoles/softwares que só aceitam MIDI em vez de OSC. */
   cueMidiProgram?: { channel: number; program: number } | null;
+  /**
+   * Anacruse/"levada": quantos tempos (beats) do compasso anterior essa parte
+   * já começa a soar antes da cabeça do compasso marcado em startBar (ex.:
+   * refrão que "entra" 2 tempos antes do compasso 17). 0/undefined = começa
+   * exatamente na cabeça do compasso, sem anacruse. É só metadado de exibição
+   * pro usuário lembrar a intenção — quem efetivamente controla onde a faixa
+   * soa é o startBar fracionário (ex.: 16.5), que o app já suportava via
+   * arraste livre na forma de onda (ver WaveformCanvas FREE_SNAP_STEP).
+   */
+  pickupBeats?: number;
+  /**
+   * De onde veio essa marcação, pra mostrar um selo de confiança/origem na
+   * lista de partes: 'speech' = ouvida na locução da faixa guia (alta
+   * confiança), 'audio' = sugerida só pela heurística de energia/silêncio
+   * (revisar), 'manual' = criada/arrastada à mão pelo operador. undefined =
+   * músicas importadas antes dessa marcação existir (tratar como manual).
+   */
+  detectionSource?: 'speech' | 'audio' | 'manual';
 }
 
 export interface ArrangementStep {
@@ -129,9 +147,26 @@ export interface Scene {
   items: SceneItem[];
 }
 
+/**
+ * Modelo de estrutura reutilizável: a sequência típica de TIPOS de parte (não
+ * partes de uma música específica) que uma banda costuma seguir — ex. "Louvor
+ * padrão": Intro, Verso, Verso, Refrão, Verso, Refrão, Ponte, Refrão, Final.
+ * Guardado uma vez na biblioteca e aplicável em qualquer música: ao aplicar,
+ * o app casa cada passo do modelo com a primeira parte daquele tipo ainda não
+ * usada na música atual (repetindo partes do mesmo tipo se o modelo pedir mais
+ * do que a música tem). Ferramenta nova (ver HelpPanel.tsx seção "roteiro").
+ */
+export interface ArrangementTemplate {
+  id: string;
+  name: string;
+  steps: { type: PartType; repeat: number | 'infinite' }[];
+}
+
 export interface Library {
   songs: Song[];
   scenes: Scene[];
+  /** Modelos de estrutura de roteiro salvos pelo usuário (ver ArrangementTemplate). */
+  arrangementTemplates?: ArrangementTemplate[];
 }
 
 export type ClickSound = 'beep' | 'click' | 'rimshot' | 'cowbell';

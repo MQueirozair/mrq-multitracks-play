@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 import type {
   AppSettings,
+  ArrangementTemplate,
   InstrumentRackState,
   Library,
   MidiBinding,
+  PartType,
   RackLayer,
   Scene,
   Song,
@@ -76,6 +78,8 @@ interface StoreState {
   loadingSongId: string | null;
   /** último estado recebido via "MRQ Sync" de quem está no papel de Líder na rede local (null = nada recebido/sync desligado) */
   syncLeaderState: { isPlaying: boolean; bpm: number; key: string; songTitle: string } | null;
+  /** ids das partes selecionadas na tela "Ajustes de partes" para ações em lote (excluir/mudar tipo várias de uma vez) */
+  selectedPartIds: string[];
 
   init: () => Promise<void>;
   setNav: (nav: NavId) => void;
@@ -114,6 +118,31 @@ interface StoreState {
    * pergunta se você quer salvar uma versão nova em vez de alterar o original.
    */
   ensureEditableArrangement: (suggestedName: string) => string;
+  /** Renomeia uma versão/arranjo salvo (não afeta a "Original (ordem gravada)", que não tem id). */
+  renameArrangement: (arrangementId: string, name: string) => void;
+  /** Exclui uma versão salva. Se ela estiver ativa, volta pra "Original (ordem gravada)". */
+  deleteArrangement: (arrangementId: string) => void;
+
+  /** Seleção múltipla de partes (tela "Ajustes de partes"), pra ações em lote. */
+  togglePartSelection: (partId: string) => void;
+  selectAllParts: () => void;
+  clearPartSelection: () => void;
+  /** Exclui todas as partes selecionadas de uma vez (com undo). */
+  bulkDeleteParts: (partIds: string[]) => void;
+  /** Muda o tipo de várias partes selecionadas de uma vez (ex.: corrigir 4 "Verso" detectados errado pra "Refrão"). */
+  bulkSetPartType: (partIds: string[], type: PartType) => void;
+  /**
+   * "Encaixar no tempo": arredonda o início/fim de uma parte pro tempo
+   * (beat) mais próximo, usando o fórmula de compasso da música — corrige
+   * pequenos erros de quem arrastou a seleção na forma de onda com a mão.
+   */
+  snapPartToBeat: (partId: string) => void;
+
+  /** Salva o roteiro de tipos de parte do arranjo ativo (ou da ordem original) como um modelo reutilizável. */
+  saveArrangementTemplate: (name: string) => void;
+  /** Aplica um modelo salvo à música atual, casando cada passo do modelo com a primeira parte daquele tipo disponível. */
+  applyArrangementTemplate: (templateId: string) => void;
+  deleteArrangementTemplate: (templateId: string) => void;
 
   setKey: (key: string) => void;
   setBpm: (bpm: number) => void;
@@ -320,7 +349,7 @@ function pickTrackForAnalysis(tracks: SongTrack[], purpose: 'bpm' | 'key'): Song
 
 export const useStore = create<StoreState>((set, get) => ({
   ready: false,
-  library: { songs: [], scenes: [] },
+  library: { songs: [], scenes: [], arrangementTemplates: [] },
   settings: DEFAULT_SETTINGS,
   currentSong: null,
   nav: 'library',
@@ -337,6 +366,7 @@ export const useStore = create<StoreState>((set, get) => ({
   loadingSongTitle: null,
   loadingSongId: null,
   syncLeaderState: null,
+  selectedPartIds: [],
 
   init: async () => {
     const [library, loadedSettings] = await Promise.all([window.api.store.getLibrary(), window.api.store.getSettings()]);
@@ -352,7 +382,7 @@ export const useStore = create<StoreState>((set, get) => ({
       ...loadedSettings,
       rack: { ...DEFAULT_RACK_STATE, ...loadedSettings.rack, layers: migrateRackLayers(loadedSettings.rack.layers) },
     };
-    set({ library, settings, ready: true });
+    set({ library: { ...library, arrangementTemplates: library.arrangementTemplates ?? [] }, settings, ready: true });
     padEngine.setOutput(settings.pad.output);
     padEngine.setBreatheSeconds(settings.pad.loopCrossfadeSec);
 
@@ -854,6 +884,9 @@ export const useStore = create<StoreState>((set, get) => ({
         get().pushToast('Não foi possível sugerir partes para esta música (ou ela é curta demais).', 'error');
         return;
       }
+      // Selo de origem: mostra na lista se cada parte veio da locução da guia
+      // (confiável) ou só da heurística de áudio (revisar) — ver detectionSource.
+      parts = parts.map((p) => ({ ...p, detectionSource: usedSpeech ? 'speech' : 'audio' }));
       get().updateCurrentSong((s) => ({ ...s, parts }), { history: true });
       engine.updateParts(parts);
       get().pushToast(
@@ -905,7 +938,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
   addPart: (part) => {
     get().updateCurrentSong((s) => {
-      const parts = [...s.parts, { ...part, id: newId() }].sort((a, b) => a.startBar - b.startBar);
+      const parts = [...s.parts, { detectionSource: 'manual' as const, ...part, id: newId() }].sort((a, b) => a.startBar - b.startBar);
       engine.updateParts(parts);
       return { ...s, parts };
     }, { history: true });
@@ -925,6 +958,60 @@ export const useStore = create<StoreState>((set, get) => ({
       engine.updateParts(parts);
       return { ...s, parts };
     }, { history: true });
+  },
+
+  togglePartSelection: (partId) => {
+    const current = get().selectedPartIds;
+    set({ selectedPartIds: current.includes(partId) ? current.filter((id) => id !== partId) : [...current, partId] });
+  },
+  selectAllParts: () => {
+    const song = get().currentSong;
+    set({ selectedPartIds: song ? song.parts.map((p) => p.id) : [] });
+  },
+  clearPartSelection: () => set({ selectedPartIds: [] }),
+
+  bulkDeleteParts: (partIds) => {
+    if (partIds.length === 0) return;
+    const ids = new Set(partIds);
+    get().updateCurrentSong((s) => {
+      const parts = s.parts.filter((p) => !ids.has(p.id));
+      engine.updateParts(parts);
+      return { ...s, parts };
+    }, { history: true });
+    set({ selectedPartIds: [] });
+    get().pushToast(`${partIds.length} parte(s) excluída(s).`);
+  },
+
+  bulkSetPartType: (partIds, type) => {
+    if (partIds.length === 0) return;
+    const ids = new Set(partIds);
+    get().updateCurrentSong((s) => {
+      const parts = s.parts.map((p) => (ids.has(p.id) ? { ...p, type } : p));
+      engine.updateParts(parts);
+      return { ...s, parts };
+    }, { history: true });
+    get().pushToast(`${partIds.length} parte(s) marcada(s) como "${type}".`);
+  },
+
+  snapPartToBeat: (partId) => {
+    get().updateCurrentSong((s) => {
+      const part = s.parts.find((p) => p.id === partId);
+      if (!part) return s;
+      // "compasso" aqui é fracionário (1 bar = 1.0): arredonda pro tempo
+      // (beat) mais próximo dentro do compasso, usando a fórmula da música —
+      // ex. em 4/4, arredonda pro múltiplo de 0.25 de compasso mais perto.
+      const beatStep = 1 / Math.max(1, s.timeSignatureNum);
+      const snap = (bar: number) => Math.round(bar / beatStep) * beatStep;
+      const startBar = snap(part.startBar);
+      let endBar = snap(part.endBar);
+      if (endBar <= startBar) endBar = startBar + beatStep;
+      const parts = s.parts
+        .map((p) => (p.id === partId ? { ...p, startBar, endBar } : p))
+        .sort((a, b) => a.startBar - b.startBar);
+      engine.updateParts(parts);
+      return { ...s, parts };
+    }, { history: true });
+    get().pushToast('Parte encaixada no tempo mais próximo.');
   },
 
   addArrangement: (name) => {
@@ -960,6 +1047,25 @@ export const useStore = create<StoreState>((set, get) => ({
     const id = get().addArrangement(suggestedName);
     get().pushToast(`Nova versão "${suggestedName}" criada a partir da música original.`);
     return id;
+  },
+
+  renameArrangement: (arrangementId, name) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    get().updateCurrentSong((s) => {
+      const arrangements = s.arrangements.map((a) => (a.id === arrangementId ? { ...a, name: trimmed } : a));
+      return { ...s, arrangements };
+    }, { history: true });
+  },
+
+  deleteArrangement: (arrangementId) => {
+    get().updateCurrentSong((s) => {
+      const arrangements = s.arrangements.filter((a) => a.id !== arrangementId);
+      const activeArrangementId = s.activeArrangementId === arrangementId ? null : s.activeArrangementId;
+      engine.updateArrangements(arrangements, activeArrangementId);
+      return { ...s, arrangements, activeArrangementId };
+    }, { history: true });
+    get().pushToast('Versão excluída. Voltando pra "Original (ordem gravada)" se ela estava em uso.');
   },
 
   setKey: (key) => {
@@ -1103,6 +1209,75 @@ export const useStore = create<StoreState>((set, get) => ({
         : `Cena "${imported.name}" importada com ${imported.items.length} música(s).`,
       skipped > 0 ? 'error' : 'info'
     );
+  },
+
+  saveArrangementTemplate: (name) => {
+    const trimmed = name.trim();
+    const song = get().currentSong;
+    if (!trimmed || !song) return;
+    const active = song.arrangements.find((a) => a.id === song.activeArrangementId);
+    const sourceSteps: SongArrangement['steps'] =
+      active?.steps ?? [...song.parts].sort((a, b) => a.startBar - b.startBar).map((p) => ({ partId: p.id, repeat: 1 as const }));
+    const partsById = new Map(song.parts.map((p) => [p.id, p]));
+    const steps = sourceSteps
+      .map((st) => ({ part: partsById.get(st.partId), repeat: st.repeat }))
+      .filter((x): x is { part: SongPart; repeat: number | 'infinite' } => !!x.part)
+      .map((x) => ({ type: x.part.type, repeat: x.repeat }));
+    if (steps.length === 0) {
+      get().pushToast('Esta versão não tem partes suficientes pra virar um modelo.', 'error');
+      return;
+    }
+    const template: ArrangementTemplate = { id: newId(), name: trimmed, steps };
+    const library = { ...get().library, arrangementTemplates: [...(get().library.arrangementTemplates ?? []), template] };
+    set({ library });
+    scheduleSave(library);
+    get().pushToast(`Modelo "${trimmed}" salvo com ${steps.length} passo(s) — aplique em qualquer música pela lista de modelos.`);
+  },
+
+  applyArrangementTemplate: (templateId) => {
+    const song = get().currentSong;
+    const template = get().library.arrangementTemplates?.find((t) => t.id === templateId);
+    if (!song || !template) return;
+    const byType = new Map<PartType, SongPart[]>();
+    for (const p of [...song.parts].sort((a, b) => a.startBar - b.startBar)) {
+      const arr = byType.get(p.type) ?? [];
+      arr.push(p);
+      byType.set(p.type, arr);
+    }
+    const cursor = new Map<PartType, number>();
+    const steps: SongArrangement['steps'] = [];
+    let skipped = 0;
+    for (const step of template.steps) {
+      const options = byType.get(step.type) ?? [];
+      if (options.length === 0) {
+        skipped++;
+        continue;
+      }
+      const i = cursor.get(step.type) ?? 0;
+      const part = options[Math.min(i, options.length - 1)];
+      cursor.set(step.type, i + 1);
+      steps.push({ partId: part.id, repeat: step.repeat });
+    }
+    if (steps.length === 0) {
+      get().pushToast('Nenhuma parte desta música combina com os tipos do modelo escolhido.', 'error');
+      return;
+    }
+    const id = get().addArrangement(`${template.name} (modelo)`);
+    get().updateArrangementSteps(id, steps);
+    get().pushToast(
+      skipped > 0
+        ? `Modelo aplicado como nova versão "${template.name} (modelo)". ${skipped} passo(s) ignorado(s) — esta música não tem parte desse tipo.`
+        : `Modelo "${template.name}" aplicado como nova versão.`
+    );
+  },
+
+  deleteArrangementTemplate: (templateId) => {
+    const library = {
+      ...get().library,
+      arrangementTemplates: (get().library.arrangementTemplates ?? []).filter((t) => t.id !== templateId),
+    };
+    set({ library });
+    scheduleSave(library);
   },
 
   /** Liga/desliga o pad contínuo no tom da música atual — ação única usada pelo

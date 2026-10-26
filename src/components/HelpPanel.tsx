@@ -25,6 +25,10 @@ import {
   AlertTriangle,
   Split,
   Merge,
+  Magnet,
+  LayoutTemplate,
+  Pencil,
+  CheckSquare,
 } from 'lucide-react';
 
 const BASE = import.meta.env.BASE_URL;
@@ -328,6 +332,55 @@ export default function HelpPanel() {
                 disparam automaticamente, sozinhos, assim que aquela parte entra ao vivo — pra trocar a cena de um
                 software de luz/vídeo (QLab, Resolume, mesa de luz) no exato momento certo, sem precisar de um
                 operador extra. Veja a seção <i>OSC / Sync</i> abaixo pra ligar a ponte OSC.
+              </p>
+              <p className="help-callout">
+                <b>Novidade — Marcar / Arranjar:</b> a tela agora tem dois modos, alternados pelas abas
+                {' '}<Pencil size={12} style={{ verticalAlign: 'middle' }} /><b> Marcar</b> e{' '}
+                <LayoutGrid size={12} style={{ verticalAlign: 'middle' }} /><b> Arranjar</b>, em vez de uma lista
+                comprida só: <b>Marcar</b> é onde você mexe nos limites/nomes/tipos de cada parte; <b>Arranjar</b> é
+                onde você monta o roteiro (ordem, repetições, versões) a partir das partes já marcadas.
+              </p>
+              <p className="help-callout">
+                <b>Novidade — Modal "Parte" com anacruse:</b> clique no lápis
+                ({' '}<Pencil size={12} style={{ verticalAlign: 'middle' }} />) de qualquer parte pra abrir uma janela
+                de edição com <b>Nome</b>, <b>Tipo</b> e o campo novo <b>"Entra antes do compasso"</b> — use quando a
+                banda já começa a tocar aquela parte um pouco antes da cabeça do compasso marcado (a clássica
+                "anacruse"/levada de entrada, comum em refrões e pontes). Escolhendo 1, 2, 3, 4, 6 ou 8 tempos antes,
+                o início da parte é recalculado sozinho pra soar no instante certo — sem precisar fazer a conta na mão.
+              </p>
+              <p className="help-callout">
+                <b>Novidade — Selo de origem da marcação:</b> cada parte reconhecida automaticamente ganha um selinho
+                na lista: {' '}<Mic size={12} style={{ verticalAlign: 'middle' }} /> verde quando ela veio da
+                <b> locução da faixa guia</b> (alta confiança) e {' '}<AudioWaveform size={12} style={{ verticalAlign: 'middle' }} />
+                {' '}laranja quando veio só da <b>heurística de forma de onda</b> (sem locução reconhecida — vale a
+                pena conferir os limites com mais cuidado). Partes criadas ou editadas à mão não ganham selo.
+              </p>
+              <p className="help-callout">
+                <b>Novidade — Encaixar no tempo</b> ({' '}<Magnet size={12} style={{ verticalAlign: 'middle' }} />):
+                corrige pequenos erros de quem arrastou a seleção na forma de onda com a mão, arredondando o início e
+                o fim da parte pro tempo (beat) mais próximo, usando o compasso da música — ótimo depois de um
+                "Reconhecer partes" ou de um ajuste manual que ficou "quase certo".
+              </p>
+              <p className="help-callout">
+                <b>Novidade — Seleção múltipla:</b> o botão {' '}<CheckSquare size={12} style={{ verticalAlign: 'middle' }} />
+                {' '}<b>"Selecionar várias"</b>, no topo da lista de partes, marca todas de uma vez (desmarque as que
+                não quiser com a caixinha de cada linha) pra fazer uma <b>ação em lote</b>: mudar o tipo de várias
+                partes ao mesmo tempo (ex.: corrigir vários "Verso" detectados errado pra "Refrão") ou excluir várias
+                partes de uma vez, sem precisar repetir a operação parte por parte.
+              </p>
+              <p className="help-callout">
+                <b>Novidade — Versões e modelos, no modo Arranjar:</b> o seletor <b>"Original ▾"</b> (ou o nome da
+                versão ativa) abre um menu pra <b>salvar como nova versão</b>, <b>renomear</b> ou <b>excluir</b> a
+                versão atual, e trocar rapidamente entre todas as versões salvas da música — sem afetar nunca a
+                ordem original gravada. Ao lado, <b>"Exportar roteiro"</b> ({' '}<FileText size={12} style={{ verticalAlign: 'middle' }} />)
+                copia a ordem das partes como texto simples, pronto pra colar num grupo de WhatsApp ou e-mail pra
+                quem da banda não usa o app. E o menu <b>"Modelos"</b> ({' '}<LayoutTemplate size={12} style={{ verticalAlign: 'middle' }} />)
+                deixa salvar a sequência de <i>tipos</i> de parte do roteiro atual (ex.: "Louvor padrão": Intro,
+                Verso, Refrão, Verso, Refrão, Ponte, Refrão, Final) como um modelo reutilizável — e aplicar esse
+                mesmo modelo em QUALQUER outra música depois, como uma nova versão: o MRQ casa cada passo do modelo
+                com a primeira parte daquele tipo ainda disponível na música (repetindo partes do mesmo tipo se o
+                modelo pedir mais do que a música tem), economizando o trabalho de montar o roteiro do zero toda vez
+                que a estrutura se repete de uma música pra outra.
               </p>
               <p className="help-callout">
                 <b>Correção desta versão:</b> a detecção automática estava criando partes demais e, em algumas

@@ -482,7 +482,68 @@ input[type="range"] { accent-color: var(--accent); }
 .app-shell.stage-mode .status-pill { font-size: 13px; }
 
 /* ---------- Arranjo / roteiro ---------- */
-.arrange-editor { display: flex; flex-direction: column; gap: 10px; max-height: 280px; overflow-y: auto; }
+.arrange-editor { display: flex; flex-direction: column; gap: 10px; max-height: 420px; overflow-y: auto; }
+
+/* Alternância "Marcar" (editar partes) / "Arranjar" (montar o roteiro) — telas
+   separadas em vez de uma lista comprida só, pra focar numa tarefa por vez. */
+.arrange-mode-toggle { display: flex; gap: 4px; background: var(--bg-2); border-radius: var(--radius-sm); padding: 3px; align-self: flex-start; }
+.arrange-mode-btn {
+  display: flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent; border: none; color: var(--text-2); font-size: 12px; font-weight: 700;
+}
+.arrange-mode-btn.active { background: var(--accent); color: var(--accent-ink); }
+
+/* Selo de origem da detecção (voz da guia vs. só forma de onda) */
+.detect-badge { display: inline-flex; align-items: center; justify-content: center; width: 17px; height: 17px; border-radius: 5px; flex-shrink: 0; }
+.detect-badge.speech { background: rgba(80, 200, 120, 0.18); color: #52c878; }
+.detect-badge.audio { background: rgba(224, 160, 48, 0.16); color: #e0a030; }
+
+/* Seleção múltipla + ações em lote na lista de partes */
+.arrange-row-checkbox { flex-shrink: 0; width: 15px; height: 15px; accent-color: var(--accent); }
+.arrange-part-row.selected { border-color: var(--accent); background: #2a2110; }
+.arrange-bulk-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px;
+  background: #2a2110; border: 1px solid var(--accent); border-radius: var(--radius-sm); font-size: 12px;
+}
+
+/* Modal "Parte" (nome, tipo, anacruse) */
+.part-edit-modal {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  width: 360px; max-width: 92vw; padding: 16px 18px; display: flex; flex-direction: column; gap: 8px;
+}
+.part-edit-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.part-edit-head strong { font-size: 15px; }
+.field-label { font-size: 11px; color: var(--text-2); text-transform: uppercase; letter-spacing: .06em; margin-top: 4px; }
+.part-edit-input { width: 100%; }
+.part-edit-hint { font-size: 11px; color: var(--text-2); line-height: 1.4; margin: 2px 0 6px; }
+.part-edit-actions { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+/* Seletor de versão / modelos de estrutura, estilo menu suspenso */
+.version-switcher { position: relative; }
+.version-switcher-btn {
+  display: flex; align-items: center; gap: 6px; background: var(--bg-3); border: 1px solid var(--border);
+  color: var(--text-0); border-radius: var(--radius-sm); padding: 7px 12px; font-size: 12px; font-weight: 700;
+}
+.version-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; min-width: 240px;
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px #0006; padding: 6px; display: flex; flex-direction: column; gap: 1px;
+}
+.version-menu button {
+  display: flex; align-items: center; gap: 6px; text-align: left; background: transparent; border: none;
+  color: var(--text-0); padding: 8px 8px; border-radius: calc(var(--radius-sm) - 2px); font-size: 12px; white-space: nowrap;
+}
+.version-menu button:hover { background: var(--bg-3); }
+.version-menu button.active { color: var(--accent); font-weight: 700; }
+.version-menu-danger { color: #f2a0a0 !important; }
+.version-menu-sep { height: 1px; background: var(--border); margin: 4px 2px; }
+.version-menu-label { font-size: 10px; color: var(--text-2); text-transform: uppercase; letter-spacing: .06em; padding: 4px 8px 2px; }
+.version-menu-check-spacer { display: inline-block; width: 12px; }
+.version-menu-delete { margin-left: auto; opacity: .6; padding: 2px; border-radius: 4px; }
+.version-menu-delete:hover { opacity: 1; background: var(--bg-2); }
+
+.arrange-roteiro-new { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
 .arrange-section-head { display: flex; align-items: center; gap: 8px; }
 .arrange-section-title { font-size: 13px; }
 .arrange-count { color: var(--text-2); font-size: 11px; background: var(--bg-3); border-radius: 999px; padding: 1px 8px; }
