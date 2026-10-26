@@ -283,7 +283,9 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .soundcheck-active strong { color: var(--accent); }
 .soundcheck-count { color: var(--text-2); font-size: 11px; }
-.mixer-strip { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; }
+.mixer-strip-wrap { display: flex; align-items: stretch; gap: 0; min-width: 0; }
+.mixer-strip { display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 10px; min-width: 0; flex: 1; }
+.mixer-channel.mixer-master-pinned { flex-shrink: 0; margin: 4px 0 10px 14px; padding-left: 18px; border-left: 1px solid var(--border); }
 .mixer-channel {
   --role-color: var(--accent);
   position: relative;

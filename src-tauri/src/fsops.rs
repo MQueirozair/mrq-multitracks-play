@@ -19,10 +19,10 @@ const AUDIO_EXTENSIONS: &[&str] = &[
     "m4b", "aac", "wma", "webm", "caf", "3gp",
 ];
 
-#[tauri::command]
-pub async fn scan_folder_tracks(folder_path: String) -> Result<Vec<TrackEntry>, String> {
-    let dir = std::path::PathBuf::from(&folder_path);
-    let mut entries = tokio::fs::read_dir(&dir)
+/// Lê só os arquivos de áudio que estão DIRETO dentro de `dir` (sem descer em
+/// subpastas) — é o caso comum e rápido.
+async fn scan_dir_audio_files(dir: &std::path::Path) -> Result<Vec<TrackEntry>, String> {
+    let mut entries = tokio::fs::read_dir(dir)
         .await
         .map_err(|e| format!("falha ao ler pasta: {e}"))?;
 
@@ -58,11 +58,166 @@ pub async fn scan_folder_tracks(folder_path: String) -> Result<Vec<TrackEntry>, 
             file_path: path.to_string_lossy().to_string(),
         });
     }
-
-    // locale 'pt-BR' real exigiria uma crate de collation; localeCompare
-    // simples por ordinal já cobre os casos práticos (nomes de faixa comuns).
-    tracks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(tracks)
+}
+
+/// Lista as subpastas diretas de `dir` (não recursivo).
+async fn list_subdirs(dir: &std::path::Path) -> Result<Vec<std::path::PathBuf>, String> {
+    let mut entries = tokio::fs::read_dir(dir)
+        .await
+        .map_err(|e| format!("falha ao ler pasta: {e}"))?;
+    let mut dirs = Vec::new();
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|e| format!("falha ao listar pasta: {e}"))?
+    {
+        if matches!(entry.file_type().await, Ok(ft) if ft.is_dir()) {
+            dirs.push(entry.path());
+        }
+    }
+    Ok(dirs)
+}
+
+fn sort_tracks(mut tracks: Vec<TrackEntry>) -> Vec<TrackEntry> {
+    // locale 'pt-BR' real exigiria uma crate de collation; comparação simples
+    // por ordinal já cobre os casos práticos (nomes de faixa comuns).
+    tracks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    tracks
+}
+
+#[tauri::command]
+pub async fn scan_folder_tracks(folder_path: String) -> Result<Vec<TrackEntry>, String> {
+    let dir = std::path::PathBuf::from(&folder_path);
+    let direct = scan_dir_audio_files(&dir).await?;
+    if !direct.is_empty() {
+        return Ok(sort_tracks(direct));
+    }
+
+    // A pasta escolhida não tem áudio direto nela — muito comum quando o
+    // pacote de multitracks baixado vem com os arquivos dentro de uma
+    // subpasta ("WAV", "Tracks", "Audio", "Stems", "48kHz" etc.). Em vez de
+    // obrigar o usuário a navegar manualmente até lá (o que acabava fazendo
+    // o nome da pasta errada — a subpasta genérica, não o nome da música —
+    // virar o título da música), procura até 2 níveis abaixo. Só faz isso
+    // quando a pasta escolhida tem poucas subpastas: é o sinal de que é a
+    // pasta de UMA música (uma ou duas subpastas de organização), não uma
+    // biblioteca inteira com dezenas de músicas dentro — nesse caso é melhor
+    // não adivinhar e deixar o erro "nenhum arquivo encontrado" de antes.
+    let subdirs = list_subdirs(&dir).await?;
+    if subdirs.is_empty() || subdirs.len() > 8 {
+        return Ok(Vec::new());
+    }
+
+    let mut found = Vec::new();
+    for sub in &subdirs {
+        let here = scan_dir_audio_files(sub).await?;
+        if here.is_empty() {
+            // mais um nível (ex.: "Música/Áudio/48kHz/*.wav")
+            if let Ok(inner_dirs) = list_subdirs(sub).await {
+                for inner in inner_dirs {
+                    found.extend(scan_dir_audio_files(&inner).await?);
+                }
+            }
+        } else {
+            found.extend(here);
+        }
+    }
+    Ok(sort_tracks(found))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+
+    /// Pasta temporária isolada por teste (evita testes rodando em paralelo
+    /// pisarem um no caminho do outro).
+    fn temp_test_dir(label: &str) -> std::path::PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir().join(format!("mrq_fsops_test_{label}_{}_{n}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn touch(path: &std::path::Path) {
+        std::fs::write(path, b"fake audio data").unwrap();
+    }
+
+    #[tokio::test]
+    async fn finds_files_directly_in_the_chosen_folder() {
+        let dir = temp_test_dir("direct");
+        touch(&dir.join("Click.wav"));
+        touch(&dir.join("Guide.wav"));
+        touch(&dir.join("notes.txt")); // não é áudio, deve ser ignorado
+
+        let tracks = scan_folder_tracks(dir.to_string_lossy().to_string()).await.unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert!(tracks.iter().any(|t| t.name == "Click"));
+        assert!(tracks.iter().any(|t| t.name == "Guide"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn falls_back_one_level_when_the_chosen_folder_has_a_single_audio_subfolder() {
+        // Reproduz o caso relatado: usuário escolhe a pasta da música, mas os
+        // wavs estão dentro de uma única subpasta ("WAV") — antes disso o
+        // scan simplesmente devolvia vazio e o usuário tinha que navegar até
+        // lá manualmente.
+        let dir = temp_test_dir("one_level");
+        let sub = dir.join("WAV");
+        std::fs::create_dir_all(&sub).unwrap();
+        touch(&sub.join("Bass.wav"));
+        touch(&sub.join("Drums.wav"));
+
+        let tracks = scan_folder_tracks(dir.to_string_lossy().to_string()).await.unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert!(tracks.iter().any(|t| t.name == "Bass"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn falls_back_two_levels_when_needed() {
+        let dir = temp_test_dir("two_levels");
+        let sub = dir.join("Audio").join("48kHz");
+        std::fs::create_dir_all(&sub).unwrap();
+        touch(&sub.join("Keys.wav"));
+
+        let tracks = scan_folder_tracks(dir.to_string_lossy().to_string()).await.unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0].name, "Keys");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn does_not_recurse_into_a_folder_with_many_subfolders() {
+        // Sinal de que a pasta escolhida é uma biblioteca inteira (várias
+        // músicas), não a pasta de uma música só — não deve adivinhar.
+        let dir = temp_test_dir("library");
+        for i in 0..10 {
+            let sub = dir.join(format!("Musica {i}"));
+            std::fs::create_dir_all(&sub).unwrap();
+            touch(&sub.join("Click.wav"));
+        }
+
+        let tracks = scan_folder_tracks(dir.to_string_lossy().to_string()).await.unwrap();
+        assert!(tracks.is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn returns_empty_for_a_completely_empty_folder() {
+        let dir = temp_test_dir("empty");
+        let tracks = scan_folder_tracks(dir.to_string_lossy().to_string()).await.unwrap();
+        assert!(tracks.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
 
 #[tauri::command]

@@ -400,16 +400,49 @@ ipcMain.handle('fs:chooseSongFolder', async () => {
   return result.filePaths[0];
 });
 
-ipcMain.handle('fs:scanFolderTracks', async (_e, folderPath: string) => {
-  const entries = await fs.promises.readdir(folderPath, { withFileTypes: true });
-  const tracks = entries
+async function scanDirAudioFiles(dir: string): Promise<{ name: string; filePath: string }[]> {
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  return entries
     .filter((e) => e.isFile() && AUDIO_EXTENSIONS.has(path.extname(e.name).toLowerCase()))
     .map((e) => ({
       name: path.basename(e.name, path.extname(e.name)),
-      filePath: path.join(folderPath, e.name),
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-  return tracks;
+      filePath: path.join(dir, e.name),
+    }));
+}
+
+async function listSubdirs(dir: string): Promise<string[]> {
+  const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+  return entries.filter((e) => e.isDirectory()).map((e) => path.join(dir, e.name));
+}
+
+function sortTracks<T extends { name: string }>(tracks: T[]): T[] {
+  return [...tracks].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+}
+
+ipcMain.handle('fs:scanFolderTracks', async (_e, folderPath: string) => {
+  const direct = await scanDirAudioFiles(folderPath);
+  if (direct.length > 0) return sortTracks(direct);
+
+  // Pasta escolhida sem áudio direto nela — comum quando o pacote de
+  // multitracks vem com os arquivos dentro de uma subpasta ("WAV", "Tracks",
+  // "Audio" etc). Procura até 2 níveis abaixo, mas só quando a pasta tem
+  // poucas subpastas (pasta de UMA música, não uma biblioteca inteira).
+  const subdirs = await listSubdirs(folderPath);
+  if (subdirs.length === 0 || subdirs.length > 8) return [];
+
+  const found: { name: string; filePath: string }[] = [];
+  for (const sub of subdirs) {
+    const here = await scanDirAudioFiles(sub);
+    if (here.length === 0) {
+      const innerDirs = await listSubdirs(sub).catch(() => []);
+      for (const inner of innerDirs) {
+        found.push(...(await scanDirAudioFiles(inner)));
+      }
+    } else {
+      found.push(...here);
+    }
+  }
+  return sortTracks(found);
 });
 
 ipcMain.handle('fs:toFileUrl', (_e, filePath: string) => {

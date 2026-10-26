@@ -115,14 +115,20 @@ export default function HelpPanel() {
           </p>
 
           <div className="help-callout" style={{ marginBottom: 18 }}>
-            <b>Novidades desta versão:</b> pílula de acorde maior (mostra o acorde inteiro, sem cortar) · Tap tempo ·
+            <b>Correções desta versão:</b> a detecção automática de partes (Arranjar → "Reconhecer partes") foi
+            refeita — não cria mais partes desnecessárias e não rotula tudo de "Refrão" por engano; ganhou um
+            controle de sensibilidade e botões de dividir/mesclar. Importar uma pasta agora encontra os arquivos de
+            áudio sozinho mesmo quando estão numa subpasta (ex. "Música/WAV/"), sem precisar navegar manualmente.
+            <b> Click Track</b> e <b>Guide/Guia</b> sempre aparecem primeiro no mixer, e o canal <b>MASTER</b> fica
+            sempre visível (não rola junto com as outras faixas).
+          </div>
+          <div className="help-callout" style={{ marginBottom: 18 }}>
+            <b>Também nesta leva:</b> pílula de acorde maior (mostra o acorde inteiro, sem cortar) · Tap tempo ·
             Loop A/B de ensaio · Modo Palco — Telão (cifra em tela cheia) · Folha de roteiro pra imprimir/PDF ·
             Monitor de saúde do áudio (avisa sobre soluços ao vivo) · acorde ao vivo transmitido pro celular de toda
             a banda · Cues de palco por parte (OSC/MIDI) · e duas tecnologias novas — ponte <b>OSC</b> com software de
             produção externo (QLab, Resolume, TouchOSC) e <b>MRQ Sync</b> (sincronismo de estado entre instâncias do
-            MRQ na mesma rede). <b>Correção:</b> a detecção automática de partes (em Arranjar) foi refeita — não cria
-            mais partes desnecessárias, ganhou um controle de sensibilidade e botões de dividir/mesclar partes pra
-            ajuste rápido. Veja os detalhes de cada uma nas seções abaixo.
+            MRQ na mesma rede). Veja os detalhes de cada uma nas seções abaixo.
           </div>
 
           <div className="help-formats-grid">
@@ -185,7 +191,18 @@ export default function HelpPanel() {
                   Clique em <b>"Importar pasta de multitracks"</b> (botão laranja na tela inicial ou o <b>+</b> no
                   topo da Biblioteca).
                 </li>
-                <li>Escolha a pasta da música. O MRQ varre a pasta e lista toda faixa de áudio reconhecida.</li>
+                <li>
+                  Escolha a pasta da música. O MRQ varre a pasta e lista toda faixa de áudio reconhecida — se os
+                  arquivos estiverem direto nela, abre a música sozinho, sem precisar escolher arquivo por arquivo.
+                  Se a pasta escolhida não tiver nenhum áudio direto nela mas tiver só uma ou duas subpastas (comum em
+                  pacotes baixados prontos, ex. "Música/WAV/", "Música/Áudio/48kHz/"), o MRQ procura automaticamente
+                  até 2 níveis abaixo antes de desistir — só pede pra navegar manualmente se a pasta escolhida parecer
+                  uma biblioteca inteira (muitas subpastas, provavelmente várias músicas diferentes).
+                </li>
+                <li>
+                  As faixas de <b>Click Track</b> e <b>Guide/Guia</b> (reconhecidas pelo nome do arquivo) sempre vêm
+                  primeiro no mixer, nessa ordem — são as que a banda mais precisa achar rápido no palco.
+                </li>
                 <li>
                   Formatos aceitos nas faixas: <FormatChip>.wav/.wave</FormatChip> <FormatChip>.aiff/.aif/.aifc</FormatChip>{' '}
                   <FormatChip>.flac</FormatChip> <FormatChip>.mp3</FormatChip> <FormatChip>.ogg/.oga/.opus</FormatChip>{' '}
@@ -299,10 +316,13 @@ export default function HelpPanel() {
               </p>
               <p className="help-callout">
                 <b>Correção desta versão:</b> a detecção automática estava criando partes demais (toda pequena
-                variação de dinâmica virava uma "parte" nova). O detector foi refeito com uma técnica mais robusta
-                de reconhecimento de estrutura musical (a mesma base usada por ferramentas de análise de áudio:
-                curva de novidade por similaridade, com suavização e limiar adaptativo), além de um passo que funde
-                automaticamente qualquer trecho curto demais no vizinho mais parecido antes de sugerir o resultado.
+                variação de dinâmica virava uma "parte" nova) e, em algumas músicas, rotulava TODAS as partes como
+                "Refrão". O detector foi refeito com uma técnica mais robusta de reconhecimento de estrutura musical
+                (a mesma base usada por ferramentas de análise de áudio: curva de novidade por similaridade, com
+                suavização e limiar adaptativo), com um passo que funde automaticamente qualquer trecho curto demais
+                no vizinho mais parecido, e uma rede de segurança no rótulo: se o programa não encontrar diversidade
+                de verdade entre as partes, ele não arrisca chamar tudo de "Refrão" — usa um rótulo neutro e deixa
+                claro que a sugestão deve ser revisada.
               </p>
             </div>
             <Figure src="help-arrange.png" alt="Tela de Arranjar com partes marcadas" caption="Partes marcadas na forma de onda e lista editável abaixo." />
@@ -320,8 +340,11 @@ export default function HelpPanel() {
                 pra conferir uma faixa problemática quanto pra estudar uma parte específica (ex.: só o baixo).
               </p>
               <p>
-                O botão <b>"Modo prova de som"</b> ajuda a testar canal por canal antes do show, e o fader{' '}
-                <b>MASTER</b> controla o volume geral de tudo que está sendo reproduzido.
+                O botão <b>"Modo prova de som"</b> ajuda a testar canal por canal antes do show. O canal{' '}
+                <b>MASTER</b> fica sempre visível, separado por uma linha, à direita da lista de faixas — ele não
+                rola junto quando a música tem muitas faixas e a lista fica mais larga que a tela (nem aqui, nem na
+                mesma mesa dentro de uma cena da Lista/Setlist), então você sempre consegue ver o nível geral sem
+                precisar rolar até o fim.
               </p>
               <p>
                 <b>Novidade — Monitor de saúde do áudio:</b> enquanto a música toca, o MRQ fica de olho em possíveis{' '}

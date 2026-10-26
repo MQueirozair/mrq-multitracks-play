@@ -115,7 +115,12 @@ export function recognizeParts(
   const hardMinBars = Math.max(2, Math.min(minBoundaryBars, 4));
   segments = repairShortSegments(segments, hardMinBars);
 
-  // agrupa segmentos parecidos (repetições) por similaridade média do vetor
+  // agrupa segmentos parecidos (repetições) por similaridade média do vetor.
+  // Limiar alto de propósito: a feature usada aqui (energia + cruzamento por
+  // zero, normalizada por compasso) já perde a diferença de volume absoluto
+  // entre verso/refrão, então um limiar frouxo colapsa a música inteira num
+  // grupo só — e TODO SEGMENTO acaba rotulado "Refrão" (bug real, visto em
+  // áudio de verdade: uma música virou 6 partes, todas chamadas "Refrão").
   const groupOf: number[] = new Array(segments.length).fill(-1);
   let nextGroup = 0;
   for (let i = 0; i < segments.length; i++) {
@@ -123,7 +128,7 @@ export function recognizeParts(
     groupOf[i] = nextGroup;
     for (let j = i + 1; j < segments.length; j++) {
       if (groupOf[j] !== -1) continue;
-      if (cosine(segments[i].feature, segments[j].feature) > 0.88) groupOf[j] = nextGroup;
+      if (cosine(segments[i].feature, segments[j].feature) > 0.93) groupOf[j] = nextGroup;
     }
     nextGroup++;
   }
@@ -138,11 +143,23 @@ export function recognizeParts(
   });
   const chorusGroup = repeatedGroups.sort((a, b) => (energyByGroup.get(b)! - energyByGroup.get(a)!))[0];
 
+  // Rede de segurança: só confia no rótulo Verso/Refrão vindo do agrupamento
+  // quando ele realmente encontrou diversidade (2+ grupos que se repetem, OU
+  // 1 grupo que se repete mas não cobre a música inteira). Se um único grupo
+  // "engoliu" todos os segmentos, isso não é "a música inteira é refrão" — é
+  // sinal de que essa heurística simples não conseguiu diferenciar as partes
+  // dessa música, e é mais honesto cair num rótulo neutro (alternando
+  // Verso/Instrumental por posição) do que repetir o mesmo rótulo errado em
+  // todas elas.
+  const totalInRepeatedGroups = repeatedGroups.reduce((sum, g) => sum + (groupCounts.get(g) ?? 0), 0);
+  const hasMeaningfulGrouping = repeatedGroups.length >= 2 || (repeatedGroups.length === 1 && totalInRepeatedGroups < segments.length);
+
   const parts: SongPart[] = segments.map((seg, i) => {
     let type: PartType = 'Outra';
     const g = groupOf[i];
     if (i === 0 && seg.endBar - seg.startBar <= 8) type = 'Intro';
     else if (i === segments.length - 1) type = 'Final';
+    else if (!hasMeaningfulGrouping) type = i % 2 === 0 ? 'Verso' : 'Instrumental';
     else if (g === chorusGroup) type = 'Refrão';
     else if (repeatedGroups.includes(g)) type = 'Verso';
     else if (i > segments.length / 2) type = 'Ponte';

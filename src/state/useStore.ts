@@ -260,6 +260,27 @@ function defaultTrack(name: string, filePath: string): SongTrack {
   };
 }
 
+/**
+ * Click e Guide sempre primeiro na mixagem — são as faixas que a banda mais
+ * precisa achar rápido no palco (referência de tempo e de tom/letra), e é
+ * assim que ferramentas de playback ao vivo da categoria organizam a tira de
+ * canais (em vez de simplesmente seguir a ordem alfabética dos arquivos,
+ * que é o que a varredura de pasta devolve). O resto mantém a ordem em que
+ * foi encontrado — só os dois primeiros lugares são reservados.
+ */
+function sortTracksForMixer(tracks: SongTrack[]): SongTrack[] {
+  const priority: Partial<Record<TrackRole, number>> = { click: 0, guide: 1 };
+  return [...tracks]
+    .map((track, index) => ({ track, index }))
+    .sort((a, b) => {
+      const pa = priority[a.track.role] ?? 2;
+      const pb = priority[b.track.role] ?? 2;
+      if (pa !== pb) return pa - pb;
+      return a.index - b.index;
+    })
+    .map((x) => x.track);
+}
+
 async function urlsForSong(song: Song): Promise<Record<string, string>> {
   const entries = await Promise.all(
     song.tracks.map(async (t) => [t.id, await window.api.fs.toFileUrl(t.filePath)] as const)
@@ -535,7 +556,7 @@ export const useStore = create<StoreState>((set, get) => ({
       get().pushToast('Nenhum arquivo de áudio encontrado nessa pasta.', 'error');
       return;
     }
-    const tracks = found.map((f) => defaultTrack(f.name, f.filePath));
+    const tracks = sortTracksForMixer(found.map((f) => defaultTrack(f.name, f.filePath)));
     const folderName = folder.split(/[\\/]/).filter(Boolean).pop() ?? 'Nova música';
     const parsed = parseSongFolderName(folderName);
     const title = parsed.title || folderName;
