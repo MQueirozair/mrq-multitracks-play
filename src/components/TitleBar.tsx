@@ -4,6 +4,7 @@ import { useStore } from '../state/useStore';
 import SessionTimer from './SessionTimer';
 import RackMidiPanel from './RackMidiPanel';
 import ChordIndicator from './ChordIndicator';
+import AudioHealthIndicator from './AudioHealthIndicator';
 
 export default function TitleBar() {
   const engineState = useStore((s) => s.engineState);
@@ -12,6 +13,7 @@ export default function TitleBar() {
   const [remoteInfo, setRemoteInfo] = useState<{ port: number; enabled: boolean } | null>(null);
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
+  const syncLeaderState = useStore((s) => s.syncLeaderState);
 
   useEffect(() => {
     window.api.remote.getInfo().then(setRemoteInfo).catch(() => {});
@@ -38,6 +40,12 @@ export default function TitleBar() {
           Remoto {remoteInfo?.enabled ? `:${remoteInfo.port}` : 'desligado'}
         </div>
         {engineState.isPlaying && <div className="pill" style={{ color: 'var(--accent)' }}>▶ Tocando</div>}
+        <AudioHealthIndicator />
+        {settings.sync.enabled && settings.sync.role === 'follower' && syncLeaderState && (
+          <div className="pill" title="Estado recebido do Líder via MRQ Sync (só exibição, não controla sua reprodução)">
+            🔗 Líder: {syncLeaderState.isPlaying ? '▶' : '■'} {syncLeaderState.bpm || '-'} BPM · {syncLeaderState.key}
+          </div>
+        )}
         {nav === 'rack' && <RackMidiPanel />}
         <SessionTimer />
         <button

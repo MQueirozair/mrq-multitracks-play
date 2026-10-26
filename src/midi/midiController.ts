@@ -88,3 +88,24 @@ export function listInputNames(): string[] {
 export function isSupported(): boolean {
   return 'requestMIDIAccess' in navigator;
 }
+
+/**
+ * Manda um Program Change MIDI pra TODAS as saídas MIDI conectadas — usado
+ * pelas "Cues de palco" (ver SongPart.cueMidiProgram em shared/types.ts):
+ * dispara automaticamente quando uma parte com cue configurada fica ativa,
+ * pra trocar a cena de um console/software externo que só aceita MIDI (em
+ * vez de OSC). `channel` é 0-15 (MIDI canal 1-16), `program` é 0-127.
+ * Silencioso se não houver nenhuma saída MIDI disponível/autorizada.
+ */
+export function sendMidiProgramChange(channel: number, program: number): void {
+  if (!access) return;
+  const status = 0xc0 | (channel & 0x0f);
+  const data = [status, program & 0x7f];
+  access.outputs.forEach((output) => {
+    try {
+      output.send(data);
+    } catch {
+      /* saída pode ter sido desconectada entre a checagem e o envio — ignora */
+    }
+  });
+}

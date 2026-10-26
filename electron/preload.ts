@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSettings, Library, RemoteStateSnapshot, RemoteCommand } from '../shared/types';
+import type { AppSettings, Library, RemoteStateSnapshot, RemoteCommand, OscArgValue, OscMessage, SyncBroadcastState } from '../shared/types';
 
 export interface UpdateStatusPayload {
   status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error' | 'dev' | 'ok';
@@ -63,6 +63,31 @@ const api = {
       ipcRenderer.on('remote:command', listener);
       return () => {
         ipcRenderer.removeListener('remote:command', listener);
+      };
+    },
+  },
+  // OSC e MRQ Sync (ver src-tauri/src/osc.rs e sync.rs): só implementados de
+  // fato no lado Tauri (src/tauriBridge.ts) — mantidos aqui só pra MrqApi
+  // continuar com o mesmo formato nos dois lados, já que esta casca Electron
+  // é legada e não faz mais parte do build publicado (ver tauri.conf.json).
+  osc: {
+    send: (address: string, args: OscArgValue[]): Promise<boolean> => ipcRenderer.invoke('osc:send', address, args),
+    isEnabled: (): Promise<boolean> => ipcRenderer.invoke('osc:isEnabled'),
+    onMessage: (cb: (msg: OscMessage) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, msg: OscMessage) => cb(msg);
+      ipcRenderer.on('osc:message', listener);
+      return () => {
+        ipcRenderer.removeListener('osc:message', listener);
+      };
+    },
+  },
+  sync: {
+    broadcastState: (state: SyncBroadcastState) => ipcRenderer.send('sync:broadcastState', state),
+    onState: (cb: (state: SyncBroadcastState) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, state: SyncBroadcastState) => cb(state);
+      ipcRenderer.on('sync:state', listener);
+      return () => {
+        ipcRenderer.removeListener('sync:state', listener);
       };
     },
   },

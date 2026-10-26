@@ -53,7 +53,9 @@ const api = {
         onCommand: (cb) => {
             const listener = (_e, cmd) => cb(cmd);
             electron_1.ipcRenderer.on('remote:command', listener);
-            return () => electron_1.ipcRenderer.removeListener('remote:command', listener);
+            return () => {
+                electron_1.ipcRenderer.removeListener('remote:command', listener);
+            };
         },
     },
 };

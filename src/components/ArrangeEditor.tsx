@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Copy, GripVertical, Infinity as InfinityIcon, Trash2 } from 'lucide-react';
+import { Copy, GripVertical, Infinity as InfinityIcon, Trash2, Zap } from 'lucide-react';
 import type { ArrangementStep, PartType, Song } from '../../shared/types';
 import { PART_COLORS } from '../../shared/types';
 import { useStore } from '../state/useStore';
@@ -16,6 +16,7 @@ export default function ArrangeEditor({ song }: { song: Song }) {
   const pushToast = useStore((s) => s.pushToast);
   const [newArrName, setNewArrName] = useState('');
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  const [cueEditPartId, setCueEditPartId] = useState<string | null>(null);
   const dragIndex = useRef<number | null>(null);
 
   const activeArrangement = song.arrangements.find((a) => a.id === song.activeArrangementId) ?? null;
@@ -95,44 +96,100 @@ export default function ArrangeEditor({ song }: { song: Song }) {
       </div>
 
       <div className="arrange-parts-list">
-        {song.parts.map((part) => (
-          <div key={part.id} className="arrange-part-row">
-            <span className="arrange-color-dot" style={{ background: part.color }} />
-            <input
-              className="arrange-input-name"
-              value={part.name}
-              onChange={(e) => updatePart(part.id, { name: e.target.value })}
-            />
-            <select
-              className="arrange-input-type"
-              value={part.type}
-              onChange={(e) => {
-                const type = e.target.value as PartType;
-                updatePart(part.id, { type, color: PART_COLORS[type] });
-              }}
-            >
-              {PART_TYPES.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
-            <label className="arrange-inline-label">de</label>
-            <input
-              type="number"
-              className="arrange-input-bar"
-              value={part.startBar}
-              onChange={(e) => updatePart(part.id, { startBar: parseInt(e.target.value, 10) || 1 })}
-            />
-            <label className="arrange-inline-label">até</label>
-            <input
-              type="number"
-              className="arrange-input-bar"
-              value={part.endBar}
-              onChange={(e) => updatePart(part.id, { endBar: parseInt(e.target.value, 10) || 1 })}
-            />
-            <div className="arrange-spacer" />
-            <button className="btn danger" onClick={() => deletePart(part.id)}>Excluir</button>
+        {song.parts.map((part) => {
+          const hasCue = !!part.cueOscAddress || !!part.cueMidiProgram;
+          return (
+          <div key={part.id}>
+            <div className="arrange-part-row">
+              <span className="arrange-color-dot" style={{ background: part.color }} />
+              <input
+                className="arrange-input-name"
+                value={part.name}
+                onChange={(e) => updatePart(part.id, { name: e.target.value })}
+              />
+              <select
+                className="arrange-input-type"
+                value={part.type}
+                onChange={(e) => {
+                  const type = e.target.value as PartType;
+                  updatePart(part.id, { type, color: PART_COLORS[type] });
+                }}
+              >
+                {PART_TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+              <label className="arrange-inline-label">de</label>
+              <input
+                type="number"
+                className="arrange-input-bar"
+                value={part.startBar}
+                onChange={(e) => updatePart(part.id, { startBar: parseInt(e.target.value, 10) || 1 })}
+              />
+              <label className="arrange-inline-label">até</label>
+              <input
+                type="number"
+                className="arrange-input-bar"
+                value={part.endBar}
+                onChange={(e) => updatePart(part.id, { endBar: parseInt(e.target.value, 10) || 1 })}
+              />
+              <div className="arrange-spacer" />
+              <button
+                className={`icon-btn ${hasCue ? 'active' : ''}`}
+                title="Cue de palco: dispara OSC/MIDI automaticamente quando esta parte entra (luz, vídeo, console externo)"
+                onClick={() => setCueEditPartId(cueEditPartId === part.id ? null : part.id)}
+              >
+                <Zap size={14} />
+              </button>
+              <button className="btn danger" onClick={() => deletePart(part.id)}>Excluir</button>
+            </div>
+            {cueEditPartId === part.id && (
+              <div className="arrange-cue-row">
+                <label className="arrange-inline-label">Endereço OSC</label>
+                <input
+                  placeholder="/light/scene/3"
+                  value={part.cueOscAddress ?? ''}
+                  onChange={(e) => updatePart(part.id, { cueOscAddress: e.target.value || null })}
+                  style={{ width: 160 }}
+                />
+                <label className="arrange-inline-label">MIDI canal</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={15}
+                  style={{ width: 60 }}
+                  value={part.cueMidiProgram?.channel ?? ''}
+                  placeholder="—"
+                  onChange={(e) => {
+                    const channel = e.target.value === '' ? null : Math.max(0, Math.min(15, parseInt(e.target.value, 10) || 0));
+                    updatePart(part.id, {
+                      cueMidiProgram: channel === null ? null : { channel, program: part.cueMidiProgram?.program ?? 0 },
+                    });
+                  }}
+                />
+                <label className="arrange-inline-label">programa</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={127}
+                  style={{ width: 60 }}
+                  disabled={!part.cueMidiProgram}
+                  value={part.cueMidiProgram?.program ?? ''}
+                  placeholder="—"
+                  onChange={(e) => {
+                    if (!part.cueMidiProgram) return;
+                    const program = Math.max(0, Math.min(127, parseInt(e.target.value, 10) || 0));
+                    updatePart(part.id, { cueMidiProgram: { ...part.cueMidiProgram, program } });
+                  }}
+                />
+                <span className="hint" style={{ marginLeft: 8 }}>
+                  Disparado automaticamente assim que esta parte fica ativa — ver settings.osc e Ajuda.
+                </span>
+              </div>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="arrange-roteiro-block">

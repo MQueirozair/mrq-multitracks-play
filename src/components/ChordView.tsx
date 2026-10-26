@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Tv } from 'lucide-react';
 import type { Song } from '../../shared/types';
 import { semitoneDistance } from '../../shared/types';
 import { transposeChordChart, isChordLine, splitChordSections } from '../lib/chordTranspose';
@@ -8,6 +9,7 @@ export default function ChordView({ song }: { song: Song }) {
   const setChordChart = useStore((s) => s.setChordChart);
   const jumpToPart = useStore((s) => s.jumpToPart);
   const engineState = useStore((s) => s.engineState);
+  const setTeleprompterOpen = useStore((s) => s.setTeleprompterOpen);
   const [editing, setEditing] = useState(!song.chordChart);
   const [draft, setDraft] = useState(song.chordChart?.raw ?? '');
 
@@ -24,6 +26,11 @@ export default function ChordView({ song }: { song: Song }) {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn" onClick={() => setEditing(true)}>Colar cifra</button>
+          {song.chordChart && (
+            <button className="btn ghost" onClick={() => setTeleprompterOpen(true)} title="Abrir cifra em tela cheia, pra monitor/TV virado pro músico">
+              <Tv size={13} style={{ marginRight: 6 }} />Modo Palco — Telão
+            </button>
+          )}
           <span style={{ color: 'var(--text-2)', fontSize: 12, alignSelf: 'center' }}>
             {song.chordChart ? `Tom da cifra: ${song.chordChart.originalKey} · Tocando em: ${song.currentKey}` : 'Nenhuma cifra colada ainda'}
           </span>

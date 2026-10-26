@@ -19,7 +19,7 @@ import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { load as loadStore, type Store } from '@tauri-apps/plugin-store';
 import { check as checkForUpdate, type Update } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
-import type { AppSettings, Library, RemoteStateSnapshot, RemoteCommand } from '../shared/types';
+import type { AppSettings, Library, RemoteStateSnapshot, RemoteCommand, OscArgValue, OscMessage, SyncBroadcastState } from '../shared/types';
 import { DEFAULT_SETTINGS } from '../shared/types';
 import type { MrqApi, UpdateStatusPayload } from '../electron/preload';
 
@@ -89,6 +89,31 @@ async function applyRemoteConfigFromSettings(settings: AppSettings) {
     });
   } catch (err) {
     console.error('[remote] falha ao configurar servidor remoto', err);
+  }
+}
+
+async function applyOscConfigFromSettings(settings: AppSettings) {
+  try {
+    await invoke('osc_configure', {
+      enabled: settings.osc.enabled,
+      listenPort: settings.osc.listenPort,
+      sendHost: settings.osc.sendHost,
+      sendPort: settings.osc.sendPort,
+    });
+  } catch (err) {
+    console.error('[osc] falha ao configurar ponte OSC', err);
+  }
+}
+
+async function applySyncConfigFromSettings(settings: AppSettings) {
+  try {
+    await invoke('sync_configure', {
+      enabled: settings.sync.enabled,
+      role: settings.sync.role,
+      port: settings.sync.port,
+    });
+  } catch (err) {
+    console.error('[sync] falha ao configurar o MRQ Sync', err);
   }
 }
 
@@ -175,6 +200,8 @@ export const ready: Promise<void> = (async () => {
     const stored = (await store.get<AppSettings>('settings')) ?? undefined;
     const settings = mergeSettingsWithDefaults(stored);
     await applyRemoteConfigFromSettings(settings);
+    await applyOscConfigFromSettings(settings);
+    await applySyncConfigFromSettings(settings);
   } catch (err) {
     console.error('[remote] falha ao inicializar a partir das configurações salvas', err);
   }
@@ -297,6 +324,8 @@ const api: MrqApi = {
       await store.set('settings', settings);
       await store.save();
       await applyRemoteConfigFromSettings(settings);
+      await applyOscConfigFromSettings(settings);
+      await applySyncConfigFromSettings(settings);
       return true;
     },
   },
@@ -375,6 +404,42 @@ const api: MrqApi = {
       let unlisten: (() => void) | null = null;
       let cancelled = false;
       listen<RemoteCommand>('remote:command', (event) => cb(event.payload)).then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+      return () => {
+        cancelled = true;
+        unlisten?.();
+      };
+    },
+  },
+  osc: {
+    send: (address: string, args: OscArgValue[]) => invoke<void>('osc_send', { address, args }).then(() => true).catch(() => false),
+    isEnabled: () => invoke<boolean>('osc_is_enabled'),
+    onMessage: (cb: (msg: OscMessage) => void) => {
+      let unlisten: (() => void) | null = null;
+      let cancelled = false;
+      listen<OscMessage>('osc:message', (event) => cb(event.payload)).then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+      return () => {
+        cancelled = true;
+        unlisten?.();
+      };
+    },
+  },
+  sync: {
+    broadcastState: (state: SyncBroadcastState) => {
+      void invoke('sync_broadcast_state', { state: { is_playing: state.isPlaying, bpm: state.bpm, key: state.key, song_title: state.songTitle } });
+    },
+    onState: (cb: (state: SyncBroadcastState) => void) => {
+      let unlisten: (() => void) | null = null;
+      let cancelled = false;
+      listen<{ is_playing: boolean; bpm: number; key: string; song_title: string }>('sync:state', (event) => {
+        const p = event.payload;
+        cb({ isPlaying: p.is_playing, bpm: p.bpm, key: p.key, songTitle: p.song_title });
+      }).then((fn) => {
         if (cancelled) fn();
         else unlisten = fn;
       });

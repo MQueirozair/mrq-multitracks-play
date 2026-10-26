@@ -23,6 +23,17 @@ export interface SongPart {
   endBar: number;
   color: string;
   loop?: boolean;
+  /**
+   * "Cue de palco": endereço OSC opcional disparado automaticamente assim
+   * que esta parte fica ativa (ex.: "/light/scene/3"), pra acionar uma cena
+   * de iluminação/vídeo em outro software (QLab, Resolume, mesa de luz) no
+   * exato momento em que a banda entra nessa parte — ver settings.osc e
+   * HelpPanel.tsx seção "osc". null/undefined = nenhum cue configurado.
+   */
+  cueOscAddress?: string | null;
+  /** Cue equivalente via MIDI Program Change (canal 0-15, programa 0-127), pra
+   *  consoles/softwares que só aceitam MIDI em vez de OSC. */
+  cueMidiProgram?: { channel: number; program: number } | null;
 }
 
 export interface ArrangementStep {
@@ -149,6 +160,57 @@ export interface RemoteSettings {
   enabled: boolean;
   port: number;
   pin: string;
+}
+
+/**
+ * Ponte OSC (Open Sound Control) por UDP com software externo de produção —
+ * luz, vídeo, ProPresenter-like, consoles — ver src-tauri/src/osc.rs e
+ * HelpPanel.tsx seção "osc". Tecnologia nova adotada nesta versão (pedido
+ * explícito do usuário de "2 novas tecnologias").
+ */
+export interface OscSettings {
+  enabled: boolean;
+  /** porta UDP local onde o MRQ escuta mensagens OSC recebidas (de um TouchOSC, QLab etc.) */
+  listenPort: number;
+  /** host/IP de destino pra onde o MRQ manda as mensagens OSC de transporte/cue */
+  sendHost: string;
+  /** porta UDP de destino */
+  sendPort: number;
+}
+
+export type OscArgValue =
+  | { type: 'i'; value: number }
+  | { type: 'f'; value: number }
+  | { type: 's'; value: string };
+
+export interface OscMessage {
+  address: string;
+  args: OscArgValue[];
+}
+
+/**
+ * "MRQ Sync": sincronismo de tempo/transporte entre instâncias do MRQ na
+ * mesma rede local (ex.: o notebook do baterista seguindo o tom/BPM/estado de
+ * reprodução de quem está liderando a música) — um protocolo próprio, leve,
+ * via UDP broadcast (ver src-tauri/src/sync.rs). NÃO é o protocolo Ableton
+ * Link (que exigiria uma biblioteca externa não disponível pra Rust neste
+ * projeto) — é uma alternativa mais simples pensada só pra múltiplas
+ * instâncias do MRQ, não para interoperar com outros DAWs/apps.
+ */
+export interface SyncSettings {
+  enabled: boolean;
+  /** 'leader' manda o estado pra rede; 'follower' escuta e segue quem for 'leader' */
+  role: 'leader' | 'follower';
+  /** porta UDP usada pelo broadcast local (mesma em todas as instâncias da rede) */
+  port: number;
+}
+
+/** Forma (camelCase) do estado trocado pelo MRQ Sync entre o front-end e o Rust — ver src-tauri/src/sync.rs. */
+export interface SyncBroadcastState {
+  isPlaying: boolean;
+  bpm: number;
+  key: string;
+  songTitle: string;
 }
 
 export interface MidiBinding {
@@ -378,6 +440,8 @@ export interface AppSettings {
   click: ClickSettings;
   pad: PadSettings;
   remote: RemoteSettings;
+  osc: OscSettings;
+  sync: SyncSettings;
   midiBindings: MidiBinding[];
   guideVoice: {
     track: string | null;
@@ -514,6 +578,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
     port: 8787,
     pin: '0000',
   },
+  osc: {
+    enabled: false,
+    listenPort: 9000,
+    sendHost: '127.0.0.1',
+    sendPort: 9001,
+  },
+  sync: {
+    enabled: false,
+    role: 'leader',
+    port: 8788,
+  },
   midiBindings: [],
   guideVoice: {
     track: null,
@@ -567,6 +642,8 @@ export interface RemoteStateSnapshot {
   activePartId: string | null;
   positionSec: number;
   durationSec: number;
+  /** acorde detectado agora no Rack (ver ChordIndicator.tsx), pra broadcast ao vivo pros celulares da banda; null = nenhuma nota soando/Rack não usado */
+  currentChord: string | null;
 }
 
 export type RemoteCommand =

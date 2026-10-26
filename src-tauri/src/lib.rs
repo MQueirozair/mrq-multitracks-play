@@ -1,12 +1,16 @@
 mod fsops;
 mod logging;
 mod migration;
+mod osc;
 mod protocol;
 mod remote;
+mod sync;
 
 use logging::LogState;
+use osc::{OscArg, OscManager};
 use remote::RemoteManager;
 use std::sync::Arc;
+use sync::{SyncManager, SyncState};
 use tauri::Manager;
 
 #[tauri::command]
@@ -58,6 +62,51 @@ async fn remote_get_current_port(manager: tauri::State<'_, RemoteManager>) -> Re
     Ok(manager.current_port().await)
 }
 
+#[tauri::command]
+async fn osc_configure(
+    manager: tauri::State<'_, OscManager>,
+    enabled: bool,
+    listen_port: u16,
+    send_host: String,
+    send_port: u16,
+) -> Result<(), String> {
+    manager
+        .configure(enabled, listen_port, send_host, send_port)
+        .await
+}
+
+#[tauri::command]
+async fn osc_send(
+    manager: tauri::State<'_, OscManager>,
+    address: String,
+    args: Vec<OscArg>,
+) -> Result<(), String> {
+    manager.send(address, args).await
+}
+
+#[tauri::command]
+async fn osc_is_enabled(manager: tauri::State<'_, OscManager>) -> Result<bool, ()> {
+    Ok(manager.is_enabled().await)
+}
+
+#[tauri::command]
+async fn sync_configure(
+    manager: tauri::State<'_, SyncManager>,
+    enabled: bool,
+    role: String,
+    port: u16,
+) -> Result<(), String> {
+    manager.configure(enabled, role, port).await
+}
+
+#[tauri::command]
+async fn sync_broadcast_state(
+    manager: tauri::State<'_, SyncManager>,
+    state: SyncState,
+) -> Result<(), String> {
+    manager.broadcast_state(state).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -102,6 +151,12 @@ pub fn run() {
             let remote_manager = remote::new_manager(app.handle().clone(), static_dir);
             app.manage(remote_manager);
 
+            let osc_manager = osc::new_manager(app.handle().clone());
+            app.manage(osc_manager);
+
+            let sync_manager = sync::new_manager(app.handle().clone());
+            app.manage(sync_manager);
+
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(log) = app_handle.try_state::<Arc<LogState>>() {
@@ -128,6 +183,11 @@ pub fn run() {
             remote_configure,
             remote_broadcast_state,
             remote_get_current_port,
+            osc_configure,
+            osc_send,
+            osc_is_enabled,
+            sync_configure,
+            sync_broadcast_state,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao rodar a aplicação Tauri");

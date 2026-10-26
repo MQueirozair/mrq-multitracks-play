@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Download, History, Trash2, Upload } from 'lucide-react';
+import { Download, FileText, History, Trash2, Upload } from 'lucide-react';
 import type { Scene } from '../../shared/types';
 import { useStore } from '../state/useStore';
 
@@ -29,6 +29,92 @@ function downloadJson(filename: string, data: unknown) {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+}
+
+function fmtDuration(sec: number): string {
+  if (!sec || sec <= 0) return '—';
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * Gera uma "folha de roteiro" (gig sheet) em HTML autônomo (sem dependências
+ * externas, tudo inline) pra imprimir ou salvar como PDF — novidade pedida
+ * pelo usuário ("ferramentas novas"). Em vez de depender de alguma biblioteca
+ * de PDF (risco extra de dependência pra um recurso simples), geramos um
+ * .html autossuficiente: o operador abre no navegador e usa Ctrl+P /
+ * "Salvar como PDF" do próprio navegador — funciona em qualquer SO sem
+ * precisar instalar nada a mais. Mostra ordem, tom, BPM, duração e as
+ * anotações da música, já numerados pra colar na estante do músico.
+ */
+function buildGigSheetHtml(scene: Scene, songs: ReturnType<typeof useStore.getState>['library']['songs']): string {
+  const rows = scene.items.map((item, i) => {
+    const song = songs.find((s) => s.id === item.songId);
+    if (!song) return '';
+    const notes = song.notes?.trim() ? escapeHtml(song.notes.trim()) : '';
+    return `
+      <tr>
+        <td class="num">${i + 1}</td>
+        <td class="title">${escapeHtml(song.title)}</td>
+        <td>${escapeHtml(item.key)}</td>
+        <td>${item.bpm}</td>
+        <td>${fmtDuration(song.durationSec)}</td>
+        <td class="notes">${notes}</td>
+      </tr>`;
+  }).join('');
+  const totalSec = scene.items.reduce((acc, item) => {
+    const song = songs.find((s) => s.id === item.songId);
+    return acc + (song?.durationSec ?? 0);
+  }, 0);
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>Roteiro — ${escapeHtml(scene.name)}</title>
+<style>
+  @page { size: A4; margin: 16mm; }
+  body { font-family: -apple-system, 'Segoe UI', Arial, sans-serif; color: #111; margin: 0; padding: 24px; }
+  h1 { font-size: 22px; margin: 0 0 2px; }
+  .sub { color: #555; font-size: 13px; margin-bottom: 18px; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { border-bottom: 1px solid #ddd; padding: 8px 10px; text-align: left; font-size: 14px; vertical-align: top; }
+  th { background: #f0f0f0; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #444; }
+  td.num { font-weight: 700; width: 28px; }
+  td.title { font-weight: 600; }
+  td.notes { color: #555; font-size: 12.5px; max-width: 220px; }
+  .footer { margin-top: 18px; font-size: 12px; color: #777; }
+  @media print { .no-print { display: none; } }
+  .no-print { margin-top: 20px; }
+  .no-print button { font-size: 13px; padding: 8px 14px; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h1>${escapeHtml(scene.name)}</h1>
+  <div class="sub">Roteiro gerado pelo MRQ · Multitracks Play em ${new Date().toLocaleString('pt-BR')} · ${scene.items.length} música(s) · duração total ≈ ${fmtDuration(totalSec)}</div>
+  <table>
+    <thead><tr><th>#</th><th>Música</th><th>Tom</th><th>BPM</th><th>Duração</th><th>Anotações</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <div class="footer">MRQ · Multitracks Play</div>
+  <div class="no-print"><button onclick="window.print()">🖨 Imprimir / Salvar como PDF</button></div>
+</body>
+</html>`;
+}
+
+function downloadGigSheet(scene: Scene, songs: ReturnType<typeof useStore.getState>['library']['songs']) {
+  const html = buildGigSheetHtml(scene, songs);
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${scene.name.replace(/[^\w\- ]+/g, '').trim() || 'roteiro'}.html`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
@@ -110,6 +196,7 @@ export default function SetlistPanel() {
         <h2>{scene ? scene.name : 'Cenas'}</h2>
         {scene && (
           <div style={{ display: 'flex', gap: 4 }}>
+            <button className="icon-btn" title="Gerar folha de roteiro pra imprimir/PDF (.html)" onClick={() => downloadGigSheet(scene, library.songs)}><FileText size={16} /></button>
             <button className="icon-btn" title="Exportar cena (.json)" onClick={() => exportScene(scene)}><Download size={16} /></button>
             <button className="icon-btn" title="Remover cena" onClick={() => { deleteScene(scene.id); setActiveSceneId(null); }}><Trash2 size={16} /></button>
           </div>

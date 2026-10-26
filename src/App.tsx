@@ -14,6 +14,7 @@ import SettingsModal from './components/SettingsModal';
 import MidiBridge from './components/MidiBridge';
 import InstrumentRack from './components/InstrumentRack';
 import HelpPanel from './components/HelpPanel';
+import TeleprompterOverlay from './components/TeleprompterOverlay';
 
 export default function App() {
   const ready = useStore((s) => s.ready);
@@ -26,6 +27,8 @@ export default function App() {
   const importSongFromFolder = useStore((s) => s.importSongFromFolder);
   const settings = useStore((s) => s.settings);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const teleprompterOpen = useStore((s) => s.teleprompterOpen);
+  const setTeleprompterOpen = useStore((s) => s.setTeleprompterOpen);
 
   useEffect(() => {
     init();
@@ -85,6 +88,7 @@ export default function App() {
       </div>
 
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
+      {teleprompterOpen && currentSong && <TeleprompterOverlay song={currentSong} onClose={() => setTeleprompterOpen(false)} />}
 
       <div className="toast-stack">
         {toasts.map((t) => (

@@ -60,6 +60,11 @@
       </div>
     </div>
 
+    <div class="card" id="chordCard" style="display:none;text-align:center;">
+      <div style="color:#8c8f98;font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:4px;">Acorde ao vivo</div>
+      <div id="chordLabel" style="font-weight:800;font-size:42px;color:#c9a6ff;line-height:1;">—</div>
+    </div>
+
     <div class="transport">
       <button class="big-btn" id="btnStop">■ Parar</button>
       <button class="big-btn play" id="btnPlay">▶ Tocar</button>
@@ -114,6 +119,16 @@
     document.getElementById('songTitle').textContent = state.songTitle || 'Nenhuma música';
     document.getElementById('keyLabel').textContent = state.currentKey || '-';
     document.getElementById('bpmLabel').textContent = state.currentBpm || '-';
+    // Acorde ao vivo (ver src/components/ChordIndicator.tsx no app principal):
+    // o cartão só aparece quando o app está de fato mandando acordes (Rack em
+    // uso), pra não ficar um "—" vazio o tempo todo em quem não usa o Rack.
+    const chordCard = document.getElementById('chordCard');
+    if (state.currentChord) {
+      chordCard.style.display = 'block';
+      document.getElementById('chordLabel').textContent = state.currentChord;
+    } else if (chordCard.style.display !== 'none') {
+      document.getElementById('chordLabel').textContent = '—';
+    }
     document.getElementById('btnPlay').textContent = state.isPlaying ? '⏸ Pausar' : '▶ Tocar';
     const grid = document.getElementById('partsGrid');
     grid.innerHTML = '';

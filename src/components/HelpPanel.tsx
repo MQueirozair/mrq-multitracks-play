@@ -19,6 +19,10 @@ import {
   Guitar,
   KeyboardMusic as KeyboardMusicIcon,
   Info,
+  Zap,
+  Radio,
+  Tv,
+  AlertTriangle,
 } from 'lucide-react';
 
 const BASE = import.meta.env.BASE_URL;
@@ -64,6 +68,7 @@ const TOC: { id: string; label: string }[] = [
   { id: 'midi', label: 'MIDI / Pad' },
   { id: 'rack', label: 'Rack de instrumentos' },
   { id: 'remoto', label: 'Controle remoto' },
+  { id: 'osc', label: 'OSC / MRQ Sync' },
   { id: 'palco', label: 'Modo Palco' },
   { id: 'backup', label: 'Backup' },
   { id: 'atualizacoes', label: 'Atualizações' },
@@ -106,6 +111,15 @@ export default function HelpPanel() {
             grupo. Todas as telas abaixo ficam disponíveis pelos ícones da barra à esquerda; esta página explica cada
             uma delas, os formatos de arquivo aceitos e o passo a passo de configuração.
           </p>
+
+          <div className="help-callout" style={{ marginBottom: 18 }}>
+            <b>Novidades desta versão:</b> pílula de acorde maior (mostra o acorde inteiro, sem cortar) · Tap tempo ·
+            Loop A/B de ensaio · Modo Palco — Telão (cifra em tela cheia) · Folha de roteiro pra imprimir/PDF ·
+            Monitor de saúde do áudio (avisa sobre soluços ao vivo) · acorde ao vivo transmitido pro celular de toda
+            a banda · Cues de palco por parte (OSC/MIDI) · e duas tecnologias novas — ponte <b>OSC</b> com software de
+            produção externo (QLab, Resolume, TouchOSC) e <b>MRQ Sync</b> (sincronismo de estado entre instâncias do
+            MRQ na mesma rede). Veja os detalhes de cada uma nas seções abaixo.
+          </div>
 
           <div className="help-formats-grid">
             <div className="help-formats-card">
@@ -210,11 +224,18 @@ export default function HelpPanel() {
                 </li>
                 <li>Clique numa música da lista pra abri-la e tocar.</li>
                 <li>
-                  Use os ícones no topo da cena pra <b>exportar</b> (baixa um arquivo <FormatChip>.json</FormatChip>{' '}
-                  com a cena) ou <b>excluir</b> a cena.
+                  Use os ícones no topo da cena pra <b>gerar a folha de roteiro</b> (<FormatChip accent>novidade</FormatChip>,
+                  ícone de folha), <b>exportar</b> (baixa um arquivo <FormatChip>.json</FormatChip> com a cena) ou{' '}
+                  <b>excluir</b> a cena.
                 </li>
                 <li>O histórico de execução (quando cada música tocou) fica disponível pelo ícone de relógio.</li>
               </ol>
+              <p>
+                <b>Novidade — Folha de roteiro (gig sheet):</b> o ícone de folha no topo da cena gera um arquivo{' '}
+                <FormatChip>.html</FormatChip> autossuficiente — abra no navegador e use "Imprimir / Salvar como PDF"
+                pra ter uma folha impressa com a ordem, tom, BPM, duração e anotações de cada música, pronta pra
+                colar na estante ou distribuir pra banda.
+              </p>
               <div className="help-callout">
                 Exportar/importar cenas em <FormatChip>.json</FormatChip> é útil pra levar o roteiro de um culto pra
                 outro computador (ex.: notebook do músico de apoio) — mas lembre de reimportar as pastas de
@@ -246,6 +267,13 @@ export default function HelpPanel() {
                 </li>
                 <li><kbd>Delete</kbd> remove o passo selecionado do roteiro · <kbd>Ctrl+Z</kbd> desfaz · <kbd>Ctrl+Shift+Z</kbd> refaz.</li>
               </ol>
+              <p>
+                <b>Novidade — Cues de palco:</b> clique no ícone de raio (<Zap size={12} style={{ verticalAlign: 'middle' }} />)
+                em qualquer parte marcada pra configurar um <b>endereço OSC</b> e/ou um <b>Program Change MIDI</b> que
+                disparam automaticamente, sozinhos, assim que aquela parte entra ao vivo — pra trocar a cena de um
+                software de luz/vídeo (QLab, Resolume, mesa de luz) no exato momento certo, sem precisar de um
+                operador extra. Veja a seção <i>OSC / Sync</i> abaixo pra ligar a ponte OSC.
+              </p>
             </div>
             <Figure src="help-arrange.png" alt="Tela de Arranjar com partes marcadas" caption="Partes marcadas na forma de onda e lista editável abaixo." />
           </div>
@@ -264,6 +292,14 @@ export default function HelpPanel() {
               <p>
                 O botão <b>"Modo prova de som"</b> ajuda a testar canal por canal antes do show, e o fader{' '}
                 <b>MASTER</b> controla o volume geral de tudo que está sendo reproduzido.
+              </p>
+              <p>
+                <b>Novidade — Monitor de saúde do áudio:</b> enquanto a música toca, o MRQ fica de olho em possíveis{' '}
+                <b>soluços/falhas de áudio</b> (buffer travando, o sistema operacional suspendendo o som sozinho,
+                computador sobrecarregado). Se detectar algo, uma pílula laranja{' '}
+                <AlertTriangle size={12} style={{ verticalAlign: 'middle' }} /> <b>"Soluço de áudio"</b> acende na
+                barra de título na hora — pra você descobrir um problema de áudio no mesmo instante, em vez de só
+                perceber pelo ouvido no meio de uma música ao vivo.
               </p>
             </div>
             <Figure src="help-tracks.png" alt="Visualização de faixas separadas" caption="Cada faixa com sua própria forma de onda, mais o mixer completo abaixo." />
@@ -291,6 +327,17 @@ export default function HelpPanel() {
                   quando o click original é fraco ou tem variação de tempo.
                 </li>
               </ol>
+              <p>
+                <b>Novidade — Tap tempo:</b> não sabe o BPM de cabeça? Bata no ritmo da música (botão "👆 Bater") pelo
+                menos 2 vezes seguidas — o MRQ calcula a média dos intervalos entre as batidas e mostra o BPM na
+                hora; clique <b>"Aplicar"</b> pra usar esse valor na música (ou "Cancelar" pra descartar).
+              </p>
+              <p>
+                <b>Novidade — Loop A/B:</b> pra martelar só um trechinho difícil (em vez da parte inteira), clique{' '}
+                <b>"Marcar A"</b> no compasso de início do trecho, deixe tocar até o fim do trecho e clique{' '}
+                <b>"Marcar B e ativar"</b> — o MRQ repete só esse intervalo de compassos até você clicar em{' '}
+                <b>"Desativar loop A/B"</b>. É independente do loop da parte inteira (botão de loop no player).
+              </p>
             </div>
             <Figure src="help-tempo.png" alt="Painel de Tempo com Modo Ensaio" caption="Modo Ensaio (velocidade reduzida), BPM, fórmula de compasso e duplicação do click." />
           </div>
@@ -313,6 +360,15 @@ export default function HelpPanel() {
                   <b>transposta automaticamente</b> — os acordes mudam, a letra não.
                 </li>
               </ol>
+              <p>
+                <b>Novidade — Modo Palco: Telão:</b> o botão <b>"<Tv size={12} style={{ verticalAlign: 'middle' }} /> Modo
+                Palco — Telão"</b> (acima da cifra, quando já
+                existe uma cifra colada) abre a cifra em <b>tela cheia</b>, com fonte bem maior e alto contraste —
+                pensado pra ligar num monitor/TV secundário virado pro músico/vocalista durante a apresentação. A
+                seção da parte que está tocando agora rola automaticamente pra ficar visível (por nome, casando com
+                o marcador <code>[Nome]</code> da cifra). Use <kbd>+</kbd>/<kbd>-</kbd> pra ajustar o tamanho da
+                fonte e <kbd>Esc</kbd> pra fechar.
+              </p>
             </div>
             <Figure src="help-chord.png" alt="Cifra colada com acordes" caption="Cifra colada com seções [Intro], [Verso 1], [Refrão]... e navegação pelas partes à direita." />
           </div>
@@ -518,8 +574,14 @@ export default function HelpPanel() {
             (7, 7M, m7, m(7M), m7(b5), dim7), sus2/sus4, 6ª, 6/9, 9ª, 9M, m9, add9, 11ª, 13ª, dominantes alteradas
             (7(b5), 7(#5), 7(b9), 7(#9)), diminuto, aumentado, power chords e inversões (mostradas como "Acorde/Baixo",
             ex.: <code>C/E</code>). A pílula tem tamanho fixo e fica sempre visível — só o texto do acorde dentro
-            dela muda, pra não "balançar" a barra de título a cada nota tocada. Pode ser desligada em{' '}
+            dela muda, pra não "balançar" a barra de título a cada nota tocada (a largura foi aumentada nesta versão
+            pra caber até o pior caso, ex.: <code>C#7M(#11)/C#</code>, sem cortar). Pode ser desligada em{' '}
             <b>"Mostrar acorde detectado"</b>, no mesmo painel do teclado MIDI físico descrito acima.
+          </p>
+          <p>
+            <b>Novidade:</b> esse mesmo acorde agora também é transmitido ao vivo pro(s) celular(es) conectado(s) via{' '}
+            <b>Controle remoto</b> (ver seção <i>Controle remoto</i> abaixo) — todo mundo da banda vê o mesmo acorde
+            na tela do próprio aparelho, não só quem está no computador com o Rack aberto.
           </p>
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Reverb, compressor e delay por camada</h3>
@@ -596,6 +658,65 @@ export default function HelpPanel() {
               </div>
             </div>
             <Figure src="help-settings-remote.png" alt="Configuração do controle remoto com QR code" caption="Porta, PIN e QR code pra abrir o controle remoto no navegador do celular." />
+          </div>
+          <p>
+            <b>Novidade:</b> a tela do controle remoto agora também mostra, bem grande, o <b>acorde ao vivo</b>
+            detectado no Rack de instrumentos (quando houver) — como todos os celulares conectados recebem o mesmo
+            estado, cada músico da banda pode ter o próprio aparelho mostrando o acorde atual sem precisar olhar pra
+            um só monitor central.
+          </p>
+        </section>
+
+        {/* ---------------- OSC / MRQ SYNC ---------------- */}
+        <section className="help-section" id="osc">
+          <SectionHead icon={Radio} title="OSC / MRQ Sync" purpose="Duas tecnologias novas: ponte OSC com software externo de produção, e sincronismo entre instâncias do MRQ na rede" />
+          <div className="help-grid-2">
+            <div>
+              <h3 style={{ fontSize: 13.5, marginTop: 0 }}>Ponte OSC (Open Sound Control)</h3>
+              <p>
+                OSC é o protocolo usado por softwares de produção ao vivo — <b>QLab</b>, <b>Resolume</b>,{' '}
+                <b>TouchOSC</b>, consoles de iluminação — pra trocar comandos de transporte e automação pela rede.
+                Em <b>Ajustes → OSC / Sync</b>, ligue a ponte e configure:
+              </p>
+              <ul>
+                <li><b>Porta de escuta</b>: onde o MRQ recebe mensagens OSC de fora (ex.: de um TouchOSC).</li>
+                <li><b>Host/porta de destino</b>: pra onde o MRQ envia seus próprios eventos.</li>
+              </ul>
+              <p>O MRQ <b>envia</b> automaticamente, sempre que o estado muda:</p>
+              <table className="help-shortcuts">
+                <tbody>
+                  <tr><td><code>/mrq/transport/play</code></td><td>música começou a tocar</td></tr>
+                  <tr><td><code>/mrq/transport/stop</code></td><td>música parou</td></tr>
+                  <tr><td><code>/mrq/part</code> <i>(i, s)</i></td><td>mudou de parte — índice e nome</td></tr>
+                  <tr><td><code>/mrq/tempo</code> <i>(f)</i></td><td>BPM atual</td></tr>
+                  <tr><td><code>/mrq/key</code> <i>(s)</i></td><td>tom atual</td></tr>
+                </tbody>
+              </table>
+              <p>além de qualquer <b>cue de palco</b> configurado numa parte (ver aba Arranjar). O MRQ <b>recebe</b>:</p>
+              <table className="help-shortcuts">
+                <tbody>
+                  <tr><td><code>/mrq/play</code>, <code>/mrq/pause</code>, <code>/mrq/stop</code></td><td>transporte</td></tr>
+                  <tr><td><code>/mrq/next</code>, <code>/mrq/prev</code></td><td>pula parte seguinte/anterior</td></tr>
+                  <tr><td><code>/mrq/jump</code> <i>(i)</i></td><td>pula pra parte de número N (1-based)</td></tr>
+                </tbody>
+              </table>
+
+              <h3 style={{ fontSize: 13.5, marginTop: 18 }}>MRQ Sync</h3>
+              <p>
+                Transmite tocando/parado, tom e BPM por broadcast UDP pra outras instâncias do MRQ na mesma rede local
+                — ex.: o notebook do baterista mostrando o andamento de quem está liderando a música no teclado,
+                sem precisar perguntar em voz alta. Escolha o papel em <b>Ajustes → OSC / Sync</b>:
+              </p>
+              <ul>
+                <li><b>Líder</b>: transmite o próprio estado pra rede.</li>
+                <li><b>Seguidor</b>: recebe e <b>só exibe</b> (pílula "🔗 Líder" na barra de título) — nunca controla a reprodução daquele computador sozinho, por segurança ao vivo.</li>
+              </ul>
+              <div className="help-callout">
+                O MRQ Sync <b>não</b> é o protocolo Ableton Link (sincronismo de fase de batida sample-accurate entre
+                DAWs) — é um relay de estado mais simples, pensado só pra múltiplas instâncias do MRQ na mesma rede,
+                deliberadamente sem forçar transporte automaticamente numa máquina a partir da outra.
+              </div>
+            </div>
           </div>
         </section>
 

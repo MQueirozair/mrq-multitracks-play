@@ -6,13 +6,14 @@ import { engine, padEngine } from '../audio/engineInstance';
 import { pairIndexLabel } from '../audio/AudioEngine';
 import type { AppSettings, Library } from '../../shared/types';
 
-type Tab = 'audio' | 'click' | 'pad' | 'remote' | 'account' | 'backup' | 'update' | 'license';
+type Tab = 'audio' | 'click' | 'pad' | 'remote' | 'osc' | 'account' | 'backup' | 'update' | 'license';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'audio', label: 'Áudio' },
   { id: 'click', label: 'Click' },
   { id: 'pad', label: 'Pad' },
   { id: 'remote', label: 'Remoto' },
+  { id: 'osc', label: 'OSC / Sync' },
   { id: 'account', label: 'Conta' },
   { id: 'backup', label: 'Backup' },
   { id: 'update', label: 'Atualização' },
@@ -363,6 +364,90 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {tab === 'osc' && (
+              <div>
+                <h3 style={{ marginTop: 0 }}>Ponte OSC (show-control externo)</h3>
+                <p className="hint">
+                  Envia/recebe mensagens OSC (Open Sound Control) por UDP pra integrar o MRQ com software de luz,
+                  vídeo ou produção (QLab, Resolume, TouchOSC, consoles de iluminação) — novidade desta versão. O MRQ
+                  manda transporte (tocar/parar), tempo e tom automaticamente, além de disparar as "Cues de palco"
+                  configuradas em cada parte da música (aba Arranjar). Veja a lista completa de endereços na Ajuda.
+                </p>
+                <div className="field-row">
+                  <div className="label">Ligar ponte OSC</div>
+                  <select
+                    value={settings.osc.enabled ? 'on' : 'off'}
+                    onChange={(e) => updateSettings({ osc: { ...settings.osc, enabled: e.target.value === 'on' } })}
+                  >
+                    <option value="on">Ligado</option>
+                    <option value="off">Desligado</option>
+                  </select>
+                </div>
+                <div className="field-row">
+                  <div className="label">Porta de escuta (recebe OSC)</div>
+                  <input
+                    type="number"
+                    value={settings.osc.listenPort}
+                    style={{ width: 100 }}
+                    onChange={(e) => updateSettings({ osc: { ...settings.osc, listenPort: parseInt(e.target.value, 10) || 9000 } })}
+                  />
+                </div>
+                <div className="field-row">
+                  <div className="label">Destino — host</div>
+                  <input
+                    value={settings.osc.sendHost}
+                    style={{ width: 160 }}
+                    onChange={(e) => updateSettings({ osc: { ...settings.osc, sendHost: e.target.value } })}
+                  />
+                </div>
+                <div className="field-row">
+                  <div className="label">Destino — porta</div>
+                  <input
+                    type="number"
+                    value={settings.osc.sendPort}
+                    style={{ width: 100 }}
+                    onChange={(e) => updateSettings({ osc: { ...settings.osc, sendPort: parseInt(e.target.value, 10) || 9001 } })}
+                  />
+                </div>
+
+                <h3>MRQ Sync (sincronismo entre instâncias na mesma rede)</h3>
+                <p className="hint">
+                  Transmite tocando/parado, tempo e tom por broadcast UDP na rede local pra outras instâncias do MRQ
+                  (ex.: o notebook do baterista) — quem está como Seguidor só EXIBE o estado do Líder, nunca controla
+                  a reprodução automaticamente (por segurança ao vivo). Não é compatível com Ableton Link.
+                </p>
+                <div className="field-row">
+                  <div className="label">Ligar MRQ Sync</div>
+                  <select
+                    value={settings.sync.enabled ? 'on' : 'off'}
+                    onChange={(e) => updateSettings({ sync: { ...settings.sync, enabled: e.target.value === 'on' } })}
+                  >
+                    <option value="on">Ligado</option>
+                    <option value="off">Desligado</option>
+                  </select>
+                </div>
+                <div className="field-row">
+                  <div className="label">Papel</div>
+                  <select
+                    value={settings.sync.role}
+                    onChange={(e) => updateSettings({ sync: { ...settings.sync, role: e.target.value as 'leader' | 'follower' } })}
+                  >
+                    <option value="leader">Líder (transmite)</option>
+                    <option value="follower">Seguidor (recebe)</option>
+                  </select>
+                </div>
+                <div className="field-row">
+                  <div className="label">Porta UDP</div>
+                  <input
+                    type="number"
+                    value={settings.sync.port}
+                    style={{ width: 100 }}
+                    onChange={(e) => updateSettings({ sync: { ...settings.sync, port: parseInt(e.target.value, 10) || 8788 } })}
+                  />
+                </div>
               </div>
             )}
 

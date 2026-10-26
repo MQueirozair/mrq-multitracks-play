@@ -94,16 +94,22 @@ input[type="range"] { accent-color: var(--accent); }
 /* Largura e altura FIXAS de propósito (ver feedback do usuário): a pílula
    nunca aparece/some nem muda de tamanho conforme as notas tocadas mudam —
    só o texto do acorde dentro dela é atualizado, pra não "balançar" a barra
-   de título a cada nota tocada ao vivo. */
+   de título a cada nota tocada ao vivo.
+   Largura calculada pro PIOR CASO real de texto que o detector de acordes
+   (chordDetect.ts) pode produzir: fundamental com sustenido + sufixo mais
+   longo da tabela de fórmulas + baixo/inversão com sustenido, ex.:
+   "C#7M(#11)/C#" (12 caracteres) — ver teste em chordDetect.ts. Antes a
+   pílula tinha só 92px (rótulo cortado em 70px) e truncava com "..." até
+   acordes bem mais simples; agora cabe o pior caso inteiro sem cortar. */
 .chord-indicator {
   border-color: #6d3fb8 !important;
   background: #241433 !important;
   color: #c9a6ff !important;
-  width: 92px; box-sizing: border-box; justify-content: center; overflow: hidden;
+  width: 158px; box-sizing: border-box; justify-content: center; overflow: hidden;
 }
 .chord-indicator-label {
   font-weight: 700; font-size: 13px; letter-spacing: .02em; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; max-width: 70px;
+  overflow: hidden; text-overflow: ellipsis; max-width: 128px;
 }
 .chord-indicator-label.empty { opacity: .35; font-weight: 400; }
 .win-controls { display: flex; gap: 4px; -webkit-app-region: no-drag; }
@@ -487,6 +493,10 @@ input[type="range"] { accent-color: var(--accent); }
 .arrange-input-name { width: 150px; }
 .arrange-input-type { min-width: 110px; }
 .arrange-input-bar { width: 60px; text-align: center; }
+.arrange-cue-row {
+  display: flex; gap: 8px; align-items: center; padding: 6px 10px 10px 30px; margin-top: -4px;
+  background: var(--bg-2); border-radius: 0 0 var(--radius-sm) var(--radius-sm); flex-wrap: wrap;
+}
 .arrange-inline-label { font-size: 11px; color: var(--text-2); white-space: nowrap; }
 .arrange-spacer { flex: 1; }
 
@@ -855,4 +865,48 @@ input[type="range"] { accent-color: var(--accent); }
 
 @media (max-width: 920px) {
   .help-grid-2 { grid-template-columns: 1fr; }
+}
+
+/* ---------- Modo Palco — Telão (teleprompter em tela cheia) ---------- */
+/* Overlay independente do tema normal (claro/escuro/stage) — fica sempre
+   escuro e de altíssimo contraste de propósito, pensado pra ficar num
+   monitor/TV virado pro músico durante a apresentação, legível de longe. */
+.teleprompter-overlay {
+  position: fixed; inset: 0; z-index: 500; background: #060608; color: #f3f3f3;
+  display: flex; flex-direction: column;
+}
+.teleprompter-topbar {
+  display: flex; align-items: center; gap: 16px; padding: 10px 18px; border-bottom: 1px solid #2a2a30;
+  background: #0d0d11; flex-wrap: wrap;
+}
+.teleprompter-title { font-size: 16px; font-weight: 700; white-space: nowrap; }
+.teleprompter-meta { color: #9a9aa5; font-weight: 400; font-size: 13px; }
+.teleprompter-parts { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+.teleprompter-part-chip {
+  background: transparent; border: 1.5px solid #444; color: #ccc; border-radius: 999px; padding: 4px 12px;
+  font-size: 12.5px; cursor: pointer;
+}
+.teleprompter-part-chip.active { background: #f2a93b; color: #1a1300; border-color: #f2a93b; font-weight: 700; }
+.teleprompter-controls { display: flex; gap: 4px; }
+.teleprompter-controls .icon-btn { color: #eee; }
+.teleprompter-body {
+  flex: 1; overflow-y: auto; padding: 32px 10vw 50vh; scroll-behavior: smooth;
+}
+.teleprompter-empty { color: #999; font-size: 1.2em; text-align: center; margin-top: 10vh; }
+.teleprompter-section { margin-bottom: 2em; opacity: .55; transition: opacity .25s ease; }
+.teleprompter-section.active { opacity: 1; }
+.teleprompter-section-title {
+  color: #f2a93b; text-transform: uppercase; letter-spacing: .12em; font-size: 1em; font-weight: 700;
+  margin-bottom: .5em; border-bottom: 1px solid #333; padding-bottom: .2em;
+}
+.teleprompter-line {
+  font-family: 'Courier New', monospace; font-size: 1.7em; line-height: 1.45; white-space: pre-wrap;
+}
+.teleprompter-line.chords { color: #6fd3ff; font-weight: 700; }
+.teleprompter-section.active .teleprompter-line.chords { color: #9fe6ff; }
+
+/* ---------- monitor de saúde do áudio (soluços/falhas durante a reprodução) ---------- */
+.audio-health-warning {
+  border-color: #c25a1e !important; background: #3a2110 !important; color: #ffb877 !important;
+  font-weight: 700; animation: mrq-pending-pulse 1.2s ease-in-out infinite;
 }

@@ -19,6 +19,9 @@ import { combinePeaks, computePeaks, decodeForAnalysis, yieldToBrowser } from '.
 import { detectBpm, detectKey } from '../audio/KeyBpmDetection';
 import { recognizeParts } from '../audio/PartRecognition';
 import type { EngineState } from '../audio/AudioEngine';
+import { rackEngine } from '../audio/rack/RackEngine';
+import { detectChord } from '../midi/chordDetect';
+import { sendMidiProgramChange } from '../midi/midiController';
 
 export type NavId =
   | 'library'
@@ -47,6 +50,8 @@ interface StoreState {
   currentSong: Song | null;
   nav: NavId;
   secondaryPanelCollapsed: boolean;
+  /** "Modo Palco — Telão": overlay de cifra em tela cheia pra monitor/TV secundário (ver TeleprompterOverlay.tsx) */
+  teleprompterOpen: boolean;
   engineState: EngineState;
   toasts: Toast[];
   recognizing: boolean;
@@ -68,10 +73,13 @@ interface StoreState {
    *  disparando 2 carregamentos da mesma música em paralelo; não se aplica ao fluxo de importação
    *  (que ainda não tem um id de biblioteca nas etapas iniciais de escaneamento/detecção). */
   loadingSongId: string | null;
+  /** último estado recebido via "MRQ Sync" de quem está no papel de Líder na rede local (null = nada recebido/sync desligado) */
+  syncLeaderState: { isPlaying: boolean; bpm: number; key: string; songTitle: string } | null;
 
   init: () => Promise<void>;
   setNav: (nav: NavId) => void;
   toggleSecondaryPanel: () => void;
+  setTeleprompterOpen: (open: boolean) => void;
   pushToast: (message: string, kind?: 'info' | 'error') => void;
   dismissToast: (id: string) => void;
 
@@ -115,6 +123,8 @@ interface StoreState {
   jumpToPart: (partId: string) => void;
   jumpRelative: (dir: 1 | -1) => void;
   toggleLoopActivePart: () => void;
+  setPracticeLoop: (startBar: number, endBar: number) => void;
+  clearPracticeLoop: () => void;
 
   updateSettings: (patch: Partial<AppSettings>) => Promise<void>;
   updateRack: (patch: Partial<InstrumentRackState>) => void;
@@ -286,6 +296,7 @@ export const useStore = create<StoreState>((set, get) => ({
   currentSong: null,
   nav: 'library',
   secondaryPanelCollapsed: false,
+  teleprompterOpen: false,
   engineState: engine.getState(),
   toasts: [],
   recognizing: false,
@@ -296,6 +307,7 @@ export const useStore = create<StoreState>((set, get) => ({
   activeSceneId: null,
   loadingSongTitle: null,
   loadingSongId: null,
+  syncLeaderState: null,
 
   init: async () => {
     const [library, loadedSettings] = await Promise.all([window.api.store.getLibrary(), window.api.store.getSettings()]);
@@ -317,10 +329,26 @@ export const useStore = create<StoreState>((set, get) => ({
 
     let lastLoggedPartId: string | null = null;
     let lastReportedPlaying: boolean | null = null;
+    let lastOscPlaying: boolean | null = null;
+    let lastOscPartId: string | null = null;
+    let lastOscBpm: number | null = null;
+    let lastOscKey: string | null = null;
+    let lastCuePartId: string | null = null;
+    let lastSyncSnapshot = '';
     engine.subscribe((engineState) => {
       set({ engineState });
       const song = get().currentSong;
+      const settingsNow = get().settings;
       const parts = song?.parts.map((p, i) => ({ id: p.id, name: p.name, index: i + 1 })) ?? [];
+
+      // Acorde detectado agora no Rack (mesma lógica da pílula da barra de
+      // título, ver ChordIndicator.tsx) — incluído no estado enviado pro(s)
+      // celular(es) conectado(s) via controle remoto, pra todo mundo da banda
+      // ver o mesmo acorde ao vivo na tela do próprio aparelho (não só quem
+      // está no computador principal).
+      const activeNotes = rackEngine.getActiveNotesSnapshot();
+      const currentChord = activeNotes.length ? detectChord(activeNotes)?.label ?? null : null;
+
       window.api.remote.sendState({
         songTitle: song?.title ?? null,
         isPlaying: engineState.isPlaying,
@@ -330,7 +358,68 @@ export const useStore = create<StoreState>((set, get) => ({
         activePartId: engineState.activePartId,
         positionSec: engineState.realSeconds,
         durationSec: engineState.realTotalSeconds,
+        currentChord,
       });
+
+      // ---------------- OSC: transporte/parte/tempo/tom ----------------
+      // Só manda quando a ponte OSC está ligada, e só quando o valor de fato
+      // mudou desde o último quadro — evita inundar a rede a 25 mensagens
+      // por segundo (frequência do monitor interno do motor de áudio).
+      if (settingsNow.osc.enabled) {
+        if (engineState.isPlaying !== lastOscPlaying) {
+          lastOscPlaying = engineState.isPlaying;
+          void window.api.osc.send(engineState.isPlaying ? '/mrq/transport/play' : '/mrq/transport/stop', []);
+        }
+        if (song && song.currentBpm !== lastOscBpm) {
+          lastOscBpm = song.currentBpm;
+          void window.api.osc.send('/mrq/tempo', [{ type: 'f', value: song.currentBpm }]);
+        }
+        if (song && song.currentKey !== lastOscKey) {
+          lastOscKey = song.currentKey;
+          void window.api.osc.send('/mrq/key', [{ type: 's', value: song.currentKey }]);
+        }
+      }
+      if (song && engineState.activePartId !== lastOscPartId) {
+        lastOscPartId = engineState.activePartId;
+        const part = song.parts.find((p) => p.id === engineState.activePartId);
+        if (part && settingsNow.osc.enabled) {
+          const idx = song.parts.indexOf(part);
+          void window.api.osc.send('/mrq/part', [
+            { type: 'i', value: idx + 1 },
+            { type: 's', value: part.name },
+          ]);
+        }
+      }
+
+      // ---------------- Cues de palco por parte (MIDI/OSC) ----------------
+      // Dispara automaticamente quando a parte ativa muda E tem um cue
+      // configurado (ver SongPart.cueOscAddress/cueMidiProgram) — independente
+      // da transmissão geral de transporte acima (um cue de MIDI, por
+      // exemplo, funciona mesmo com a ponte OSC desligada).
+      if (song && engineState.activePartId !== lastCuePartId) {
+        lastCuePartId = engineState.activePartId;
+        const part = song.parts.find((p) => p.id === engineState.activePartId);
+        if (part?.cueOscAddress && settingsNow.osc.enabled) {
+          void window.api.osc.send(part.cueOscAddress, []);
+        }
+        if (part?.cueMidiProgram) {
+          sendMidiProgramChange(part.cueMidiProgram.channel, part.cueMidiProgram.program);
+        }
+      }
+
+      // ---------------- MRQ Sync: líder transmite o estado ----------------
+      if (settingsNow.sync.enabled && settingsNow.sync.role === 'leader') {
+        const snapshot = `${engineState.isPlaying}|${song?.currentBpm ?? 0}|${song?.currentKey ?? '-'}|${song?.title ?? ''}`;
+        if (snapshot !== lastSyncSnapshot) {
+          lastSyncSnapshot = snapshot;
+          window.api.sync.broadcastState({
+            isPlaying: engineState.isPlaying,
+            bpm: song?.currentBpm ?? 0,
+            key: song?.currentKey ?? '-',
+            songTitle: song?.title ?? '',
+          });
+        }
+      }
 
       // Histórico de execução: registra cada parte que começa a tocar de
       // fato (evita duplicar quando o id não muda entre ticks).
@@ -364,6 +453,50 @@ export const useStore = create<StoreState>((set, get) => ({
       else if (cmd.type === 'toggleLoop') api.toggleLoopActivePart();
     });
 
+    // Comandos OSC recebidos (ex.: de um TouchOSC, QLab ou qualquer app que
+    // fale OSC) — endereços simples de transporte/navegação, análogos aos do
+    // controle remoto por celular. Ver HelpPanel.tsx seção "osc" pra lista
+    // completa. Mensagens com endereço desconhecido são ignoradas.
+    window.api.osc.onMessage((msg) => {
+      const api = get();
+      const song = api.currentSong;
+      switch (msg.address) {
+        case '/mrq/play':
+        case '/mrq/transport/play':
+          api.play();
+          break;
+        case '/mrq/pause':
+        case '/mrq/transport/pause':
+          api.pause();
+          break;
+        case '/mrq/stop':
+        case '/mrq/transport/stop':
+          api.stop();
+          break;
+        case '/mrq/next':
+          api.jumpRelative(1);
+          break;
+        case '/mrq/prev':
+          api.jumpRelative(-1);
+          break;
+        case '/mrq/jump': {
+          const idx = msg.args[0] && msg.args[0].type === 'i' ? msg.args[0].value : null;
+          if (song && idx !== null && song.parts[idx - 1]) api.jumpToPart(song.parts[idx - 1].id);
+          break;
+        }
+        default:
+          break;
+      }
+    });
+
+    // "MRQ Sync": quando configurado como Seguidor, só guarda o último estado
+    // recebido do Líder da rede local pra exibição (ver syncLeaderState) —
+    // nunca aplica automaticamente (play/pause/BPM) na reprodução local, por
+    // segurança ao vivo (ver justificativa em src-tauri/src/sync.rs).
+    window.api.sync.onState((state) => {
+      set({ syncLeaderState: state });
+    });
+
     // "Voz guia": quando configurado para anunciar a parte pedida fora de
     // ordem, usamos a síntese de voz do próprio navegador/Chromium (sem
     // precisar de nenhum arquivo de áudio extra) para falar o nome da parte.
@@ -382,6 +515,7 @@ export const useStore = create<StoreState>((set, get) => ({
 
   setNav: (nav) => set({ nav }),
   toggleSecondaryPanel: () => set((s) => ({ secondaryPanelCollapsed: !s.secondaryPanelCollapsed })),
+  setTeleprompterOpen: (open) => set({ teleprompterOpen: open }),
   pushToast: (message, kind = 'info') =>
     set((s) => ({ toasts: [...s.toasts, { id: newId(), message, kind }] })),
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
@@ -810,6 +944,8 @@ export const useStore = create<StoreState>((set, get) => ({
     if (part) engine.jumpToPart(part.id, engine.getState().isPlaying);
   },
   toggleLoopActivePart: () => engine.setLoopActivePart(!get().engineState.loopActivePart),
+  setPracticeLoop: (startBar, endBar) => engine.setPracticeLoop(startBar, endBar),
+  clearPracticeLoop: () => engine.clearPracticeLoop(),
 
   updateSettings: async (patch) => {
     const settings = { ...get().settings, ...patch };

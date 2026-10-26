@@ -25,6 +25,10 @@ export interface EngineState {
   songEnded: boolean;
   /** pico instantâneo (0..1) do sinal pós-fader de cada faixa, usado pelo indicador de pico/clipping do mixer */
   trackLevels: Record<string, number>;
+  /** "Loop A/B" de ensaio: repete só um trechinho (em compassos) dentro da parte ativa, pra
+   *  martelar uma passagem difícil sem precisar reiniciar a parte inteira a cada volta.
+   *  Independente do loop normal da parte (loopActivePart) — ver setPracticeLoop(). */
+  practiceLoop: { startBar: number; endBar: number } | null;
 }
 
 interface LoadedTrack {
@@ -99,6 +103,7 @@ export class AudioEngine {
     loopActivePart: false,
     songEnded: false,
     trackLevels: {},
+    practiceLoop: null,
   };
 
   private levelScratch = new Uint8Array(256);
@@ -340,7 +345,7 @@ export class AudioEngine {
     this.tracks.clear();
     this.referenceTrackId = null;
     this.song = null;
-    this.state = { ...this.state, isLoaded: false, isPlaying: false, originalSeconds: 0, realSeconds: 0, activePartId: null, upcomingPartId: null, pendingPartId: null, trackLevels: {} };
+    this.state = { ...this.state, isLoaded: false, isPlaying: false, originalSeconds: 0, realSeconds: 0, activePartId: null, upcomingPartId: null, pendingPartId: null, trackLevels: {}, practiceLoop: null };
   }
 
   // ---------------- transporte ----------------
@@ -551,6 +556,26 @@ export class AudioEngine {
     this.emit();
   }
 
+  /**
+   * Arma o "Loop A/B" de ensaio num trecho de `startBar` a `endBar` (em
+   * compassos, mesma unidade de `currentBar`/`SongPart.startBar`). Tem
+   * prioridade sobre o loop normal da parte e sobre o avanço do arranjo
+   * enquanto estiver ativo — ver checagem no início de tick(). Não mexe em
+   * nada do estado de reprodução além de, quando o trecho é ultrapassado,
+   * voltar o ponteiro pro início do trecho (mesma técnica já usada por
+   * loopActivePart/seekToBar, só que com limites mais estreitos).
+   */
+  setPracticeLoop(startBar: number, endBar: number) {
+    if (endBar <= startBar) return;
+    this.state.practiceLoop = { startBar, endBar };
+    this.emit();
+  }
+
+  clearPracticeLoop() {
+    this.state.practiceLoop = null;
+    this.emit();
+  }
+
   updateParts(parts: SongPart[]) {
     if (!this.song) return;
     this.song.parts = parts;
@@ -726,6 +751,16 @@ export class AudioEngine {
     const barInt = Math.floor(bar);
     this.state.upcomingPartId = this.computeUpcomingPartId();
     if (this.state.isPlaying) this.computeTrackLevels();
+
+    // "Loop A/B" de ensaio tem PRIORIDADE MÁXIMA sobre qualquer outra lógica de
+    // navegação (troca manual pendente, loop da parte inteira, avanço do
+    // arranjo) — é o modo "martelar só este trechinho" até o usuário desarmar.
+    if (this.state.practiceLoop && bar >= this.state.practiceLoop.endBar) {
+      this.seekToBar(this.state.practiceLoop.startBar);
+      this.lastIntegerBar = barInt;
+      this.emit();
+      return;
+    }
 
     // Parte que está tocando "agora" (antes de qualquer atualização desta
     // chamada) — usada para decidir quando uma troca manual pendente deve
