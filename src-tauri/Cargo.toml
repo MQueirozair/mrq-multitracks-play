@@ -1,6 +1,6 @@
 [package]
 name = "mrq-multitracks-play"
-version = "0.2.12"
+version = "0.2.13"
 description = "MRQ - Multitracks Play: tocador de multitracks ao vivo para banda/culto."
 authors = ["MRQ"]
 edition = "2021"
@@ -31,6 +31,12 @@ tower-http = { version = "0.5", features = ["fs"] }
 futures-util = "0.3"
 mime_guess = "2"
 if-addrs = "0.13"
+# Reconhecimento de partes por voz (opcional, ver src/speech.rs) — roda
+# localmente via whisper.cpp, sem features de GPU (cuda/metal/vulkan) pra não
+# complicar o build em CI/máquinas sem GPU dedicada; CPU-only é suficiente
+# pra uma ação manual e esporádica ("Reconhecer partes"), não tempo real.
+whisper-rs = "0.14"
+reqwest = { version = "0.13", default-features = false, features = ["stream", "rustls"] }
 
 [features]
 # Permite rodar sem o bundle de produção durante o dev, usando o dev-server do Vite.

@@ -552,7 +552,10 @@ function repairShortSegments<T extends { startBar: number; endBar: number; featu
 /** Numera repetições do mesmo tipo a partir da 2ª ocorrência (a 1ª fica com o
  *  nome limpo, ex. "Refrão", "Refrão 2", "Refrão 3"...), pra cada botão/pílula
  *  ser identificável sem ambiguidade. */
-function mergeDuplicateNames(parts: SongPart[]): SongPart[] {
+/** Numera ocorrências repetidas do mesmo tipo ("Verso 1", "Verso 2", ...) —
+ *  exportada pra ser reaproveitada por `SpeechPartRecognition.ts`, que monta
+ *  partes a partir da transcrição de voz em vez da heurística por áudio. */
+export function mergeDuplicateNames(parts: SongPart[]): SongPart[] {
   const totalByType = new Map<string, number>();
   parts.forEach((p) => totalByType.set(p.type, (totalByType.get(p.type) ?? 0) + 1));
   const seenSoFar = new Map<string, number>();

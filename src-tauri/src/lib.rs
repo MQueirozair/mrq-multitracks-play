@@ -4,6 +4,7 @@ mod migration;
 mod osc;
 mod protocol;
 mod remote;
+mod speech;
 mod sync;
 
 use logging::LogState;
@@ -188,6 +189,10 @@ pub fn run() {
             osc_is_enabled,
             sync_configure,
             sync_broadcast_state,
+            speech::speech_model_ready,
+            speech::speech_download_model,
+            speech::speech_delete_model,
+            speech::speech_transcribe_wav,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao rodar a aplicação Tauri");

@@ -293,7 +293,17 @@ export default function HelpPanel() {
                   primeiro rascunho, mas sempre revise o resultado antes de tocar ao vivo.
                 </li>
                 <li>
-                  O seletor <b>"Sensibilidade"</b> ao lado do botão controla quantas partes ele tende a sugerir:
+                  <b>Reconhecimento por voz (opcional):</b> muitas multitracks/VS trazem, na própria faixa guia, uma
+                  locução anunciando cada parte antes dela começar (a voz diz "Estrofe", conta um compasso, e a
+                  estrofe começa). Ligando <b>Ajustes → Reconhecer por voz</b> (e baixando o modelo de voz, ~148MB,
+                  uma vez só — tudo roda local no computador, nenhum áudio sai pra internet), o botão "Reconhecer
+                  partes" passa a OUVIR essa locução pra nomear as partes com muito mais precisão do que só analisando
+                  a forma da onda. Se a faixa não tiver locução (ou o reconhecimento não achar confiança suficiente),
+                  o MRQ cai sozinho de volta pro método por áudio — não precisa escolher um ou outro manualmente.
+                </li>
+                <li>
+                  O seletor <b>"Sensibilidade"</b> ao lado do botão controla quantas partes ele tende a sugerir
+                  quando o reconhecimento cai no método por áudio (sem locução reconhecida):
                   <b> poucas</b> (só trocas bem óbvias, menos revisão depois), <b>normal</b> (padrão) ou
                   <b> muitas</b> (pega até trocas sutis, mas pode sugerir partes demais em músicas com muita variação
                   de dinâmica). Rode de novo com outra sensibilidade se o resultado não ficou bom.

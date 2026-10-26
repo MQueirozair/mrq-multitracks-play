@@ -6,7 +6,7 @@ import { engine, padEngine } from '../audio/engineInstance';
 import { pairIndexLabel } from '../audio/AudioEngine';
 import type { AppSettings, Library } from '../../shared/types';
 
-type Tab = 'audio' | 'click' | 'pad' | 'remote' | 'osc' | 'account' | 'backup' | 'update' | 'license';
+type Tab = 'audio' | 'click' | 'pad' | 'remote' | 'osc' | 'speech' | 'account' | 'backup' | 'update' | 'license';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'audio', label: 'Áudio' },
@@ -14,6 +14,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'pad', label: 'Pad' },
   { id: 'remote', label: 'Remoto' },
   { id: 'osc', label: 'OSC / Sync' },
+  { id: 'speech', label: 'Reconhecer por voz' },
   { id: 'account', label: 'Conta' },
   { id: 'backup', label: 'Backup' },
   { id: 'update', label: 'Atualização' },
@@ -58,6 +59,10 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     percent?: number;
     message?: string;
   }>({ status: 'idle' });
+  const [speechModelReady, setSpeechModelReady] = useState<boolean | null>(null);
+  const [speechDownloading, setSpeechDownloading] = useState(false);
+  const [speechProgress, setSpeechProgress] = useState<{ received: number; total: number } | null>(null);
+  const [speechError, setSpeechError] = useState<string | null>(null);
 
   useEffect(() => {
     navigator.mediaDevices?.enumerateDevices().then((devices) => {
@@ -74,6 +79,44 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
     const url = `http://${addresses[0]}:${settings.remote.port}`;
     QRCode.toDataURL(url, { margin: 1, width: 180 }).then(setQr);
   }, [tab, addresses, settings.remote.port]);
+
+  useEffect(() => {
+    if (tab !== 'speech') return;
+    window.api.speech.modelReady().then(setSpeechModelReady).catch(() => setSpeechModelReady(false));
+  }, [tab]);
+
+  useEffect(() => {
+    const off = window.api.speech.onDownloadProgress((p) => setSpeechProgress(p));
+    return () => off?.();
+  }, []);
+
+  async function handleDownloadSpeechModel() {
+    setSpeechDownloading(true);
+    setSpeechError(null);
+    setSpeechProgress(null);
+    try {
+      await window.api.speech.downloadModel();
+      setSpeechModelReady(true);
+      pushToast('Modelo de voz baixado com sucesso.');
+    } catch (err) {
+      console.error(err);
+      setSpeechError('Falha ao baixar o modelo de voz. Confira sua conexão e tente de novo.');
+    } finally {
+      setSpeechDownloading(false);
+      setSpeechProgress(null);
+    }
+  }
+
+  async function handleDeleteSpeechModel() {
+    try {
+      await window.api.speech.deleteModel();
+      setSpeechModelReady(false);
+      pushToast('Modelo de voz removido.');
+    } catch (err) {
+      console.error(err);
+      pushToast('Falha ao remover o modelo de voz.', 'error');
+    }
+  }
 
   function testOutput(pairIndex: number, side: 'L' | 'R') {
     const ctx = engine.ctx;
@@ -447,6 +490,70 @@ export default function SettingsModal({ onClose }: { onClose: () => void }) {
                     style={{ width: 100 }}
                     onChange={(e) => updateSettings({ sync: { ...settings.sync, port: parseInt(e.target.value, 10) || 8788 } })}
                   />
+                </div>
+              </div>
+            )}
+
+            {tab === 'speech' && (
+              <div>
+                <h3 style={{ marginTop: 0 }}>Reconhecimento de partes por voz (beta)</h3>
+                <p className="hint">
+                  Muitas multitracks/VS trazem, na faixa guia, uma locução anunciando cada parte antes dela começar
+                  (ex.: a voz diz "Estrofe" e logo em seguida a estrofe começa de verdade). Ligando essa opção, o
+                  botão "Reconhecer partes" (aba Arranjar) passa a OUVIR essa locução com um modelo de voz rodando
+                  100% local no seu computador (nenhum áudio é enviado para a internet), em vez de só adivinhar a
+                  estrutura pela forma da onda — é mais preciso quando a faixa guia tem locução, e cai sozinho de
+                  volta pro método por áudio quando ela não tem.
+                </p>
+                <div className="field-row">
+                  <div className="label">Ligar reconhecimento por voz</div>
+                  <select
+                    value={settings.speech.enabled ? 'on' : 'off'}
+                    onChange={(e) => updateSettings({ speech: { ...settings.speech, enabled: e.target.value === 'on' } })}
+                  >
+                    <option value="on">Ligado</option>
+                    <option value="off">Desligado</option>
+                  </select>
+                </div>
+
+                <div style={{ marginTop: 14 }}>
+                  {speechModelReady === null && <p className="hint">Verificando o modelo de voz…</p>}
+                  {speechModelReady === true && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span className="hint">✓ Modelo de voz (~148MB, Português) já baixado e pronto.</span>
+                      <button className="btn" onClick={handleDeleteSpeechModel}>Remover modelo</button>
+                    </div>
+                  )}
+                  {speechModelReady === false && !speechDownloading && (
+                    <div>
+                      <p className="hint">
+                        O modelo de voz ainda não foi baixado (download único de ~148MB, feito agora e guardado
+                        neste computador).
+                      </p>
+                      <button className="btn primary" onClick={handleDownloadSpeechModel}>Baixar modelo de voz</button>
+                    </div>
+                  )}
+                  {speechDownloading && (
+                    <div>
+                      <p className="hint">
+                        Baixando modelo de voz…
+                        {speechProgress && speechProgress.total > 0
+                          ? ` ${Math.round((speechProgress.received / speechProgress.total) * 100)}% (${(speechProgress.received / 1024 / 1024).toFixed(1)}MB / ${(speechProgress.total / 1024 / 1024).toFixed(1)}MB)`
+                          : ''}
+                      </p>
+                      <div style={{ height: 8, borderRadius: 4, background: 'var(--bg-2)', overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            height: '100%',
+                            width: speechProgress && speechProgress.total > 0 ? `${Math.round((speechProgress.received / speechProgress.total) * 100)}%` : '10%',
+                            background: 'var(--accent)',
+                            transition: 'width 0.2s',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {speechError && <p className="hint" style={{ color: 'var(--danger)' }}>{speechError}</p>}
                 </div>
               </div>
             )}

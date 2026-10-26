@@ -8,6 +8,12 @@ export interface UpdateStatusPayload {
   message?: string;
 }
 
+export interface TranscriptSegmentPayload {
+  startMs: number;
+  endMs: number;
+  text: string;
+}
+
 const api = {
   window: {
     minimize: () => ipcRenderer.send('win:minimize'),
@@ -90,6 +96,20 @@ const api = {
         ipcRenderer.removeListener('sync:state', listener);
       };
     },
+  },
+  // Reconhecimento de partes por voz (whisper.cpp local, ver src-tauri/src/speech.rs):
+  // só implementado de fato no lado Tauri — mantido aqui só pra MrqApi
+  // continuar com o mesmo formato nos dois lados (casca Electron legada,
+  // fora do build publicado). `setPartsFromRecognition` em useStore.ts já
+  // cai de volta pro método por áudio (PartRecognition.ts) quando
+  // `modelReady()` nunca fica true.
+  speech: {
+    modelReady: (): Promise<boolean> => Promise.resolve(false),
+    downloadModel: (): Promise<void> => Promise.reject(new Error('reconhecimento por voz não disponível nesta casca')),
+    deleteModel: (): Promise<void> => Promise.resolve(),
+    onDownloadProgress: (_cb: (p: { received: number; total: number }) => void) => () => {},
+    transcribeWav: (_wavBytes: Uint8Array, _language?: string): Promise<TranscriptSegmentPayload[]> =>
+      Promise.reject(new Error('reconhecimento por voz não disponível nesta casca')),
   },
 };
 

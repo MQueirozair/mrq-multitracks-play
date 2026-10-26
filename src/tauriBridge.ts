@@ -449,6 +449,28 @@ const api: MrqApi = {
       };
     },
   },
+  speech: {
+    modelReady: () => invoke<boolean>('speech_model_ready'),
+    downloadModel: () => invoke<void>('speech_download_model'),
+    deleteModel: () => invoke<void>('speech_delete_model'),
+    onDownloadProgress: (cb: (p: { received: number; total: number }) => void) => {
+      let unlisten: (() => void) | null = null;
+      let cancelled = false;
+      listen<{ received: number; total: number }>('speech:download-progress', (event) => cb(event.payload)).then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      });
+      return () => {
+        cancelled = true;
+        unlisten?.();
+      };
+    },
+    transcribeWav: (wavBytes: Uint8Array, language?: string) =>
+      invoke<{ start_ms: number; end_ms: number; text: string }[]>('speech_transcribe_wav', {
+        wavBytes: Array.from(wavBytes),
+        language,
+      }).then((segments) => segments.map((s) => ({ startMs: s.start_ms, endMs: s.end_ms, text: s.text }))),
+  },
 };
 
 window.api = api;

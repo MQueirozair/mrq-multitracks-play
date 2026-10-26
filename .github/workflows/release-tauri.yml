@@ -50,6 +50,15 @@ jobs:
       - name: dependências do frontend
         run: npm ci
 
+      # whisper-rs/whisper.cpp (ver src-tauri/src/speech.rs) usa bindgen, que
+      # precisa achar o libclang do LLVM já pré-instalado na imagem do
+      # runner Windows (em C:\Program Files\LLVM) — sem essa variável o
+      # bindgen às vezes não acha o libclang sozinho e o build falha.
+      - name: LIBCLANG_PATH (Windows, necessário pro build do whisper-rs)
+        if: matrix.platform == 'windows-latest'
+        run: echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $env:GITHUB_ENV
+        shell: pwsh
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -97,7 +106,7 @@ jobs:
       - name: instalar dependências de sistema
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libasound2-dev cmake libclang-dev
 
       - name: Node.js
         uses: actions/setup-node@v4

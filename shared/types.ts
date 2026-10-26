@@ -450,6 +450,18 @@ export interface AppSettings {
   /** tema de alto contraste / fontes maiores, pensado para telas de palco com pouca luz */
   stageMode: boolean;
   rack: InstrumentRackState;
+  /**
+   * Reconhecimento de partes por voz (beta, desligado por padrão): ouve a
+   * locução da faixa guia anunciando cada parte (ex.: "Estrofe", "Refrão")
+   * via um modelo de voz local (whisper.cpp) baixado sob demanda — ver
+   * src/audio/SpeechPartRecognition.ts, src-tauri/src/speech.rs e a seção
+   * "reconhecimento de partes" do HelpPanel. Desligado por padrão porque o
+   * modelo é um download grande (~148MB) opcional, só baixado quando o
+   * usuário liga essa opção de propósito.
+   */
+  speech: {
+    enabled: boolean;
+  };
 }
 
 export function emptyRackLayer(id: string, color: string): RackLayer {
@@ -596,6 +608,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   stageMode: false,
   rack: DEFAULT_RACK_STATE,
+  speech: {
+    enabled: false,
+  },
 };
 
 export const PART_COLORS: Record<PartType, string> = {

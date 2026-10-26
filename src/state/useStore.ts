@@ -18,6 +18,7 @@ import { engine, padEngine } from '../audio/engineInstance';
 import { combinePeaks, computePeaks, decodeForAnalysis, yieldToBrowser } from '../audio/waveform';
 import { detectBpm, detectKey } from '../audio/KeyBpmDetection';
 import { recognizeParts, type RecognitionSensitivity } from '../audio/PartRecognition';
+import { recognizePartsFromSpeech } from '../audio/SpeechPartRecognition';
 import type { EngineState } from '../audio/AudioEngine';
 import { rackEngine } from '../audio/rack/RackEngine';
 import { detectChord } from '../midi/chordDetect';
@@ -820,7 +821,35 @@ export const useStore = create<StoreState>((set, get) => ({
       if (!guideTrack) throw new Error('sem faixas');
       const url = await window.api.fs.toFileUrl(guideTrack.filePath);
       const buffer = await decodeForAnalysis(engine.ctx, url);
-      const parts = recognizeParts(buffer, song.currentBpm, song.timeSignatureNum, { sensitivity });
+
+      // Tenta primeiro o reconhecimento por VOZ (ouve a locução anunciando
+      // cada parte na própria faixa guia — mais preciso que adivinhar só
+      // pela forma da onda), e só cai pro método heurístico de energia se
+      // essa opção estiver desligada, o modelo ainda não tiver sido baixado,
+      // ou a faixa não tiver locução suficiente pra confiar (ver
+      // SpeechPartRecognition.ts).
+      let parts: SongPart[] = [];
+      let usedSpeech = false;
+      if (get().settings.speech.enabled) {
+        try {
+          const modelReady = await window.api.speech.modelReady();
+          if (modelReady) {
+            const speechParts = await recognizePartsFromSpeech(buffer, song.currentBpm, song.timeSignatureNum, (wav, lang) =>
+              window.api.speech.transcribeWav(wav, lang)
+            );
+            if (speechParts && speechParts.length > 0) {
+              parts = speechParts;
+              usedSpeech = true;
+            }
+          }
+        } catch (err) {
+          console.error('[speech] reconhecimento por voz falhou, caindo pro método por áudio', err);
+        }
+      }
+
+      if (!usedSpeech) {
+        parts = recognizeParts(buffer, song.currentBpm, song.timeSignatureNum, { sensitivity });
+      }
       if (parts.length === 0) {
         get().pushToast('Não foi possível sugerir partes para esta música (ou ela é curta demais).', 'error');
         return;
@@ -828,7 +857,9 @@ export const useStore = create<StoreState>((set, get) => ({
       get().updateCurrentSong((s) => ({ ...s, parts }), { history: true });
       engine.updateParts(parts);
       get().pushToast(
-        `${parts.length} partes sugeridas. Revise antes de tocar ao vivo — use "Mesclar com a próxima" ou "Dividir" pra ajustar rápido.`
+        usedSpeech
+          ? `${parts.length} partes reconhecidas pela locução da faixa guia. Revise antes de tocar ao vivo — use "Mesclar com a próxima" ou "Dividir" pra ajustar rápido.`
+          : `${parts.length} partes sugeridas. Revise antes de tocar ao vivo — use "Mesclar com a próxima" ou "Dividir" pra ajustar rápido.`
       );
     } catch (err) {
       console.error(err);
