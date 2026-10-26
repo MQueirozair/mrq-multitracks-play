@@ -1,6 +1,6 @@
 [package]
 name = "mrq-multitracks-play"
-version = "0.2.11"
+version = "0.2.12"
 description = "MRQ - Multitracks Play: tocador de multitracks ao vivo para banda/culto."
 authors = ["MRQ"]
 edition = "2021"

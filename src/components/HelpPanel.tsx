@@ -116,11 +116,16 @@ export default function HelpPanel() {
 
           <div className="help-callout" style={{ marginBottom: 18 }}>
             <b>Correções desta versão:</b> a detecção automática de partes (Arranjar → "Reconhecer partes") foi
-            refeita — não cria mais partes desnecessárias e não rotula tudo de "Refrão" por engano; ganhou um
-            controle de sensibilidade e botões de dividir/mesclar. Importar uma pasta agora encontra os arquivos de
-            áudio sozinho mesmo quando estão numa subpasta (ex. "Música/WAV/"), sem precisar navegar manualmente.
-            <b> Click Track</b> e <b>Guide/Guia</b> sempre aparecem primeiro no mixer, e o canal <b>MASTER</b> fica
-            sempre visível (não rola junto com as outras faixas).
+            refeita de novo, mais a fundo — agora usa o próprio silêncio da voz-guia pra achar com mais confiança
+            onde começam e terminam os trechos instrumentais (intro, interlúdio, solo, ponte instrumental), separa
+            "Pré-refrão" de "Verso" pela duração mais curta antes do refrão, e usa o volume de verdade da faixa (não
+            mais um valor normalizado que escondia a diferença entre verso e refrão) pra decidir qual grupo repetido
+            é o refrão. Não rotula mais tudo de "Refrão" por engano, não cria partes desnecessárias, e repetições do
+            mesmo tipo agora ficam numeradas (Refrão, Refrão 2, Refrão 3...) pra nunca ter dois botões iguais sem
+            diferença. Importar uma pasta agora encontra os arquivos de áudio sozinho mesmo quando estão numa
+            subpasta (ex. "Música/WAV/"), sem precisar navegar manualmente. <b>Click Track</b> e <b>Guide/Guia</b>{' '}
+            sempre aparecem primeiro no mixer, e o canal <b>MASTER</b> fica sempre visível (não rola junto com as
+            outras faixas).
           </div>
           <div className="help-callout" style={{ marginBottom: 18 }}>
             <b>Também nesta leva:</b> pílula de acorde maior (mostra o acorde inteiro, sem cortar) · Tap tempo ·
@@ -315,14 +320,20 @@ export default function HelpPanel() {
                 operador extra. Veja a seção <i>OSC / Sync</i> abaixo pra ligar a ponte OSC.
               </p>
               <p className="help-callout">
-                <b>Correção desta versão:</b> a detecção automática estava criando partes demais (toda pequena
-                variação de dinâmica virava uma "parte" nova) e, em algumas músicas, rotulava TODAS as partes como
-                "Refrão". O detector foi refeito com uma técnica mais robusta de reconhecimento de estrutura musical
-                (a mesma base usada por ferramentas de análise de áudio: curva de novidade por similaridade, com
-                suavização e limiar adaptativo), com um passo que funde automaticamente qualquer trecho curto demais
-                no vizinho mais parecido, e uma rede de segurança no rótulo: se o programa não encontrar diversidade
-                de verdade entre as partes, ele não arrisca chamar tudo de "Refrão" — usa um rótulo neutro e deixa
-                claro que a sugestão deve ser revisada.
+                <b>Correção desta versão:</b> a detecção automática estava criando partes demais e, em algumas
+                músicas, rotulava TODAS as partes como "Refrão". O detector foi refeito com uma técnica mais robusta
+                de reconhecimento de estrutura musical (curva de novidade por similaridade, com suavização e limiar
+                adaptativo — a mesma base usada por ferramentas de análise de áudio como MSAF), com um passo que
+                funde automaticamente qualquer trecho curto demais no vizinho mais parecido, e uma rede de segurança
+                no rótulo: se o programa não encontrar diversidade de verdade entre as partes, não arrisca chamar
+                tudo de "Refrão". A entrada da análise é sempre a <b>faixa guia</b> (nunca o mix completo) — e agora o
+                programa também usa o <b>silêncio da própria voz-guia</b> como pista de estrutura: um trecho em que a
+                voz-guia não canta quase sempre é instrumental de verdade (intro, interlúdio, ponte instrumental ou
+                solo), um corte muito mais confiável do que comparar timbre. Isso trouxe de volta tipos que o
+                detector não usava direito: <b>Pré-refrão</b> (trecho curto cantado logo antes do refrão),{' '}
+                <b>Interlúdio</b> e <b>Solo</b> (instrumental "em destaque", mais alto que uma simples passagem).
+                Repetições do mesmo tipo agora ficam numeradas (ex. "Refrão", "Refrão 2", "Refrão 3") em vez de todas
+                se chamarem igual.
               </p>
             </div>
             <Figure src="help-arrange.png" alt="Tela de Arranjar com partes marcadas" caption="Partes marcadas na forma de onda e lista editável abaixo." />

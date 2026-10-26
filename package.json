@@ -2,7 +2,7 @@
   "name": "mrq-multitracks-play",
   "productName": "MRQ - Multitracks Play",
   "private": true,
-  "version": "0.2.11",
+  "version": "0.2.12",
   "description": "MRQ - Multitracks Play: tocador de multitracks ao vivo para banda/culto.",
   "author": "MRQ",
   "main": "dist-electron/electron/main.js",
@@ -18,7 +18,8 @@
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:win:publish": "npm run build && electron-builder --win --x64 --publish always",
     "dist:mac:publish": "npm run build && electron-builder --mac --publish always",
-    "lint": "tsc -b --noEmit"
+    "lint": "tsc -b --noEmit",
+    "test:parts": "node scripts/test-part-recognition.mjs"
   },
   "dependencies": {
     "@audio/synth-dx7": "^0.1.0",
