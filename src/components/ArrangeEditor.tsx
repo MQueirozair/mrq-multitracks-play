@@ -1,14 +1,27 @@
 import { useRef, useState } from 'react';
-import { Copy, GripVertical, Infinity as InfinityIcon, Trash2, Zap } from 'lucide-react';
+import { Copy, GripVertical, Infinity as InfinityIcon, Merge, Split, Trash2, Zap } from 'lucide-react';
 import type { ArrangementStep, PartType, Song } from '../../shared/types';
 import { PART_COLORS } from '../../shared/types';
 import { useStore } from '../state/useStore';
 
 const PART_TYPES = Object.keys(PART_COLORS) as PartType[];
 
+/** "12 compassos · 0:24" — ajuda a notar de cara uma parte suspeitamente curta
+ *  (provável sobra de uma detecção automática que separou demais). */
+function formatPartDuration(startBar: number, endBar: number, bpm: number, timeSigNum: number): string {
+  const bars = Math.max(0, endBar - startBar);
+  const secPerBar = (60 / Math.max(1, bpm)) * timeSigNum;
+  const totalSec = Math.round(bars * secPerBar);
+  const mm = Math.floor(totalSec / 60);
+  const ss = String(totalSec % 60).padStart(2, '0');
+  return `${bars} compasso${bars === 1 ? '' : 's'} · ${mm}:${ss}`;
+}
+
 export default function ArrangeEditor({ song }: { song: Song }) {
   const updatePart = useStore((s) => s.updatePart);
   const deletePart = useStore((s) => s.deletePart);
+  const mergePartWithNext = useStore((s) => s.mergePartWithNext);
+  const splitPart = useStore((s) => s.splitPart);
   const addArrangement = useStore((s) => s.addArrangement);
   const setActiveArrangement = useStore((s) => s.setActiveArrangement);
   const updateArrangementSteps = useStore((s) => s.updateArrangementSteps);
@@ -96,8 +109,10 @@ export default function ArrangeEditor({ song }: { song: Song }) {
       </div>
 
       <div className="arrange-parts-list">
-        {song.parts.map((part) => {
+        {song.parts.map((part, partIndex) => {
           const hasCue = !!part.cueOscAddress || !!part.cueMidiProgram;
+          const isShort = part.endBar - part.startBar < 4;
+          const isLast = partIndex === song.parts.length - 1;
           return (
           <div key={part.id}>
             <div className="arrange-part-row">
@@ -133,7 +148,25 @@ export default function ArrangeEditor({ song }: { song: Song }) {
                 value={part.endBar}
                 onChange={(e) => updatePart(part.id, { endBar: parseInt(e.target.value, 10) || 1 })}
               />
+              <span className={`arrange-part-duration ${isShort ? 'warn' : ''}`} title={isShort ? 'Parte bem curta — confira se não é sobra de uma detecção automática que separou demais' : undefined}>
+                {formatPartDuration(part.startBar, part.endBar, song.currentBpm, song.timeSignatureNum)}
+              </span>
               <div className="arrange-spacer" />
+              <button
+                className="icon-btn"
+                title="Dividir esta parte ao meio"
+                onClick={() => splitPart(part.id)}
+              >
+                <Split size={14} />
+              </button>
+              <button
+                className="icon-btn"
+                title="Mesclar com a próxima parte"
+                disabled={isLast}
+                onClick={() => mergePartWithNext(part.id)}
+              >
+                <Merge size={14} />
+              </button>
               <button
                 className={`icon-btn ${hasCue ? 'active' : ''}`}
                 title="Cue de palco: dispara OSC/MIDI automaticamente quando esta parte entra (luz, vídeo, console externo)"

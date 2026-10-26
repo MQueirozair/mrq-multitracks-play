@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Mic, Redo2, Scissors, Undo2 } from 'lucide-react';
 import type { PartType, Song } from '../../shared/types';
 import { PART_COLORS } from '../../shared/types';
+import type { RecognitionSensitivity } from '../audio/PartRecognition';
 import { useStore } from '../state/useStore';
 import SongHeader from './SongHeader';
 import WaveformCanvas from './WaveformCanvas';
@@ -38,6 +39,7 @@ export default function PlayerShell({ song }: { song: Song }) {
   const [draftRange, setDraftRange] = useState<{ start: number; end: number } | null>(null);
   const [draftName, setDraftName] = useState('Nova parte');
   const [draftType, setDraftType] = useState<PartType>('Verso');
+  const [recognitionSensitivity, setRecognitionSensitivity] = useState<RecognitionSensitivity>('normal');
 
   const isArrange = nav === 'arrange';
   const isChord = nav === 'chord';
@@ -144,7 +146,19 @@ export default function PlayerShell({ song }: { song: Song }) {
           <button className="icon-btn" disabled={!canRedo} title="Refazer (Ctrl+Shift+Z)" onClick={() => redo()}>
             <Redo2 size={16} />
           </button>
-          <button className="btn" disabled={recognizing} onClick={() => setPartsFromRecognition()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <select
+            className="arrange-input-type"
+            style={{ minWidth: 150 }}
+            value={recognitionSensitivity}
+            disabled={recognizing}
+            title="Quantas partes a detecção automática tende a sugerir"
+            onChange={(e) => setRecognitionSensitivity(e.target.value as RecognitionSensitivity)}
+          >
+            <option value="poucas">Sensibilidade: poucas partes</option>
+            <option value="normal">Sensibilidade: normal</option>
+            <option value="muitas">Sensibilidade: muitas partes</option>
+          </select>
+          <button className="btn" disabled={recognizing} onClick={() => setPartsFromRecognition(recognitionSensitivity)} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Mic size={14} /> {recognizing ? 'Analisando…' : 'Reconhecer partes (beta)'}
           </button>
         </div>

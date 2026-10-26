@@ -23,6 +23,8 @@ import {
   Radio,
   Tv,
   AlertTriangle,
+  Split,
+  Merge,
 } from 'lucide-react';
 
 const BASE = import.meta.env.BASE_URL;
@@ -118,7 +120,9 @@ export default function HelpPanel() {
             Monitor de saúde do áudio (avisa sobre soluços ao vivo) · acorde ao vivo transmitido pro celular de toda
             a banda · Cues de palco por parte (OSC/MIDI) · e duas tecnologias novas — ponte <b>OSC</b> com software de
             produção externo (QLab, Resolume, TouchOSC) e <b>MRQ Sync</b> (sincronismo de estado entre instâncias do
-            MRQ na mesma rede). Veja os detalhes de cada uma nas seções abaixo.
+            MRQ na mesma rede). <b>Correção:</b> a detecção automática de partes (em Arranjar) foi refeita — não cria
+            mais partes desnecessárias, ganhou um controle de sensibilidade e botões de dividir/mesclar partes pra
+            ajuste rápido. Veja os detalhes de cada uma nas seções abaixo.
           </div>
 
           <div className="help-formats-grid">
@@ -262,8 +266,27 @@ export default function HelpPanel() {
                 <li>Clique numa parte já marcada, na lista "Partes marcadas", pra editar nome/tipo/compassos.</li>
                 <li>Arraste os cartões pra <b>reordenar o roteiro</b> (a ordem de execução ao vivo).</li>
                 <li>
-                  <b>"Reconhecer partes (beta)"</b> tenta identificar as partes automaticamente a partir do áudio —
-                  ótimo pra um primeiro rascunho, mas sempre revise o resultado.
+                  <b>"Reconhecer partes (beta)"</b> lê a faixa guia (ou a primeira faixa, se não houver uma marcada
+                  como guia) e sugere as partes sozinho, analisando onde o áudio muda de verdade — ótimo pra um
+                  primeiro rascunho, mas sempre revise o resultado antes de tocar ao vivo.
+                </li>
+                <li>
+                  O seletor <b>"Sensibilidade"</b> ao lado do botão controla quantas partes ele tende a sugerir:
+                  <b> poucas</b> (só trocas bem óbvias, menos revisão depois), <b>normal</b> (padrão) ou
+                  <b> muitas</b> (pega até trocas sutis, mas pode sugerir partes demais em músicas com muita variação
+                  de dinâmica). Rode de novo com outra sensibilidade se o resultado não ficou bom.
+                </li>
+                <li>
+                  Cada parte mostra sua <b>duração</b> (compassos e minutos:segundos) na lista — uma parte com menos
+                  de 4 compassos aparece destacada em laranja, um sinal de que ela pode ser sobra de uma detecção
+                  automática que separou demais e vale a pena revisar.
+                </li>
+                <li>
+                  Pra corrigir rápido uma sugestão automática sem refazer tudo na mão: o ícone de
+                  <b> dividir</b> (<Split size={12} style={{ verticalAlign: 'middle' }} />) quebra uma parte ao meio
+                  (quando ela juntou duas seções diferentes), e o ícone de <b>mesclar</b>
+                  (<Merge size={12} style={{ verticalAlign: 'middle' }} />) funde a parte com a próxima (quando ela
+                  separou demais).
                 </li>
                 <li><kbd>Delete</kbd> remove o passo selecionado do roteiro · <kbd>Ctrl+Z</kbd> desfaz · <kbd>Ctrl+Shift+Z</kbd> refaz.</li>
               </ol>
@@ -273,6 +296,13 @@ export default function HelpPanel() {
                 disparam automaticamente, sozinhos, assim que aquela parte entra ao vivo — pra trocar a cena de um
                 software de luz/vídeo (QLab, Resolume, mesa de luz) no exato momento certo, sem precisar de um
                 operador extra. Veja a seção <i>OSC / Sync</i> abaixo pra ligar a ponte OSC.
+              </p>
+              <p className="help-callout">
+                <b>Correção desta versão:</b> a detecção automática estava criando partes demais (toda pequena
+                variação de dinâmica virava uma "parte" nova). O detector foi refeito com uma técnica mais robusta
+                de reconhecimento de estrutura musical (a mesma base usada por ferramentas de análise de áudio:
+                curva de novidade por similaridade, com suavização e limiar adaptativo), além de um passo que funde
+                automaticamente qualquer trecho curto demais no vizinho mais parecido antes de sugerir o resultado.
               </p>
             </div>
             <Figure src="help-arrange.png" alt="Tela de Arranjar com partes marcadas" caption="Partes marcadas na forma de onda e lista editável abaixo." />

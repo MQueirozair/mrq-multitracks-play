@@ -17,7 +17,7 @@ import { newId } from '../lib/id';
 import { engine, padEngine } from '../audio/engineInstance';
 import { combinePeaks, computePeaks, decodeForAnalysis, yieldToBrowser } from '../audio/waveform';
 import { detectBpm, detectKey } from '../audio/KeyBpmDetection';
-import { recognizeParts } from '../audio/PartRecognition';
+import { recognizeParts, type RecognitionSensitivity } from '../audio/PartRecognition';
 import type { EngineState } from '../audio/AudioEngine';
 import { rackEngine } from '../audio/rack/RackEngine';
 import { detectChord } from '../midi/chordDetect';
@@ -91,10 +91,17 @@ interface StoreState {
   updateCurrentSong: (mutator: (song: Song) => Song, opts?: { history?: boolean }) => void;
   undo: () => void;
   redo: () => void;
-  setPartsFromRecognition: () => Promise<void>;
+  setPartsFromRecognition: (sensitivity?: RecognitionSensitivity) => Promise<void>;
   addPart: (part: Omit<SongPart, 'id'>) => void;
   updatePart: (partId: string, patch: Partial<SongPart>) => void;
   deletePart: (partId: string) => void;
+  /** Funde uma parte com a próxima (correção rápida de uma detecção automática
+   *  que separou demais) — a parte seguinte desaparece e esta passa a cobrir
+   *  os compassos das duas. */
+  mergePartWithNext: (partId: string) => void;
+  /** Divide uma parte ao meio (correção rápida de uma detecção automática que
+   *  juntou duas seções diferentes numa parte só). */
+  splitPart: (partId: string) => void;
   addArrangement: (name: string) => string;
   setActiveArrangement: (id: string | null) => void;
   updateArrangementSteps: (arrangementId: string, steps: SongArrangement['steps']) => void;
@@ -783,7 +790,7 @@ export const useStore = create<StoreState>((set, get) => ({
     get().pushToast('Refeito.');
   },
 
-  setPartsFromRecognition: async () => {
+  setPartsFromRecognition: async (sensitivity = 'normal') => {
     const song = get().currentSong;
     if (!song) return;
     set({ recognizing: true });
@@ -792,20 +799,56 @@ export const useStore = create<StoreState>((set, get) => ({
       if (!guideTrack) throw new Error('sem faixas');
       const url = await window.api.fs.toFileUrl(guideTrack.filePath);
       const buffer = await decodeForAnalysis(engine.ctx, url);
-      const parts = recognizeParts(buffer, song.currentBpm, song.timeSignatureNum);
+      const parts = recognizeParts(buffer, song.currentBpm, song.timeSignatureNum, { sensitivity });
       if (parts.length === 0) {
-        get().pushToast('Não foi possível sugerir partes para esta música.', 'error');
+        get().pushToast('Não foi possível sugerir partes para esta música (ou ela é curta demais).', 'error');
         return;
       }
       get().updateCurrentSong((s) => ({ ...s, parts }), { history: true });
       engine.updateParts(parts);
-      get().pushToast(`${parts.length} partes sugeridas. Revise antes de tocar ao vivo.`);
+      get().pushToast(
+        `${parts.length} partes sugeridas. Revise antes de tocar ao vivo — use "Mesclar com a próxima" ou "Dividir" pra ajustar rápido.`
+      );
     } catch (err) {
       console.error(err);
       get().pushToast('Falha ao reconhecer partes.', 'error');
     } finally {
       set({ recognizing: false });
     }
+  },
+
+  mergePartWithNext: (partId) => {
+    get().updateCurrentSong((s) => {
+      const sorted = [...s.parts].sort((a, b) => a.startBar - b.startBar);
+      const idx = sorted.findIndex((p) => p.id === partId);
+      if (idx < 0 || idx >= sorted.length - 1) return s;
+      const current = sorted[idx];
+      const next = sorted[idx + 1];
+      const merged: SongPart = { ...current, endBar: next.endBar };
+      const parts = sorted.filter((p) => p.id !== next.id).map((p) => (p.id === current.id ? merged : p));
+      engine.updateParts(parts);
+      return { ...s, parts };
+    }, { history: true });
+    get().pushToast('Partes mescladas.');
+  },
+
+  splitPart: (partId) => {
+    get().updateCurrentSong((s) => {
+      const part = s.parts.find((p) => p.id === partId);
+      if (!part) return s;
+      const span = part.endBar - part.startBar;
+      if (span < 2) return s;
+      const mid = part.startBar + Math.round(span / 2);
+      const firstHalf: SongPart = { ...part, endBar: mid };
+      const secondHalf: SongPart = { ...part, id: newId(), name: `${part.name} (2)`, startBar: mid };
+      const parts = s.parts
+        .map((p) => (p.id === partId ? firstHalf : p))
+        .concat(secondHalf)
+        .sort((a, b) => a.startBar - b.startBar);
+      engine.updateParts(parts);
+      return { ...s, parts };
+    }, { history: true });
+    get().pushToast('Parte dividida ao meio — ajuste os nomes/limites se precisar.');
   },
 
   addPart: (part) => {

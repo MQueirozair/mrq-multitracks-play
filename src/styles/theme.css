@@ -499,6 +499,11 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .arrange-inline-label { font-size: 11px; color: var(--text-2); white-space: nowrap; }
 .arrange-spacer { flex: 1; }
+.arrange-part-duration {
+  font-size: 11px; color: var(--text-2); white-space: nowrap; padding: 2px 7px;
+  border-radius: 999px; background: var(--bg-2); flex-shrink: 0;
+}
+.arrange-part-duration.warn { color: #e0a030; background: rgba(224, 160, 48, 0.12); }
 
 .arrange-roteiro-block {
   border-top: 1px solid var(--border); margin-top: 4px; padding-top: 12px;
