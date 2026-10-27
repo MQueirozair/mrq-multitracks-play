@@ -158,6 +158,7 @@ export default function HelpPanel() {
                 <FormatChip accent>.nsmp / .nsmp3 / .nsmp4 (Nord)</FormatChip>
                 <FormatChip accent>.nki (Kontakt 1-4)</FormatChip>
                 <FormatChip accent>.sfz (inclui Kontakt 5-8 exportado)</FormatChip>
+                <FormatChip accent>.mrqi (formato leve do Rack)</FormatChip>
                 <FormatChip>.wav / .aiff / .flac / .mp3 / .ogg (amostra)</FormatChip>
               </div>
             </div>
@@ -634,12 +635,28 @@ export default function HelpPanel() {
               <h4>SFZ (formato aberto)</h4>
               <div className="chips"><FormatChip accent>.sfz</FormatChip></div>
             </div>
+            <div className="help-formats-card">
+              <h4>MRQ Instrument (leve)</h4>
+              <div className="chips"><FormatChip accent>.mrqi</FormatChip></div>
+            </div>
           </div>
           <div className="help-callout warn">
             <b>Sobre o suporte a .nki:</b> o MRQ decodifica de verdade os patches <b>Kontakt 1 a 4</b> não criptografados
             (amostras/timbres — sem o motor de scripts do Kontakt). Patches protegidos por criptografia, ou salvos em
             versões 4.2.2 ou mais novas do Kontakt, não são suportados — o app mostra um erro claro nesses casos em
             vez de carregar algo incorreto.
+          </div>
+          <div className="help-callout">
+            <b>Novidade — formato .mrqi (instrumento leve do Rack):</b> depois de carregar um instrumento Kontakt
+            (<code>.nki</code>) numa camada, abra o painel <b>"Editar"</b> dessa camada e clique no botão com o ícone
+            de seta pra baixo, no canto superior esquerdo do painel (ao lado do botão de resetar), pra converter o
+            instrumento pro formato <code>.mrqi</code> — escolha onde salvar na janela que abrir. Diferente do
+            <code>.nki</code> original (que precisa reler e redecodificar cada amostra WAV do disco toda vez que a
+            camada carrega), um <code>.mrqi</code> já guarda o áudio pronto pra tocar dentro de um único arquivo — por
+            isso ele abre bem mais rápido nas próximas vezes. Pra usar: carregue o <code>.mrqi</code> gerado em
+            qualquer camada do Rack, do mesmo jeito que carregaria qualquer outro instrumento (botão
+            <b>"Carregar"</b>). O conteúdo musical (mapeamento de notas, velocidade, afinação, timbres) é o mesmo do
+            instrumento original — só a forma de guardar o áudio muda.
           </div>
           <div className="help-callout warn">
             <b>Quer usar um instrumento do Kontakt 5, 6, 7 ou 8?</b> O formato desses arquivos é criptografado pela

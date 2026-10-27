@@ -86,6 +86,19 @@ fn sort_tracks(mut tracks: Vec<TrackEntry>) -> Vec<TrackEntry> {
     tracks
 }
 
+/// Grava bytes arbitrários num caminho absoluto — usado hoje pela exportação
+/// de camadas do Rack para `.mrqi` (ver mrqiExport.ts no front-end): o
+/// caminho vem de um diálogo "Salvar como" já resolvido pelo usuário, então
+/// (igual a scan_folder_tracks acima) não faz sentido restringir pelo escopo
+/// do plugin tauri-plugin-fs — o usuário já escolheu explicitamente onde
+/// salvar, em qualquer pasta/unidade do disco.
+#[tauri::command]
+pub async fn save_binary_file(path: String, data: Vec<u8>) -> Result<(), String> {
+    tokio::fs::write(&path, data)
+        .await
+        .map_err(|e| format!("falha ao salvar '{path}': {e}"))
+}
+
 #[tauri::command]
 pub async fn scan_folder_tracks(folder_path: String) -> Result<Vec<TrackEntry>, String> {
     let dir = std::path::PathBuf::from(&folder_path);

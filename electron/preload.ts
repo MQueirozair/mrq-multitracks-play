@@ -33,6 +33,8 @@ const api = {
     toFileUrl: (filePath: string): Promise<string> => ipcRenderer.invoke('fs:toFileUrl', filePath),
     openExternal: (url: string): Promise<void> => ipcRenderer.invoke('fs:openExternal', url),
     chooseInstrumentFile: (): Promise<string | null> => ipcRenderer.invoke('fs:chooseInstrumentFile'),
+    saveBinaryFile: (opts: { defaultName: string; data: Uint8Array }): Promise<string | null> =>
+      ipcRenderer.invoke('fs:saveBinaryFile', opts.defaultName, Array.from(opts.data)),
   },
   net: {
     localAddresses: (): Promise<string[]> => ipcRenderer.invoke('net:localAddresses'),

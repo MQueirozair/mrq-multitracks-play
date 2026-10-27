@@ -303,7 +303,7 @@ export type RackCcAction = (typeof RACK_CC_FADER_ACTIONS)[number] | (typeof RACK
  *                criptografado pela própria Native Instruments e dão erro claro
  *                em vez de tentar (e falhar) decodificar.
  */
-export type RackLayerFormat = 'sf2' | 'dx7' | 'sampler' | 'npno' | 'nsmp' | 'nki' | 'sfz';
+export type RackLayerFormat = 'sf2' | 'dx7' | 'sampler' | 'npno' | 'nsmp' | 'nki' | 'sfz' | 'mrqi';
 
 
 /** Ajuste rápido de timbre por camada (filtro + curva de velocidade, não altera o arquivo original). */

@@ -17,6 +17,8 @@ import { NpnoLayerVoice } from './NpnoLayerVoice';
 import { NsmpLayerVoice } from './NsmpLayerVoice';
 import { NkiLayerVoice } from './NkiLayerVoice';
 import { SfzLayerVoice } from './SfzLayerVoice';
+import { MrqiLayerVoice } from './MrqiLayerVoice';
+import { exportNkiToMrqi } from './mrqiExport';
 
 type AnyLayerVoice =
   | Sf2LayerVoice
@@ -25,7 +27,8 @@ type AnyLayerVoice =
   | NpnoLayerVoice
   | NsmpLayerVoice
   | NkiLayerVoice
-  | SfzLayerVoice;
+  | SfzLayerVoice
+  | MrqiLayerVoice;
 
 
 /**
@@ -56,6 +59,7 @@ const NPNO_EXT = new Set(['npno']);
 const NSMP_EXT = new Set(['nsmp', 'nsmp3', 'nsmp4']);
 const NKI_EXT = new Set(['nki']);
 const SFZ_EXT = new Set(['sfz']);
+const MRQI_EXT = new Set(['mrqi']);
 
 export function detectRackFormat(fileName: string): RackLayerFormat | null {
   const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
@@ -63,6 +67,7 @@ export function detectRackFormat(fileName: string): RackLayerFormat | null {
   if (NSMP_EXT.has(ext)) return 'nsmp';
   if (NKI_EXT.has(ext)) return 'nki';
   if (SFZ_EXT.has(ext)) return 'sfz';
+  if (MRQI_EXT.has(ext)) return 'mrqi';
   if (SF2_EXT.has(ext)) return 'sf2';
   if (DX7_EXT.has(ext)) return 'dx7';
   if (SAMPLE_EXT.has(ext)) return 'sampler';
@@ -1205,6 +1210,10 @@ export class RackEngine {
       const v = new SfzLayerVoice(ctx);
       presets = await v.load(buffer, sourcePath);
       voice = v;
+    } else if (format === 'mrqi') {
+      const v = new MrqiLayerVoice(ctx);
+      presets = await v.load(buffer, sourcePath);
+      voice = v;
     } else {
       const v = new SamplerLayerVoice(ctx);
       await v.load(buffer, rootNote);
@@ -1227,7 +1236,21 @@ export class RackEngine {
 
   selectPreset(index: number, value: string) {
     const voice = this.layers[index]?.voice;
-    if (voice && 'selectPreset' in voice) (voice as Sf2LayerVoice | Dx7LayerVoice | NkiLayerVoice).selectPreset(value);
+    if (voice && 'selectPreset' in voice)
+      (voice as Sf2LayerVoice | Dx7LayerVoice | NkiLayerVoice | MrqiLayerVoice).selectPreset(value);
+  }
+
+  /**
+   * Exporta o instrumento Kontakt (.nki) atualmente carregado na camada
+   * `index` para um pacote `.mrqi` (ver mrqiFormat.ts/mrqiExport.ts) —
+   * devolve `null` se a camada não tiver um .nki carregado no momento.
+   * Só reempacota o que já está decodificado em memória; não reabre nada
+   * do disco.
+   */
+  exportLayerToMrqi(index: number): Uint8Array | null {
+    const voice = this.layers[index]?.voice;
+    if (!(voice instanceof NkiLayerVoice)) return null;
+    return exportNkiToMrqi(voice);
   }
 
   setRootNote(index: number, note: number) {

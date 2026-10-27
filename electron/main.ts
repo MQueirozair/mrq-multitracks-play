@@ -470,7 +470,7 @@ ipcMain.handle('fs:chooseInstrumentFile', async () => {
     properties: ['openFile'],
     title: 'Escolha o arquivo do instrumento',
     filters: [
-      { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno', 'nsmp', 'nsmp3', 'nsmp4', 'nki', 'sfz'] },
+      { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno', 'nsmp', 'nsmp3', 'nsmp4', 'nki', 'sfz', 'mrqi'] },
       { name: 'SoundFont (.sf2, .sf3)', extensions: ['sf2', 'sf3'] },
       { name: 'Banco DX7 (.syx)', extensions: ['syx'] },
       { name: 'Amostra de áudio (.wav, .aiff, .flac, .ogg, .mp3)', extensions: ['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3'] },
@@ -478,6 +478,7 @@ ipcMain.handle('fs:chooseInstrumentFile', async () => {
       { name: 'Nord Sample Library (.nsmp, .nsmp3, .nsmp4)', extensions: ['nsmp', 'nsmp3', 'nsmp4'] },
       { name: 'Kontakt 1-4 (.nki, sem criptografia)', extensions: ['nki'] },
       { name: 'SFZ (.sfz) — inclui exportações do Kontakt 5-8', extensions: ['sfz'] },
+      { name: 'MRQ Instrument — formato leve do Rack (.mrqi)', extensions: ['mrqi'] },
       { name: 'Todos os arquivos', extensions: ['*'] },
     ],
   });
@@ -487,6 +488,19 @@ ipcMain.handle('fs:chooseInstrumentFile', async () => {
 
 
 ipcMain.handle('fs:openExternal', (_e, url: string) => shell.openExternal(url));
+
+/** Equivalente Electron de save_binary_file (src-tauri/src/fsops.rs) — usado
+ *  hoje pela exportação de camadas do Rack para `.mrqi` (ver mrqiExport.ts). */
+ipcMain.handle('fs:saveBinaryFile', async (_e, defaultName: string, data: number[]) => {
+  const result = await dialog.showSaveDialog(mainWindow!, {
+    title: 'Salvar instrumento .mrqi',
+    defaultPath: defaultName,
+    filters: [{ name: 'MRQ Instrument (.mrqi)', extensions: ['mrqi'] }],
+  });
+  if (result.canceled || !result.filePath) return null;
+  await fs.promises.writeFile(result.filePath, Buffer.from(data));
+  return result.filePath;
+});
 
 // ---------- IPC: log de diagnóstico ----------
 ipcMain.handle('log:append', (_e, line: string) => {

@@ -361,6 +361,58 @@ export class NkiLayerVoice {
     return [{ value: 'default', label: this.instrumentName || 'Instrumento Kontakt' }];
   }
 
+  /**
+   * Devolve TODO o instrumento já resolvido (todos os grupos de timbre e
+   * suas zonas, cada uma já com o AudioBuffer real decodificado) — usado
+   * pela exportação pra `.mrqi` (ver mrqiExport.ts). Diferente de
+   * `this.zones` (só o grupo ATUALMENTE selecionado, usado pra tocar), isso
+   * reconstrói o instrumento completo, igual a como ele foi carregado do
+   * disco, pra não perder nenhum timbre/variação ao converter.
+   */
+  exportForMrqi(): {
+    instrumentName: string;
+    groups: {
+      name: string;
+      zones: {
+        buffer: AudioBuffer;
+        samplePath: string;
+        rootNote: number;
+        loNote: number;
+        hiNote: number;
+        loVel: number;
+        hiVel: number;
+        tuneCents: number;
+        volume: number;
+        pan: number;
+      }[];
+    }[];
+  } {
+    return {
+      instrumentName: this.instrumentName || 'Instrumento Kontakt',
+      groups: this.programGroups.map((g) => ({
+        name: g.name,
+        zones: g.zones
+          .map((z) => {
+            const buffer = this.buffers.get(z);
+            if (!buffer) return null;
+            return {
+              buffer,
+              samplePath: z.samplePath,
+              rootNote: z.rootNote,
+              loNote: z.loNote,
+              hiNote: z.hiNote,
+              loVel: z.loVel,
+              hiVel: z.hiVel,
+              tuneCents: z.tuneCents,
+              volume: z.volume,
+              pan: z.pan,
+            };
+          })
+          .filter((z): z is NonNullable<typeof z> => z !== null),
+      })),
+    };
+  }
+
   /** Troca o grupo de timbre ativo quando o .nki tem mais de um Programa
    *  (ver extractProgramGroups) — chamado pelo RackEngine quando o usuário
    *  escolhe outro item no seletor de instrumento/preset da camada. */

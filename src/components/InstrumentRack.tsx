@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Download,
   Image as ImageIcon,
   Piano,
   Plus,
@@ -139,6 +140,7 @@ const FORMAT_BADGE: Record<RackLayerFormat, string> = {
   nsmp: 'AMOSTRA NORD / NSMP',
   nki: 'KONTAKT 1-4 / NKI',
   sfz: 'SFZ (K5-8 exportado)',
+  mrqi: 'LEVE / MRQI',
 };
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
@@ -1395,12 +1397,46 @@ function LayerEditPanel({
     reader.readAsDataURL(file);
   }
 
+  const [exportingMrqi, setExportingMrqi] = useState(false);
+
+  /** Converte o instrumento Kontakt (.nki) desta camada pra `.mrqi` — o
+   *  formato leve e nativo do Rack (ver mrqiFormat.ts/HelpPanel). Reaproveita
+   *  o mapeamento de zonas/amostras já decodificado em memória por
+   *  NkiLayerVoice; não reabre nada do .nki no disco. */
+  async function exportToMrqi() {
+    setExportingMrqi(true);
+    try {
+      const bytes = rackEngine.exportLayerToMrqi(index);
+      if (!bytes) {
+        window.alert('Não há nenhum instrumento Kontakt (.nki) carregado nesta camada pra exportar.');
+        return;
+      }
+      const defaultName = `${(layer.displayName || layer.fileName || 'instrumento').replace(/\.[^.]+$/, '')}.mrqi`;
+      const saved = await window.api.fs.saveBinaryFile({ defaultName, data: bytes });
+      if (saved) window.alert(`Instrumento exportado: ${saved}\n\nCarregue este arquivo .mrqi em qualquer camada pra abrir bem mais rápido da próxima vez.`);
+    } catch (err) {
+      window.alert(`Falha ao exportar: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setExportingMrqi(false);
+    }
+  }
+
   return (
     <div className="rack-edit-overlay" onClick={onClose}>
       <div className="rack-edit-panel card" onClick={(e) => e.stopPropagation()}>
         <div className="rack-edit-panel-header">
           <span>CAMADA {String(index + 1).padStart(2, '0')} / AJUSTES</span>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            {layer.format === 'nki' && (
+              <button
+                className="rack-edit-close"
+                onClick={exportToMrqi}
+                disabled={exportingMrqi}
+                title="Converter este instrumento Kontakt (.nki) para .mrqi — formato leve do Rack, abre bem mais rápido nas próximas vezes"
+              >
+                <Download size={14} />
+              </button>
+            )}
             <button
               className="rack-edit-close"
               onClick={() => onPatch(DEFAULT_LAYER_FX)}

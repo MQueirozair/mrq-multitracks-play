@@ -14,7 +14,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
-import { open as openDialog, ask } from '@tauri-apps/plugin-dialog';
+import { open as openDialog, save as saveDialog, ask } from '@tauri-apps/plugin-dialog';
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { load as loadStore, type Store } from '@tauri-apps/plugin-store';
 import { check as checkForUpdate, type Update } from '@tauri-apps/plugin-updater';
@@ -211,7 +211,7 @@ export const ready: Promise<void> = (async () => {
 const INSTRUMENT_FILTERS = [
   {
     name: 'Todos os instrumentos suportados',
-    extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno', 'nsmp', 'nsmp3', 'nsmp4', 'nki', 'sfz'],
+    extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno', 'nsmp', 'nsmp3', 'nsmp4', 'nki', 'sfz', 'mrqi'],
   },
   { name: 'SoundFont (.sf2, .sf3)', extensions: ['sf2', 'sf3'] },
   { name: 'Banco DX7 (.syx)', extensions: ['syx'] },
@@ -220,8 +220,11 @@ const INSTRUMENT_FILTERS = [
   { name: 'Nord Sample Library (.nsmp, .nsmp3, .nsmp4)', extensions: ['nsmp', 'nsmp3', 'nsmp4'] },
   { name: 'Kontakt 1-4 (.nki, sem criptografia)', extensions: ['nki'] },
   { name: 'SFZ (.sfz) — inclui exportações do Kontakt 5-8', extensions: ['sfz'] },
+  { name: 'MRQ Instrument — formato leve do Rack (.mrqi)', extensions: ['mrqi'] },
   { name: 'Todos os arquivos', extensions: ['*'] },
 ];
+
+const MRQI_SAVE_FILTERS = [{ name: 'MRQ Instrument (.mrqi)', extensions: ['mrqi'] }];
 
 // ---------- Auto-atualização (tauri-plugin-updater + GitHub Releases) ----------
 // Equivalente ao setupAutoUpdater() do electron/main.ts: autoDownload=true
@@ -357,6 +360,27 @@ const api: MrqApi = {
       });
       if (!result) return null;
       return Array.isArray(result) ? result[0] ?? null : result;
+    },
+    /** Abre o diálogo "Salvar como" e grava `data` no caminho escolhido;
+     *  devolve o caminho salvo, ou null se o usuário cancelar. Usado hoje
+     *  pela exportação de camadas do Rack para `.mrqi` (ver mrqiExport.ts). */
+    saveBinaryFile: async (opts: { defaultName: string; data: Uint8Array }): Promise<string | null> => {
+      const path = await saveDialog({
+        title: 'Salvar instrumento .mrqi',
+        defaultPath: opts.defaultName,
+        filters: MRQI_SAVE_FILTERS,
+      });
+      if (!path) return null;
+      // Vai como argumento JSON normal (number[]), não como "raw payload"
+      // binário do Tauri (invoke(cmd, uint8array)) — esse modo raw passa
+      // metadados extras (como o caminho de destino) por cabeçalhos HTTP,
+      // que não aceitam com segurança nomes de arquivo com acentuação (muito
+      // comuns aqui, ex. "Partitura Não-Violão.mrqi"). Pra um arquivo de
+      // instrumento de tamanho moderado, exportado manualmente de vez em
+      // quando (não é um caminho "quente"), o overhead de serializar como
+      // array JSON é aceitável; ver src-tauri/src/fsops.rs::save_binary_file.
+      await invoke('save_binary_file', { path, data: Array.from(opts.data) });
+      return path;
     },
   },
   net: {

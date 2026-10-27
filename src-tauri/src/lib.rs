@@ -175,6 +175,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             fsops::scan_folder_tracks,
+            fsops::save_binary_file,
             fsops::local_addresses,
             migration::find_legacy_electron_config,
             log_append,
