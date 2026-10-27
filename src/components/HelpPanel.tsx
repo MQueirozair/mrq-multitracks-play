@@ -676,13 +676,85 @@ export default function HelpPanel() {
                 <li><b>Oitava</b> e <b>Canal MIDI</b> — transposição e filtro de canal de entrada.</li>
                 <li><b>Pan</b> — posição estéreo da camada.</li>
                 <li><b>Nota raiz da amostra</b> — só no formato "amostra única": em que nota o som original foi gravado.</li>
-                <li><b>Envelope</b> (attack/release), <b>Filtro</b> (cutoff), <b>EQ</b> de 3 bandas e <b>Drive/saturação</b> — processamento de som por camada.</li>
+                <li><b>Envelope</b> (Attack/Decay/Release) e <b>Filtro</b> (cutoff) — processamento de som por camada.</li>
                 <li><b>Escolher foto / Foto padrão</b> — personaliza a capa do cartão da camada com uma imagem própria.</li>
                 <li>O botão de reset (seta circular) no topo volta envelope/filtro/EQ/drive/pan pro padrão.</li>
               </ul>
             </div>
             <Figure src="help-rack-editar.png" alt="Painel de ajustes de uma camada do Rack" caption="Faixa de notas, envelope, filtro, EQ, drive e foto personalizada da camada." />
           </div>
+
+          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Novidade — Envelope com Decay, e Modo de voz (Poly/Mono/Legato/Glide)</h3>
+          <p>
+            O <b>Envelope</b> agora tem três estágios — <b>Attack</b>, <b>Decay</b> e <b>Release</b> — em vez de só
+            Attack/Release: depois do ataque, o som desce sozinho até um nível interno de sustentação no tempo
+            definido em Decay (0 = pula essa etapa, igual ao comportamento de antes). Logo abaixo, a seção{' '}
+            <b>"Modo de voz"</b> controla como a camada reage a notas sobrepostas:
+          </p>
+          <ul>
+            <li><b>Play mode — Poly</b>: cada nota toca numa voz independente (acordes normais, o padrão de sempre).</li>
+            <li>
+              <b>Play mode — Mono</b>: só uma nota soa por vez nesta camada (clássico pra baixo, lead ou sopro/corda
+              solo) — tocar uma nota nova corta a anterior e segue a prioridade da última nota tocada (se você soltar
+              a nota de cima, a camada volta pra nota de baixo que ainda estiver segurada, igual um sintetizador mono
+              de verdade).
+            </li>
+            <li>
+              <b>Legato</b> (só tem efeito em modo Mono): se uma nota nova chegar sem soltar a anterior, a camada{' '}
+              <b>não reataca o envelope</b> — em vez disso desliza a afinação da mesma voz até a nota nova, no tempo
+              definido em <b>Glide</b>. Em instrumentos SoundFont (.sf2/.sf3) o deslizamento fica limitado a ±2
+              semitons (a faixa de pitch bend padrão do formato); nos demais formatos não há esse limite.
+            </li>
+          </ul>
+
+          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Novidade — Equalizador paramétrico de 6 bandas</h3>
+          <p>
+            Substitui o antigo EQ de 3 bandas por um equalizador de verdade, com 6 bandas fixas — <b>Corte grave</b>{' '}
+            (highpass), <b>Prateleira grave</b>, <b>Sino 1</b>, <b>Sino 2</b>, <b>Prateleira aguda</b> e{' '}
+            <b>Corte agudo</b> (lowpass) — cada uma com Frequência, Ganho (exceto nos cortes, que só têm Q) e Q, mais
+            um interruptor individual de liga/desliga. O gráfico mostra a curva de resposta real (a mesma matemática
+            que o navegador usa pra processar o áudio, calculada ao vivo pelos filtros de verdade, não um desenho
+            aproximado):
+          </p>
+          <ul>
+            <li><b>Arraste um ponto</b> no gráfico pra mudar a frequência (e o ganho, nas bandas que têm ganho) daquela banda.</li>
+            <li><b>Gire o scroll</b> com o mouse sobre um ponto pra ajustar o Q (largura/inclinação) daquela banda.</li>
+            <li>
+              <b>Spectrum: Post</b> sobrepõe ao gráfico o espectro de frequência real do áudio desta camada, medido
+              depois do EQ — ajuda a ver exatamente onde o som tem energia antes de decidir onde cortar/realçar.
+            </li>
+          </ul>
+
+          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Novidade — Compressor (Amount), Tremolo, Chorus e Delay com Sync/Ping-pong</h3>
+          <ul>
+            <li>
+              <b>Compressor</b> ganhou um controle único, <b>Amount</b>, que ajusta threshold/razão/ganho de
+              compensação juntos (quanto mais alto, mais compressão), além de <b>Attack</b>/<b>Release</b> próprios e
+              um medidor <b>GR</b> (redução de ganho) mostrando quanto ele está atuando agora, ao vivo.
+            </li>
+            <li>
+              <b>Tremolo</b> (novo): modula o volume periodicamente — <b>Rate</b> (velocidade), <b>Depth</b>{' '}
+              (intensidade) e <b>Stereo</b> (soma um pouco do mesmo LFO ao pan da camada, pra um efeito de "auto-pan"
+              junto com a variação de volume).
+            </li>
+            <li>
+              <b>Chorus</b> (novo): engrossa/alarga o timbre com uma modulação sutil de afinação — um controle só,{' '}
+              <b>Mix</b>, do seco até bem encorpado.
+            </li>
+            <li>
+              <b>Delay</b> ganhou <b>Sync</b> (o tempo do eco segue o <b>BPM</b> do rack — ajustável no MASTER — em
+              vez de milissegundos fixos, com divisões de 1/16 a 1/2, incluindo pontuadas e tercinas) e{' '}
+              <b>Ping-pong</b> (o eco alterna entre os canais esquerdo/direito a cada repetição, em vez de ficar
+              sempre no mesmo lado).
+            </li>
+          </ul>
+          <p className="help-callout">
+            <b>Reverb por camada</b> agora chama o controle de envio de <b>"Amount"</b> (mesmo campo de sempre, só com
+            nome igual ao de plugins conhecidos) — a <b>"sala"</b> (Room: Room/Hall/Plate/Spring) e a duração da cauda
+            (<b>Decay</b>, em segundos) do reverb ficam na coluna <b>MASTER</b>, junto com o novo campo <b>BPM</b>{' '}
+            (usado pelos delays com Sync ligado) — já que o reverb é um retorno compartilhado por todas as 6 camadas,
+            não dá pra ter uma "sala" diferente em cada uma ao mesmo tempo sem pesar demais no processador.
+          </p>
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Teclado MIDI físico, latência e teclado virtual</h3>
           <p>

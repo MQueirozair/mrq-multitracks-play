@@ -18,31 +18,37 @@ export function applyLayerParamsToEngine(index: number, layer: RackLayer) {
   rackEngine.setNoteRange(index, layer.noteRangeStart, layer.noteRangeEnd);
   rackEngine.setOctave(index, layer.octave);
   rackEngine.setMidiChannel(index, layer.midiChannel);
-  rackEngine.setEnvelope(index, { enabled: layer.envelopeEnabled, attackMs: layer.attackMs, releaseMs: layer.releaseMs });
+  rackEngine.setEnvelope(index, { enabled: layer.envelopeEnabled, attackMs: layer.attackMs, decayMs: layer.decayMs, releaseMs: layer.releaseMs });
+  rackEngine.setVoiceMode(index, { playMode: layer.playMode, legato: layer.legato, glideMs: layer.glideMs });
   rackEngine.setFilter(index, { enabled: layer.filterEnabled, cutoffHz: layer.cutoffHz });
-  rackEngine.setEq(index, {
-    enabled: layer.eqEnabled,
-    bassDb: layer.eqBassDb,
-    midDb: layer.eqMidDb,
-    trebleDb: layer.eqTrebleDb,
-    midFreqHz: layer.eqMidFreqHz,
-  });
+  rackEngine.setEqBands(index, layer.eqEnabled, layer.eqBands);
   rackEngine.setDrive(index, { enabled: layer.driveEnabled, type: layer.driveType, driveDb: layer.driveDb, mix: layer.driveMix });
   rackEngine.setLayerReverb(index, { enabled: layer.reverbEnabled, send: layer.reverbSend });
   rackEngine.setCompressor(index, {
     enabled: layer.compressorEnabled,
-    thresholdDb: layer.compressorThresholdDb,
-    ratio: layer.compressorRatio,
-    makeupDb: layer.compressorMakeupDb,
+    amount: layer.compressorAmount,
+    attackMs: layer.compressorAttackMs,
+    releaseMs: layer.compressorReleaseMs,
   });
+  rackEngine.setTremolo(index, {
+    enabled: layer.tremoloEnabled,
+    rateHz: layer.tremoloRateHz,
+    depth: layer.tremoloDepth,
+    stereo: layer.tremoloStereo,
+  });
+  rackEngine.setChorus(index, { enabled: layer.chorusEnabled, mix: layer.chorusMix });
   rackEngine.setDelay(index, {
     enabled: layer.delayEnabled,
     timeMs: layer.delayTimeMs,
     feedback: layer.delayFeedback,
     mix: layer.delayMix,
+    sync: layer.delaySync,
+    division: layer.delayDivision,
+    pingPong: layer.delayPingPong,
   });
   rackEngine.setLayerOctaver(index, { enabled: layer.octaverEnabled, mode: layer.octaverMode, mix: layer.octaverMix });
 }
+
 
 /** Relê o arquivo do disco (via IPC) e carrega de novo o instrumento numa camada, reaplicando os parâmetros do painel "Editar". */
 export async function reloadLayerFromDisk(

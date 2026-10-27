@@ -1,5 +1,15 @@
-import type { RackCharacter, RackDriveType, RackLayerFormat, RackOctaverMode, RackPresetOption } from '../../../shared/types';
-import { RACK_LAYER_COUNT } from '../../../shared/types';
+import type {
+  RackCharacter,
+  RackDelayDivision,
+  RackDriveType,
+  RackEqBandSettings,
+  RackLayerFormat,
+  RackOctaverMode,
+  RackPlayMode,
+  RackPresetOption,
+  RackReverbRoom,
+} from '../../../shared/types';
+import { RACK_DELAY_DIVISION_BEATS, RACK_EQ_BAND_ROLES, RACK_LAYER_COUNT, defaultRackEqBands } from '../../../shared/types';
 import { Sf2LayerVoice } from './Sf2LayerVoice';
 import { Dx7LayerVoice } from './Dx7LayerVoice';
 import { SamplerLayerVoice } from './SamplerLayerVoice';
@@ -36,6 +46,9 @@ function isPitchBendable(voice: AnyLayerVoice): voice is AnyLayerVoice & PitchBe
 /** Faixa de pitch bend aplicada (±2 semitons, o padrão do General MIDI). */
 export const PITCH_BEND_RANGE_SEMITONES = 2;
 
+/** Nível (0..1) em que o envelope de amplitude "assenta" depois do estágio de Decay, enquanto a nota continua segurada (não existe knob de Sustain na UI — ver LayerEnvelopeSettings.decayMs). */
+const ENVELOPE_SUSTAIN_LEVEL = 0.72;
+
 const SF2_EXT = new Set(['sf2', 'sf3']);
 const DX7_EXT = new Set(['syx']);
 const SAMPLE_EXT = new Set(['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3']);
@@ -59,7 +72,17 @@ export function detectRackFormat(fileName: string): RackLayerFormat | null {
 export interface LayerEnvelopeSettings {
   enabled: boolean;
   attackMs: number;
+  /** tempo (ms) pra cair do pico do ataque até o nível interno de sustentação, enquanto a nota continua segurada. */
+  decayMs: number;
   releaseMs: number;
+}
+
+/** Modo de voz + legato/glide da camada — ver RackLayer.playMode/legato/glideMs. */
+export interface LayerVoiceModeSettings {
+  playMode: RackPlayMode;
+  legato: boolean;
+  /** ms */
+  glideMs: number;
 }
 
 export interface LayerFilterSettings {
@@ -90,9 +113,10 @@ export interface LayerReverbSettings {
 
 export interface LayerCompressorSettings {
   enabled: boolean;
-  thresholdDb: number;
-  ratio: number;
-  makeupDb: number;
+  /** 0..1 — controle único que ajusta threshold/ratio/makeup juntos (ver computeCompressorCurve). */
+  amount: number;
+  attackMs: number;
+  releaseMs: number;
 }
 
 export interface LayerDelaySettings {
@@ -100,6 +124,24 @@ export interface LayerDelaySettings {
   timeMs: number;
   feedback: number;
   mix: number;
+  sync: boolean;
+  division: RackDelayDivision;
+  pingPong: boolean;
+}
+
+export interface LayerChorusSettings {
+  enabled: boolean;
+  /** 0..1 */
+  mix: number;
+}
+
+export interface LayerTremoloSettings {
+  enabled: boolean;
+  rateHz: number;
+  /** 0..1 */
+  depth: number;
+  /** 0..1 */
+  stereo: number;
 }
 
 export interface LayerOctaverSettings {
@@ -127,8 +169,19 @@ interface LayerRuntime {
   octaverNotes: Map<number, number[]>;
   octaver: LayerOctaverSettings;
 
+  // modo de voz (poly/mono + legato/glide) — ver noteOn/noteOff/glideLayerTo.
+  voiceMode: LayerVoiceModeSettings;
+  /** pilha de notas seguradas (modo mono): a última é a que está soando agora. */
+  monoHeldStack: { note: number; velocity: number }[];
+  /** nota "real" (já com oitava) usada no noteOn/noteOff da voz mono atual — null = nenhuma voz mono soando. */
+  monoVoiceRealNote: number | null;
+  /** nota (com oitava) que a voz mono DEVERIA soar agora (pode diferir de monoVoiceRealNote durante/depois de um glide). */
+  monoVoiceTargetNote: number | null;
+  /** timer do glide em andamento, pra poder cancelar se uma nota nova chegar no meio do deslizamento. */
+  glideTimer: ReturnType<typeof setInterval> | null;
+
   // cadeia de áudio (ver connectChain): voice -> envelopeGain -> cutoffFilter ->
-  // eqLow -> eqMid -> eqHigh -> drivePreGain -> (dry + wet via shaper) -> driveSum
+  // eqBandNodes[0..5] (6 bandas paramétricas) -> drivePreGain -> (dry + wet via shaper) -> driveSum
   // -> volumeGain -> panNode -> characterFilter -> masterGain/reverbBus
   envelopeGain: GainNode;
   panNode: StereoPannerNode;
@@ -140,10 +193,12 @@ interface LayerRuntime {
   envelope: LayerEnvelopeSettings;
   cutoffFilter: BiquadFilterNode;
   filter: LayerFilterSettings;
-  eqLow: BiquadFilterNode;
-  eqMid: BiquadFilterNode;
-  eqHigh: BiquadFilterNode;
-  eq: LayerEqSettings;
+  /** as 6 bandas fixas do equalizador paramétrico, na ordem RACK_EQ_BAND_ROLES — ver setEqBands(). */
+  eqBandNodes: BiquadFilterNode[];
+  eqEnabled: boolean;
+  eqBands: RackEqBandSettings[];
+  /** nó de análise de espectro PÓS-EQ, usado pelo gráfico interativo (RackEqGraph) — não afeta o áudio. */
+  eqAnalyser: AnalyserNode;
   drivePreGain: GainNode;
   driveShaper: WaveShaperNode;
   driveDry: GainNode;
@@ -153,13 +208,38 @@ interface LayerRuntime {
   characterFilter: BiquadFilterNode;
 
   // cadeia pós-caráter (ver connectChain): characterFilter -> compressor ->
-  // makeupGain -> { delayDry -> delayOutMix, delayNode -> delayWetGain -> delayOutMix }
+  // makeupGain -> tremolo -> chorus -> { delayDry -> delayOutMix, delay(+feedback/ping-pong) -> delayWetGain -> delayOutMix }
   // -> { masterGain, reverbSendGain -> reverbBus (compartilhado) }
   compressorNode: DynamicsCompressorNode;
   compressorMakeupGain: GainNode;
   compressor: LayerCompressorSettings;
+
+  // tremolo (LFO de amplitude, + um pouco de auto-pan quando "stereo" > 0) — ver setTremolo()
+  tremoloGain: GainNode;
+  tremoloLfo: OscillatorNode;
+  tremoloDepthGain: GainNode;
+  /** soma um pouco do mesmo LFO no pan ESTÁTICO da camada (panNode.pan), pra dar a sensação de "stereo" do tremolo. */
+  tremoloPanDepth: GainNode;
+  tremolo: LayerTremoloSettings;
+
+  // chorus (linha de delay curta modulada por LFO, misturada com o sinal seco) — ver setChorus()
+  chorusDelay: DelayNode;
+  chorusLfo: OscillatorNode;
+  chorusLfoDepth: GainNode;
+  chorusDry: GainNode;
+  chorusWet: GainNode;
+  chorusOutMix: GainNode;
+  chorus: LayerChorusSettings;
+
+  // delay (eco), com rota alternativa de "ping-pong" estéreo — ver setDelay()
   delayNode: DelayNode;
+  delayNodeR: DelayNode;
+  delayPannerL: StereoPannerNode;
+  delayPannerR: StereoPannerNode;
+  /** realimentação L->L (modo normal) ou L->R (modo ping-pong). */
   delayFeedbackGain: GainNode;
+  /** realimentação R->L, usada só em modo ping-pong (ver reconnectDelayRouting). */
+  delayFeedbackGainR: GainNode;
   delayDryGain: GainNode;
   delayWetGain: GainNode;
   delayOutMix: GainNode;
@@ -194,14 +274,47 @@ function applyCharacter(filter: BiquadFilterNode, character: RackCharacter) {
   }
 }
 
-function createReverbImpulse(ctx: AudioContext, durationSec = 2.6, decay = 2.4): AudioBuffer {
+/**
+ * Reverb algorítmica (ruído filtrado pelo tempo, não uma biblioteca de IRs
+ * gravadas) — cada "sala" varia a duração e a curva de queda pra dar um
+ * timbre de retorno diferente, igual ao dropdown "Room" do print de
+ * referência: Room (mais seca/perto), Hall (cauda longa e suave), Plate
+ * (densa e brilhante) e Spring (com uma leve ondulação periódica, lembrando
+ * o "boing" característico de springs de amplificador de guitarra).
+ */
+function createReverbImpulse(ctx: AudioContext, room: RackReverbRoom, decaySec: number): AudioBuffer {
   const rate = ctx.sampleRate;
-  const length = Math.floor(rate * durationSec);
+  const base = Math.max(0.2, Math.min(8, decaySec));
+  let durationSec = base;
+  let decayExponent = 2.4;
+  let flutterHz = 0;
+  switch (room) {
+    case 'room':
+      durationSec = base;
+      decayExponent = 3.2;
+      break;
+    case 'hall':
+      durationSec = base * 1.6;
+      decayExponent = 1.6;
+      break;
+    case 'plate':
+      durationSec = base * 1.15;
+      decayExponent = 2.0;
+      break;
+    case 'spring':
+      durationSec = base * 0.9;
+      decayExponent = 2.6;
+      flutterHz = 7;
+      break;
+  }
+  const length = Math.max(1, Math.floor(rate * durationSec));
   const impulse = ctx.createBuffer(2, length, rate);
   for (let ch = 0; ch < 2; ch++) {
     const data = impulse.getChannelData(ch);
     for (let i = 0; i < length; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+      let env = Math.pow(1 - i / length, decayExponent);
+      if (flutterHz > 0) env *= 1 + 0.15 * Math.sin((2 * Math.PI * flutterHz * i) / rate);
+      data[i] = (Math.random() * 2 - 1) * env;
     }
   }
   return impulse;
@@ -268,7 +381,11 @@ export class RackEngine {
   private convolver: ConvolverNode | null = null;
   private layers: LayerRuntime[] = [];
   private reverbAmount = 0;
+  private reverbRoom: RackReverbRoom = 'room';
+  private reverbDecaySec = 1.8;
   private masterVolume = 0.8;
+  /** BPM de referência do rack, usado pelos delays sincronizados por camada (ver setDelay/RackLayer.delaySync). */
+  private bpm = 120;
   /** tamanho de buffer "desejado", em amostras (0 = automático) — ver setBufferFrames() */
   private bufferFrames = 0;
 
@@ -307,7 +424,7 @@ export class RackEngine {
     this.masterGain = masterGain;
 
     const convolver = ctx.createConvolver();
-    convolver.buffer = createReverbImpulse(ctx);
+    convolver.buffer = createReverbImpulse(ctx, this.reverbRoom, this.reverbDecaySec);
     const reverbBus = ctx.createGain();
     reverbBus.gain.value = 1;
     const reverbWetGain = ctx.createGain();
@@ -388,19 +505,40 @@ export class RackEngine {
     cutoffFilter.frequency.value = 20000;
     cutoffFilter.Q.value = 0.707;
 
-    const eqLow = ctx.createBiquadFilter();
-    eqLow.type = 'lowshelf';
-    eqLow.frequency.value = 200;
-    eqLow.gain.value = 0;
-    const eqMid = ctx.createBiquadFilter();
-    eqMid.type = 'peaking';
-    eqMid.frequency.value = 1000;
-    eqMid.Q.value = 0.9;
-    eqMid.gain.value = 0;
-    const eqHigh = ctx.createBiquadFilter();
-    eqHigh.type = 'highshelf';
-    eqHigh.frequency.value = 4000;
-    eqHigh.gain.value = 0;
+    // Equalizador paramétrico de 6 bandas fixas (ver RACK_EQ_BAND_ROLES e
+    // setEqBands) — substitui o antigo EQ de 3 bandas. As duas primeiras
+    // ("lowcut"/"highcut") nascem como passa-tudo (desligadas por padrão,
+    // viram highpass/lowpass de verdade só quando a banda está ligada).
+    const defaultBands = defaultRackEqBands();
+    const eqBandNodes = RACK_EQ_BAND_ROLES.map((role, i) => {
+      const node = ctx.createBiquadFilter();
+      const band = defaultBands[i];
+      node.frequency.value = band.freqHz;
+      node.Q.value = band.q;
+      node.gain.value = 0; // banda liga/desliga é controlada por setEqBands(), não aqui
+      switch (role) {
+        case 'lowcut':
+          node.type = 'allpass';
+          break;
+        case 'lowshelf':
+          node.type = 'lowshelf';
+          break;
+        case 'bell1':
+        case 'bell2':
+          node.type = 'peaking';
+          break;
+        case 'highshelf':
+          node.type = 'highshelf';
+          break;
+        case 'highcut':
+          node.type = 'allpass';
+          break;
+      }
+      return node;
+    });
+    const eqAnalyser = ctx.createAnalyser();
+    eqAnalyser.fftSize = 2048;
+    eqAnalyser.smoothingTimeConstant = 0.75;
 
     const drivePreGain = ctx.createGain();
     drivePreGain.gain.value = 1;
@@ -423,20 +561,64 @@ export class RackEngine {
     // 1:1 não comprime nada), em vez de bypassar o nó, pra não precisar
     // reconectar o grafo toda vez que o usuário liga/desliga.
     const compressorNode = ctx.createDynamicsCompressor();
-    compressorNode.threshold.value = -24;
-    compressorNode.knee.value = 24;
+    compressorNode.threshold.value = 0;
+    compressorNode.knee.value = 18;
     compressorNode.ratio.value = 1;
-    compressorNode.attack.value = 0.003;
-    compressorNode.release.value = 0.25;
+    compressorNode.attack.value = 0.008;
+    compressorNode.release.value = 0.14;
     const compressorMakeupGain = ctx.createGain();
     compressorMakeupGain.gain.value = 1;
 
+    // Tremolo por camada (LFO de amplitude + um pouco de auto-pan) — ver setTremolo().
+    const tremoloLfo = ctx.createOscillator();
+    tremoloLfo.type = 'sine';
+    tremoloLfo.frequency.value = 4;
+    const tremoloDepthGain = ctx.createGain();
+    tremoloDepthGain.gain.value = 0;
+    const tremoloGain = ctx.createGain();
+    tremoloGain.gain.value = 1;
+    tremoloLfo.connect(tremoloDepthGain);
+    tremoloDepthGain.connect(tremoloGain.gain);
+    const tremoloPanDepth = ctx.createGain();
+    tremoloPanDepth.gain.value = 0;
+    tremoloLfo.connect(tremoloPanDepth);
+    tremoloPanDepth.connect(panNode.pan);
+    tremoloLfo.start();
+
+    // Chorus por camada (linha de delay curta modulada por um LFO lento, somada ao seco) — ver setChorus().
+    const chorusDelay = ctx.createDelay(0.1);
+    chorusDelay.delayTime.value = 0.02;
+    const chorusLfo = ctx.createOscillator();
+    chorusLfo.type = 'sine';
+    chorusLfo.frequency.value = 0.9;
+    const chorusLfoDepth = ctx.createGain();
+    chorusLfoDepth.gain.value = 0.006;
+    chorusLfo.connect(chorusLfoDepth);
+    chorusLfoDepth.connect(chorusDelay.delayTime);
+    chorusLfo.start();
+    const chorusDry = ctx.createGain();
+    chorusDry.gain.value = 1;
+    const chorusWet = ctx.createGain();
+    chorusWet.gain.value = 0;
+    const chorusOutMix = ctx.createGain();
+    chorusOutMix.gain.value = 1;
+
     // Delay (eco) por camada — via barramento seco/molhado em paralelo, pra
-    // poder ter mix 0 (totalmente limpo) sem desconectar nada.
-    const delayNode = ctx.createDelay(2);
+    // poder ter mix 0 (totalmente limpo) sem desconectar nada. delayNodeR +
+    // os dois panners só entram em uso quando "Ping-pong" está ligado (ver
+    // setDelay/reconnectDelayRouting) — autofeedback simples (mono) por padrão.
+    const delayNode = ctx.createDelay(4);
     delayNode.delayTime.value = 0.3;
+    const delayNodeR = ctx.createDelay(4);
+    delayNodeR.delayTime.value = 0.3;
+    const delayPannerL = ctx.createStereoPanner();
+    delayPannerL.pan.value = -1;
+    const delayPannerR = ctx.createStereoPanner();
+    delayPannerR.pan.value = 1;
     const delayFeedbackGain = ctx.createGain();
     delayFeedbackGain.gain.value = 0;
+    const delayFeedbackGainR = ctx.createGain();
+    delayFeedbackGainR.gain.value = 0;
     const delayDryGain = ctx.createGain();
     delayDryGain.gain.value = 1;
     const delayWetGain = ctx.createGain();
@@ -451,15 +633,19 @@ export class RackEngine {
     reverbSendGain.gain.value = 1;
 
     // voice.output (ligado depois, em loadLayer) -> envelopeGain -> cutoffFilter
-    // -> eqLow -> eqMid -> eqHigh -> drivePreGain -> { driveDry, driveShaper->driveWet }
+    // -> eqBandNodes[0..5] (6 bandas) -> eqAnalyser (tap) -> drivePreGain -> { driveDry, driveShaper->driveWet }
     // -> volumeGain -> panNode -> characterFilter -> compressorNode -> compressorMakeupGain
-    // -> { delayDryGain, delayNode(+feedback)->delayWetGain } -> delayOutMix
+    // -> tremoloGain -> { chorusDry, chorusDelay->chorusWet } -> chorusOutMix
+    // -> { delayDryGain, delayNode(+feedback/ping-pong)->delayWetGain } -> delayOutMix
     // -> { masterGain, reverbSendGain -> reverbBus (compartilhado) }
     envelopeGain.connect(cutoffFilter);
-    cutoffFilter.connect(eqLow);
-    eqLow.connect(eqMid);
-    eqMid.connect(eqHigh);
-    eqHigh.connect(drivePreGain);
+    let eqChainTail: AudioNode = cutoffFilter;
+    for (const band of eqBandNodes) {
+      eqChainTail.connect(band);
+      eqChainTail = band;
+    }
+    eqChainTail.connect(eqAnalyser);
+    eqChainTail.connect(drivePreGain);
     drivePreGain.connect(driveDry);
     drivePreGain.connect(driveShaper);
     driveShaper.connect(driveWet);
@@ -468,19 +654,27 @@ export class RackEngine {
     volumeGain.connect(panNode);
     panNode.connect(characterFilter);
 
-    // Rede de segurança: a cadeia nova (compressor/delay/envio de reverb por
-    // camada) é só "tempero" por cima do som básico — se por QUALQUER motivo
-    // (plataforma/driver específico etc.) a montagem dela falhar, a camada
-    // NUNCA pode ficar muda por causa disso. Em caso de erro, a ligação cai
-    // pro grafo simples de antes desses efeitos existirem (characterFilter
-    // direto pro master/reverb compartilhado), e os nós novos ficam criados
-    // mas sem efeito algum (os setters continuam funcionando sem travar).
+    // Rede de segurança: a cadeia nova (compressor/tremolo/chorus/delay/envio
+    // de reverb por camada) é só "tempero" por cima do som básico — se por
+    // QUALQUER motivo (plataforma/driver específico etc.) a montagem dela
+    // falhar, a camada NUNCA pode ficar muda por causa disso. Em caso de erro,
+    // a ligação cai pro grafo simples de antes desses efeitos existirem
+    // (characterFilter direto pro master/reverb compartilhado), e os nós
+    // novos ficam criados mas sem efeito algum (os setters continuam
+    // funcionando sem travar).
     let postCharacterOutput: AudioNode = characterFilter;
     try {
       characterFilter.connect(compressorNode);
       compressorNode.connect(compressorMakeupGain);
-      compressorMakeupGain.connect(delayDryGain);
-      compressorMakeupGain.connect(delayNode);
+      compressorMakeupGain.connect(tremoloGain);
+      tremoloGain.connect(chorusDry);
+      tremoloGain.connect(chorusDelay);
+      chorusDelay.connect(chorusWet);
+      chorusDry.connect(chorusOutMix);
+      chorusWet.connect(chorusOutMix);
+      chorusOutMix.connect(delayDryGain);
+      chorusOutMix.connect(delayNode);
+      // auto-feedback (mono) — rota padrão; vira ping-pong via setDelay() reconectando delayNode/delayNodeR.
       delayNode.connect(delayFeedbackGain);
       delayFeedbackGain.connect(delayNode);
       delayNode.connect(delayWetGain);
@@ -522,14 +716,19 @@ export class RackEngine {
       activeNotes: new Map(),
       octaverNotes: new Map(),
       octaver: { enabled: false, mode: 'down', mix: 0.7 },
+      voiceMode: { playMode: 'poly', legato: false, glideMs: 80 },
+      monoHeldStack: [],
+      monoVoiceRealNote: null,
+      monoVoiceTargetNote: null,
+      glideTimer: null,
       envelopeGain,
-      envelope: { enabled: false, attackMs: 5, releaseMs: 350 },
+      envelope: { enabled: false, attackMs: 5, decayMs: 0, releaseMs: 350 },
       cutoffFilter,
       filter: { enabled: false, cutoffHz: 20000 },
-      eqLow,
-      eqMid,
-      eqHigh,
-      eq: { enabled: false, bassDb: 0, midDb: 0, trebleDb: 0, midFreqHz: 1000 },
+      eqBandNodes,
+      eqEnabled: false,
+      eqBands: defaultRackEqBands(),
+      eqAnalyser,
       drivePreGain,
       driveShaper,
       driveDry,
@@ -540,13 +739,29 @@ export class RackEngine {
       characterFilter,
       compressorNode,
       compressorMakeupGain,
-      compressor: { enabled: false, thresholdDb: -24, ratio: 4, makeupDb: 0 },
+      compressor: { enabled: false, amount: 0.4, attackMs: 8, releaseMs: 140 },
+      tremoloGain,
+      tremoloLfo,
+      tremoloDepthGain,
+      tremoloPanDepth,
+      tremolo: { enabled: false, rateHz: 4, depth: 0.5, stereo: 0 },
+      chorusDelay,
+      chorusLfo,
+      chorusLfoDepth,
+      chorusDry,
+      chorusWet,
+      chorusOutMix,
+      chorus: { enabled: false, mix: 0.25 },
       delayNode,
+      delayNodeR,
+      delayPannerL,
+      delayPannerR,
       delayFeedbackGain,
+      delayFeedbackGainR,
       delayDryGain,
       delayWetGain,
       delayOutMix,
-      delay: { enabled: false, timeMs: 300, feedback: 0.3, mix: 0.35 },
+      delay: { enabled: false, timeMs: 300, feedback: 0.3, mix: 0.35, sync: false, division: '1/8', pingPong: false },
       reverbSendGain,
       reverb: { enabled: true, send: 1 },
       pitchBendSemitones: 0,
@@ -689,6 +904,70 @@ export class RackEngine {
     }
   }
 
+  // --- modo de voz (poly/mono) + legato/glide ---
+
+  setVoiceMode(index: number, settings: LayerVoiceModeSettings) {
+    const layer = this.layers[index];
+    if (!layer) return;
+    const wasMono = layer.voiceMode.playMode === 'mono';
+    layer.voiceMode = settings;
+    // Trocar de 'mono' pra 'poly' com notas seguradas: solta a pilha mono
+    // (senão a nota ficaria presa, já que o modo poly não a controla mais).
+    if (wasMono && settings.playMode === 'poly' && layer.monoHeldStack.length > 0) {
+      if (layer.glideTimer !== null) {
+        clearInterval(layer.glideTimer);
+        layer.glideTimer = null;
+      }
+      if (layer.monoVoiceRealNote !== null) layer.voice?.noteOff(layer.monoVoiceRealNote);
+      layer.monoHeldStack = [];
+      layer.monoVoiceRealNote = null;
+      layer.monoVoiceTargetNote = null;
+    }
+  }
+
+  /**
+   * Desliza a afinação da voz mono JÁ SOANDO (sem reatacar o envelope) até
+   * soar como `targetNote` (MIDI, já com oitava aplicada) — usado pelo
+   * legato em modo mono. A voz continua "sendo", pro motor, a nota
+   * `layer.monoVoiceRealNote` (é essa que recebe o noteOff mais tarde); só a
+   * altura percebida muda, via pitch bend contínuo do backend da voz.
+   * Backends sem bend em tempo real (ver isPitchBendable) ou com faixa de
+   * bend limitada (ex.: SF2, limitado a ±2 semitons) saltam pra nota nova
+   * sem deslizar — limitação documentada, igual a outras já existentes
+   * nesta engine (ver PitchBendableVoice).
+   */
+  private glideLayerTo(layer: LayerRuntime, targetNote: number) {
+    if (layer.glideTimer !== null) {
+      clearInterval(layer.glideTimer);
+      layer.glideTimer = null;
+    }
+    const realNote = layer.monoVoiceRealNote;
+    const voice = layer.voice;
+    if (realNote === null || !voice || !isPitchBendable(voice)) {
+      layer.monoVoiceTargetNote = targetNote;
+      return;
+    }
+    const fromSemis = (layer.monoVoiceTargetNote ?? realNote) - realNote + layer.pitchBendSemitones;
+    const toSemis = targetNote - realNote + layer.pitchBendSemitones;
+    layer.monoVoiceTargetNote = targetNote;
+    const glideMs = Math.max(0, layer.voiceMode.glideMs);
+    if (glideMs < 8 || fromSemis === toSemis) {
+      voice.setPitchBend(toSemis);
+      return;
+    }
+    const steps = Math.max(1, Math.round(glideMs / 16));
+    let step = 0;
+    layer.glideTimer = setInterval(() => {
+      step += 1;
+      const t = Math.min(1, step / steps);
+      voice.setPitchBend(fromSemis + (toSemis - fromSemis) * t);
+      if (t >= 1 && layer.glideTimer !== null) {
+        clearInterval(layer.glideTimer);
+        layer.glideTimer = null;
+      }
+    }, 16);
+  }
+
   // --- filtro (cutoff estático) ---
 
   setFilter(index: number, settings: LayerFilterSettings) {
@@ -699,18 +978,71 @@ export class RackEngine {
     layer.cutoffFilter.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.01);
   }
 
-  // --- equalizador de 3 bandas ---
+  // --- equalizador paramétrico de 6 bandas ---
 
-  setEq(index: number, settings: LayerEqSettings) {
+  /** `enabled` liga/desliga o EQ inteiro (chave geral); `bands` são as 6 bandas, na ordem RACK_EQ_BAND_ROLES. */
+  setEqBands(index: number, enabled: boolean, bands: RackEqBandSettings[]) {
     const layer = this.layers[index];
     if (!layer || !this.ctx) return;
-    layer.eq = settings;
+    layer.eqEnabled = enabled;
+    layer.eqBands = bands;
     const now = this.ctx.currentTime;
-    const on = settings.enabled;
-    layer.eqLow.gain.setTargetAtTime(on ? settings.bassDb : 0, now, 0.01);
-    layer.eqMid.gain.setTargetAtTime(on ? settings.midDb : 0, now, 0.01);
-    layer.eqMid.frequency.setTargetAtTime(settings.midFreqHz, now, 0.01);
-    layer.eqHigh.gain.setTargetAtTime(on ? settings.trebleDb : 0, now, 0.01);
+    RACK_EQ_BAND_ROLES.forEach((role, i) => {
+      const node = layer.eqBandNodes[i];
+      const band = bands[i];
+      if (!node || !band) return;
+      const bandOn = enabled && band.enabled;
+      node.frequency.setTargetAtTime(Math.max(20, Math.min(20000, band.freqHz)), now, 0.01);
+      node.Q.setTargetAtTime(Math.max(0.1, band.q), now, 0.01);
+      switch (role) {
+        case 'lowcut':
+          node.type = bandOn ? 'highpass' : 'allpass';
+          break;
+        case 'highcut':
+          node.type = bandOn ? 'lowpass' : 'allpass';
+          break;
+        case 'lowshelf':
+        case 'bell1':
+        case 'bell2':
+        case 'highshelf':
+          node.gain.setTargetAtTime(bandOn ? band.gainDb : 0, now, 0.01);
+          break;
+      }
+    });
+  }
+
+  /**
+   * Resposta em frequência (dB) combinada das 6 bandas, pra desenhar a curva
+   * do gráfico interativo (RackEqGraph) — usa o BiquadFilterNode.getFrequencyResponse
+   * nativo do Web Audio em cada banda (a mesma matemática que o navegador usa
+   * de verdade pra processar o áudio, não uma aproximação visual).
+   */
+  getEqFrequencyResponseDb(index: number, freqsHz: Float32Array<ArrayBuffer>): Float32Array | null {
+    const layer = this.layers[index];
+    if (!layer) return null;
+    const totalDb = new Float32Array(freqsHz.length);
+    const magOut = new Float32Array(freqsHz.length);
+    const phaseOut = new Float32Array(freqsHz.length);
+    for (const node of layer.eqBandNodes) {
+      node.getFrequencyResponse(freqsHz, magOut, phaseOut);
+      for (let i = 0; i < totalDb.length; i++) {
+        totalDb[i] += 20 * Math.log10(Math.max(1e-6, magOut[i]));
+      }
+    }
+    return totalDb;
+  }
+
+  /** Nível de espectro (dB, FFT) logo depois do EQ desta camada — usado pelo overlay "Spectrum: Post" do gráfico. */
+  getEqSpectrumDb(index: number): Float32Array | null {
+    const layer = this.layers[index];
+    if (!layer) return null;
+    const buf = new Float32Array(layer.eqAnalyser.frequencyBinCount);
+    layer.eqAnalyser.getFloatFrequencyData(buf);
+    return buf;
+  }
+
+  getEqSampleRate(): number {
+    return this.ctx?.sampleRate ?? 48000;
   }
 
   // --- drive / saturação ---
@@ -740,19 +1072,62 @@ export class RackEngine {
 
   // --- compressor ---
 
+  /**
+   * `amount` (0..1) é o único knob "Amount" da UI atual: por baixo, continua
+   * pilotando o DynamicsCompressorNode nativo (threshold/ratio/makeup), só
+   * que os três andam juntos a partir de um valor só, em vez do usuário
+   * precisar entender/ajustar cada um — quanto mais alto, mais o threshold
+   * desce (mais sinal é pego) e mais a razão sobe (mais compressão em cima
+   * do que passa do threshold), com ganho de compensação automático pra
+   * compensar a perda de volume média.
+   */
   setCompressor(index: number, settings: LayerCompressorSettings) {
     const layer = this.layers[index];
     if (!layer || !this.ctx) return;
     layer.compressor = settings;
     const now = this.ctx.currentTime;
+    const amount = Math.max(0, Math.min(1, settings.amount));
     // Desligado = transparente: threshold 0dB + ratio 1:1 não comprime nada,
     // sem precisar desconectar o nó do grafo.
-    const threshold = settings.enabled ? settings.thresholdDb : 0;
-    const ratio = settings.enabled ? settings.ratio : 1;
-    const makeup = settings.enabled ? settings.makeupDb : 0;
+    const threshold = settings.enabled ? -amount * 42 : 0;
+    const ratio = settings.enabled ? 1 + amount * 14 : 1;
+    const makeup = settings.enabled ? amount * 10 : 0;
     layer.compressorNode.threshold.setTargetAtTime(threshold, now, 0.01);
     layer.compressorNode.ratio.setTargetAtTime(ratio, now, 0.01);
+    layer.compressorNode.attack.setTargetAtTime(Math.max(0.0005, settings.attackMs / 1000), now, 0.005);
+    layer.compressorNode.release.setTargetAtTime(Math.max(0.01, settings.releaseMs / 1000), now, 0.005);
     layer.compressorMakeupGain.gain.setTargetAtTime(Math.pow(10, makeup / 20), now, 0.01);
+  }
+
+  /** Redução de ganho (dB, 0 ou negativo) que o compressor desta camada está aplicando agora — pro medidor "GR" da UI. */
+  getCompressorReductionDb(index: number): number {
+    return this.layers[index]?.compressorNode.reduction ?? 0;
+  }
+
+  // --- tremolo (modulação de amplitude) ---
+
+  setTremolo(index: number, settings: LayerTremoloSettings) {
+    const layer = this.layers[index];
+    if (!layer || !this.ctx) return;
+    layer.tremolo = settings;
+    const now = this.ctx.currentTime;
+    const depth = settings.enabled ? Math.max(0, Math.min(1, settings.depth)) : 0;
+    layer.tremoloLfo.frequency.setTargetAtTime(Math.max(0.05, settings.rateHz), now, 0.01);
+    layer.tremoloGain.gain.setTargetAtTime(1 - depth / 2, now, 0.01);
+    layer.tremoloDepthGain.gain.setTargetAtTime(depth / 2, now, 0.01);
+    const stereo = settings.enabled ? Math.max(0, Math.min(1, settings.stereo)) : 0;
+    layer.tremoloPanDepth.gain.setTargetAtTime(stereo * depth * 0.8, now, 0.01);
+  }
+
+  // --- chorus ---
+
+  setChorus(index: number, settings: LayerChorusSettings) {
+    const layer = this.layers[index];
+    if (!layer || !this.ctx) return;
+    layer.chorus = settings;
+    const now = this.ctx.currentTime;
+    const wet = settings.enabled ? Math.max(0, Math.min(1, settings.mix)) : 0;
+    layer.chorusWet.gain.setTargetAtTime(wet, now, 0.01);
   }
 
   // --- delay (eco) ---
@@ -760,14 +1135,55 @@ export class RackEngine {
   setDelay(index: number, settings: LayerDelaySettings) {
     const layer = this.layers[index];
     if (!layer || !this.ctx) return;
+    const pingPongChanged = layer.delay.pingPong !== settings.pingPong;
     layer.delay = settings;
     const now = this.ctx.currentTime;
-    layer.delayNode.delayTime.setTargetAtTime(Math.max(0, settings.timeMs) / 1000, now, 0.01);
+    const timeSec = settings.sync
+      ? Math.min(3.8, (RACK_DELAY_DIVISION_BEATS[settings.division] * 60) / Math.max(20, this.bpm))
+      : Math.max(0, settings.timeMs) / 1000;
+    layer.delayNode.delayTime.setTargetAtTime(timeSec, now, 0.01);
+    layer.delayNodeR.delayTime.setTargetAtTime(timeSec, now, 0.01);
     const feedback = settings.enabled ? Math.min(0.9, Math.max(0, settings.feedback)) : 0;
     layer.delayFeedbackGain.gain.setTargetAtTime(feedback, now, 0.01);
+    layer.delayFeedbackGainR.gain.setTargetAtTime(feedback, now, 0.01);
     const wet = settings.enabled ? settings.mix : 0;
     layer.delayWetGain.gain.setTargetAtTime(wet, now, 0.01);
     layer.delayDryGain.gain.setTargetAtTime(1, now, 0.01); // dry sempre 100% — o delay só soma eco por cima, nunca "rouba" o sinal limpo
+    if (pingPongChanged) this.reconnectDelayRouting(layer, settings.pingPong);
+  }
+
+  /**
+   * Alterna entre a rota normal (um eco só, realimentando ele mesmo) e a rota
+   * "ping-pong" (eco alterna entre os canais esquerdo/direito, cada lado
+   * realimentando o lado oposto) — refaz só as conexões do delay, via
+   * disconnect/connect (seguro em tempo real no Web Audio), sem recriar nós.
+   */
+  private reconnectDelayRouting(layer: LayerRuntime, pingPong: boolean) {
+    try {
+      layer.delayNode.disconnect();
+      layer.delayNodeR.disconnect();
+      layer.delayFeedbackGain.disconnect();
+      layer.delayFeedbackGainR.disconnect();
+    } catch {
+      // ignora — pode já estar parcialmente desconectado
+    }
+    if (pingPong) {
+      // entrada -> delayNode(L) -> pannerL -> wet ; delayNode -> feedbackGain -> delayNodeR(R) -> pannerR -> wet
+      // ; delayNodeR -> feedbackGainR -> delayNode (fecha o laço, alternando de lado a cada repetição)
+      layer.delayNode.connect(layer.delayPannerL);
+      layer.delayPannerL.connect(layer.delayWetGain);
+      layer.delayNode.connect(layer.delayFeedbackGain);
+      layer.delayFeedbackGain.connect(layer.delayNodeR);
+      layer.delayNodeR.connect(layer.delayPannerR);
+      layer.delayPannerR.connect(layer.delayWetGain);
+      layer.delayNodeR.connect(layer.delayFeedbackGainR);
+      layer.delayFeedbackGainR.connect(layer.delayNode);
+    } else {
+      // comportamento original: um eco só, realimentando ele mesmo, sem pan extra.
+      layer.delayNode.connect(layer.delayFeedbackGain);
+      layer.delayFeedbackGain.connect(layer.delayNode);
+      layer.delayNode.connect(layer.delayWetGain);
+    }
   }
 
   setLayerVolume(index: number, volume: number) {
@@ -810,6 +1226,30 @@ export class RackEngine {
     if (this.reverbWetGain && this.ctx) this.reverbWetGain.gain.setTargetAtTime(amount, this.ctx.currentTime, 0.02);
   }
 
+  /** Troca o algoritmo/"sala" do reverb compartilhado (ver createReverbImpulse) — regenera a resposta impulsiva na hora. */
+  setReverbRoom(room: RackReverbRoom) {
+    this.reverbRoom = room;
+    this.regenerateReverbImpulse();
+  }
+
+  /** Duração da cauda do reverb compartilhado, em segundos (0.2..8). */
+  setReverbDecay(decaySec: number) {
+    this.reverbDecaySec = Math.max(0.2, Math.min(8, decaySec));
+    this.regenerateReverbImpulse();
+  }
+
+  private regenerateReverbImpulse() {
+    if (this.convolver && this.ctx) this.convolver.buffer = createReverbImpulse(this.ctx, this.reverbRoom, this.reverbDecaySec);
+  }
+
+  /** BPM de referência do rack — recalcula na hora o tempo de todo delay por camada que estiver com "Sync" ligado. */
+  setBpm(bpm: number) {
+    this.bpm = Math.max(20, Math.min(300, bpm));
+    this.layers.forEach((layer, i) => {
+      if (layer.delay.sync) this.setDelay(i, layer.delay);
+    });
+  }
+
   /**
    * Oitavador DESTA camada: quando ligado, toda nota tocada nela (que já
    * atenda a faixa de nota/canal da própria camada) também dispara uma
@@ -832,15 +1272,58 @@ export class RackEngine {
    * de cada camada. `channel` é 1-16 (canal MIDI "humano"), ou undefined
    * quando a origem não distingue canal (ex.: teclado virtual).
    */
+  /** Ataque + (se decayMs > 0) queda até o nível interno de sustentação — ver LayerEnvelopeSettings.decayMs. */
+  private triggerEnvelopeAttackDecay(layer: LayerRuntime) {
+    if (!layer.envelope.enabled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    const attackSec = Math.max(0.001, layer.envelope.attackMs / 1000);
+    const decaySec = Math.max(0, layer.envelope.decayMs / 1000);
+    layer.envelopeGain.gain.cancelScheduledValues(now);
+    layer.envelopeGain.gain.setValueAtTime(layer.envelopeGain.gain.value, now);
+    layer.envelopeGain.gain.linearRampToValueAtTime(1, now + attackSec);
+    if (decaySec > 0.001) {
+      layer.envelopeGain.gain.linearRampToValueAtTime(ENVELOPE_SUSTAIN_LEVEL, now + attackSec + decaySec);
+    }
+  }
+
+  private triggerEnvelopeRelease(layer: LayerRuntime) {
+    if (!layer.envelope.enabled || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    layer.envelopeGain.gain.cancelScheduledValues(now);
+    layer.envelopeGain.gain.setValueAtTime(layer.envelopeGain.gain.value, now);
+    layer.envelopeGain.gain.linearRampToValueAtTime(0, now + Math.max(0.001, layer.envelope.releaseMs / 1000));
+  }
+
   noteOn(note: number, velocity: number, channel?: number) {
     this.ensureStarted();
-    const ctx = this.ctx!;
     for (const layer of this.layers) {
       if (!layer.voice) continue;
       if (note < layer.noteRangeStart || note > layer.noteRangeEnd) continue;
       if (layer.midiChannel !== 0 && channel !== undefined && layer.midiChannel !== channel) continue;
       const shifted = Math.max(0, Math.min(127, note + layer.octave * 12));
       const wasEmpty = layer.activeNotes.size === 0;
+
+      // Modo mono: só uma voz soa por vez nesta camada — nota nova corta (ou,
+      // com legato ligado, desliza pra) a nota anterior, em vez de abrir uma
+      // voz independente (ver glideLayerTo). O oitavador por camada não se
+      // aplica em modo mono por ora (limitação documentada — a pilha de notas
+      // seguradas só rastreia a voz principal).
+      if (layer.voiceMode.playMode === 'mono') {
+        layer.monoHeldStack.push({ note, velocity });
+        layer.activeNotes.set(note, shifted);
+        if (!wasEmpty && layer.voiceMode.legato && layer.monoVoiceRealNote !== null) {
+          this.glideLayerTo(layer, shifted);
+        } else {
+          if (!wasEmpty && layer.monoVoiceRealNote !== null) layer.voice.noteOff(layer.monoVoiceRealNote);
+          layer.voice.noteOn(shifted, velocity);
+          layer.monoVoiceRealNote = shifted;
+          layer.monoVoiceTargetNote = shifted;
+          this.triggerEnvelopeAttackDecay(layer);
+        }
+        continue;
+      }
+
+      // --- modo poly (comportamento original) ---
       layer.activeNotes.set(note, shifted);
       layer.voice.noteOn(shifted, velocity);
 
@@ -868,21 +1351,50 @@ export class RackEngine {
         if (extras.length) layer.octaverNotes.set(note, extras);
       }
 
-      if (layer.envelope.enabled && wasEmpty) {
-        layer.envelopeGain.gain.cancelScheduledValues(ctx.currentTime);
-        layer.envelopeGain.gain.setValueAtTime(layer.envelopeGain.gain.value, ctx.currentTime);
-        layer.envelopeGain.gain.linearRampToValueAtTime(1, ctx.currentTime + Math.max(0.001, layer.envelope.attackMs / 1000));
-      }
+      if (wasEmpty) this.triggerEnvelopeAttackDecay(layer);
     }
   }
 
   noteOff(note: number, channel?: number) {
-    const ctx = this.ctx;
     for (const layer of this.layers) {
       if (!layer.voice) continue;
+      if (layer.midiChannel !== 0 && channel !== undefined && layer.midiChannel !== channel) continue;
+
+      if (layer.voiceMode.playMode === 'mono') {
+        const idx = layer.monoHeldStack.findIndex((h) => h.note === note);
+        if (idx === -1) continue;
+        const removedShifted = layer.activeNotes.get(note);
+        const wasCurrent = removedShifted !== undefined && removedShifted === layer.monoVoiceTargetNote;
+        layer.monoHeldStack.splice(idx, 1);
+        layer.activeNotes.delete(note);
+        if (layer.monoHeldStack.length === 0) {
+          if (layer.glideTimer !== null) {
+            clearInterval(layer.glideTimer);
+            layer.glideTimer = null;
+          }
+          if (layer.monoVoiceRealNote !== null) layer.voice.noteOff(layer.monoVoiceRealNote);
+          layer.monoVoiceRealNote = null;
+          layer.monoVoiceTargetNote = null;
+          this.triggerEnvelopeRelease(layer);
+        } else if (wasCurrent) {
+          // volta pra nota anterior ainda segurada (prioridade: última tocada), igual a um sintetizador mono "last note priority"
+          const fallback = layer.monoHeldStack[layer.monoHeldStack.length - 1];
+          const fallbackShifted = Math.max(0, Math.min(127, fallback.note + layer.octave * 12));
+          if (layer.voiceMode.legato && layer.monoVoiceRealNote !== null) {
+            this.glideLayerTo(layer, fallbackShifted);
+          } else {
+            if (layer.monoVoiceRealNote !== null) layer.voice.noteOff(layer.monoVoiceRealNote);
+            layer.voice.noteOn(fallbackShifted, fallback.velocity);
+            layer.monoVoiceRealNote = fallbackShifted;
+            layer.monoVoiceTargetNote = fallbackShifted;
+          }
+        }
+        continue;
+      }
+
+      // --- modo poly (comportamento original) ---
       const shifted = layer.activeNotes.get(note);
       if (shifted === undefined) continue;
-      if (layer.midiChannel !== 0 && channel !== undefined && layer.midiChannel !== channel) continue;
       layer.activeNotes.delete(note);
       layer.voice.noteOff(shifted);
       const extras = layer.octaverNotes.get(note);
@@ -890,11 +1402,7 @@ export class RackEngine {
         for (const extra of extras) layer.voice.noteOff(extra);
         layer.octaverNotes.delete(note);
       }
-      if (layer.envelope.enabled && layer.activeNotes.size === 0 && ctx) {
-        layer.envelopeGain.gain.cancelScheduledValues(ctx.currentTime);
-        layer.envelopeGain.gain.setValueAtTime(layer.envelopeGain.gain.value, ctx.currentTime);
-        layer.envelopeGain.gain.linearRampToValueAtTime(0, ctx.currentTime + Math.max(0.001, layer.envelope.releaseMs / 1000));
-      }
+      if (layer.activeNotes.size === 0) this.triggerEnvelopeRelease(layer);
     }
   }
 
@@ -917,6 +1425,13 @@ export class RackEngine {
       layer.voice?.allNotesOff();
       layer.activeNotes.clear();
       layer.octaverNotes.clear();
+      layer.monoHeldStack = [];
+      layer.monoVoiceRealNote = null;
+      layer.monoVoiceTargetNote = null;
+      if (layer.glideTimer !== null) {
+        clearInterval(layer.glideTimer);
+        layer.glideTimer = null;
+      }
       if (this.ctx) layer.envelopeGain.gain.setTargetAtTime(1, this.ctx.currentTime, 0.01);
     }
   }

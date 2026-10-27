@@ -321,6 +321,61 @@ export type RackDriveType = 'warm' | 'hard' | 'tube';
 /** Modo do oitavador da camada (ver RackLayer.octaverMode): em qual direção dobrar cada nota tocada nesta camada. */
 export type RackOctaverMode = 'down' | 'up' | 'both';
 
+/** Modo de voz da camada — ver RackLayer.playMode. */
+export type RackPlayMode = 'poly' | 'mono';
+
+/** Divisão de compasso usada pelo delay sincronizado (ver RackLayer.delaySync). */
+export type RackDelayDivision = '1/16' | '1/8t' | '1/8' | '1/8d' | '1/4' | '1/4d' | '1/2';
+
+/** Duração de cada divisão em "tempos" (1 tempo = 1 nota semínima/quarter note), pra converter BPM em milissegundos: ms = (60000/bpm) * tempos. */
+export const RACK_DELAY_DIVISION_BEATS: Record<RackDelayDivision, number> = {
+  '1/16': 0.25,
+  '1/8t': 1 / 3,
+  '1/8': 0.5,
+  '1/8d': 0.75,
+  '1/4': 1,
+  '1/4d': 1.5,
+  '1/2': 2,
+};
+
+/**
+ * As 6 bandas fixas do equalizador paramétrico por camada (ver
+ * RackLayer.eqBands) — sempre nessa ordem e com essa função; o usuário não
+ * adiciona/remove bandas, só ajusta frequência/ganho/Q e liga/desliga cada
+ * uma, igual ao equalizador de referência (print "SLOT FX").
+ */
+export const RACK_EQ_BAND_ROLES = ['lowcut', 'lowshelf', 'bell1', 'bell2', 'highshelf', 'highcut'] as const;
+export type RackEqBandRole = typeof RACK_EQ_BAND_ROLES[number];
+
+export const RACK_EQ_BAND_LABELS: Record<RackEqBandRole, string> = {
+  lowcut: 'Corte grave',
+  lowshelf: 'Prateleira grave',
+  bell1: 'Sino 1',
+  bell2: 'Sino 2',
+  highshelf: 'Prateleira aguda',
+  highcut: 'Corte agudo',
+};
+
+export interface RackEqBandSettings {
+  enabled: boolean;
+  freqHz: number;
+  /** dB, -18..+18 — sem efeito nas bandas de corte (lowcut/highcut), que só usam freqHz e q (inclinação). */
+  gainDb: number;
+  q: number;
+}
+
+/** Valores padrão das 6 bandas, na ordem de RACK_EQ_BAND_ROLES. */
+export function defaultRackEqBands(): RackEqBandSettings[] {
+  return [
+    { enabled: true, freqHz: 70, gainDb: 0, q: 0.71 }, // lowcut
+    { enabled: true, freqHz: 150, gainDb: 0, q: 0.71 }, // lowshelf
+    { enabled: true, freqHz: 280, gainDb: 0, q: 1.2 }, // bell1
+    { enabled: true, freqHz: 2500, gainDb: 0, q: 0.9 }, // bell2
+    { enabled: true, freqHz: 6000, gainDb: 0, q: 0.71 }, // highshelf
+    { enabled: true, freqHz: 12000, gainDb: 0, q: 0.71 }, // highcut
+  ];
+}
+
 export interface RackLayer {
   id: string;
   /** cor de destaque do cabeçalho da camada (combina com o print de referência) */
@@ -357,18 +412,44 @@ export interface RackLayer {
   /** envelope de amplitude da camada (fade ao ligar/desligar notas, somado ao envelope nativo do motor) */
   envelopeEnabled: boolean;
   attackMs: number;
+  /** tempo (ms) pra cair do pico do ataque até o nível de sustentação interno, antes de aguardar o note-off (ver RackEngine). */
+  decayMs: number;
   releaseMs: number;
+
+  /**
+   * Modo de voz da camada: 'poly' toca cada nota numa voz independente
+   * (acordes normalmente); 'mono' deixa só uma nota soando por vez nesta
+   * camada (nota nova corta a anterior) — uso típico em baixo/lead/sopro solo.
+   */
+  playMode: RackPlayMode;
+  /**
+   * Em modo 'mono', se uma nota nova chegar enquanto outra ainda está
+   * segurada nesta camada, não reataca o envelope (sem novo "attack") — em
+   * vez disso desliza a afinação da MESMA voz até a nota nova, em glideMs.
+   * Fora do modo mono não tem efeito (ver HelpPanel.tsx seção "rack").
+   */
+  legato: boolean;
+  /** tempo (ms) do deslizamento de afinação (portamento) usado pelo legato em modo mono. 0 = troca instantânea. */
+  glideMs: number;
 
   /** filtro passa-baixa estático da camada (independente do "Caráter") */
   filterEnabled: boolean;
   cutoffHz: number;
 
-  /** equalizador de 3 bandas da camada */
+  /** equalizador de 3 bandas da camada — mantido por compatibilidade; a UI atual usa eqBands (6 bandas) abaixo. */
   eqEnabled: boolean;
   eqBassDb: number;
   eqMidDb: number;
   eqTrebleDb: number;
   eqMidFreqHz: number;
+  /**
+   * Equalizador paramétrico de 6 bandas (substituiu a UI de 3 bandas):
+   * sempre as mesmas 6 funções, na ordem RACK_EQ_BAND_ROLES — Corte grave,
+   * Prateleira grave, Sino 1, Sino 2, Prateleira aguda, Corte agudo. Cada
+   * banda liga/desliga independente, além do interruptor geral eqEnabled.
+   */
+  eqBands: RackEqBandSettings[];
+
 
   /** saturação/drive da camada */
   driveEnabled: boolean;
@@ -388,23 +469,55 @@ export interface RackLayer {
   /** 0..1 */
   reverbSend: number;
 
-  /** Compressor por camada — nivela a dinâmica de um timbre que varia muito de volume. */
+  /**
+   * Compressor por camada — nivela a dinâmica de um timbre que varia muito de
+   * volume. compressorAmount é o controle principal da UI atual (0..1, um só
+   * knob "Amount" que ajusta threshold/ratio/makeup juntos); os três campos
+   * antigos abaixo continuam existindo só por compatibilidade com sessões
+   * salvas antes deste controle único existir.
+   */
   compressorEnabled: boolean;
-  /** dB, -60..0 */
+  /** 0..1 — controle único "Amount": quanto mais alto, mais threshold desce e mais a razão sobe (ver RackEngine). */
+  compressorAmount: number;
+  /** ms, 0..200 — tempo de resposta ao início do som. */
+  compressorAttackMs: number;
+  /** ms, 0..1000 — tempo de soltura depois que o som cai. */
+  compressorReleaseMs: number;
+  /** dB, -60..0 — mantido por compatibilidade (sessões antigas); não editável na UI atual. */
   compressorThresholdDb: number;
-  /** 1..20 (1 = sem compressão) */
+  /** 1..20 (1 = sem compressão) — mantido por compatibilidade (sessões antigas); não editável na UI atual. */
   compressorRatio: number;
-  /** ganho de compensação pós-compressor, em dB, 0..24 */
+  /** ganho de compensação pós-compressor, em dB, 0..24 — mantido por compatibilidade (sessões antigas); não editável na UI atual. */
   compressorMakeupDb: number;
 
   /** Delay (eco) por camada. */
   delayEnabled: boolean;
-  /** ms, 0..1500 */
+  /** ms, 0..1500 — usado só quando delaySync=false. */
   delayTimeMs: number;
   /** 0..0.9 */
   delayFeedback: number;
   /** mistura seco/processado, 0..1 */
   delayMix: number;
+  /** quando true, o tempo do delay segue o BPM do rack (ver InstrumentRackState.bpm) em vez de delayTimeMs. */
+  delaySync: boolean;
+  /** fração/divisão de compasso usada quando delaySync=true. */
+  delayDivision: RackDelayDivision;
+  /** true = ecos alternam entre os canais esquerdo/direito (eco "ping-pong" estéreo) em vez de repetir no mesmo canal. */
+  delayPingPong: boolean;
+
+  /** Chorus por camada — engrossa/alarga o timbre com uma modulação sutil de afinação. */
+  chorusEnabled: boolean;
+  /** mistura seco/processado, 0..1 */
+  chorusMix: number;
+
+  /** Tremolo por camada — modula o volume periodicamente. */
+  tremoloEnabled: boolean;
+  /** Hz, 0.1..20 */
+  tremoloRateHz: number;
+  /** 0..1 */
+  tremoloDepth: number;
+  /** 0..1 — quanto o LFO esquerdo/direito ficam fora de fase (0 = mono, 1 = totalmente oposto, efeito "auto-pan") */
+  tremoloStereo: number;
 
   /**
    * Oitavador POR CAMADA: dobra toda nota tocada nesta camada (só nesta,
@@ -465,7 +578,16 @@ export interface InstrumentRackState {
   scenes: RackScene[];
   /** mostra (ou não) a pílula de acorde detectado ao lado de "Áudio OK", quando a aba Rack está aberta */
   chordDisplayEnabled: boolean;
+  /** Algoritmo/"sala" do reverb compartilhado do rack — afeta o timbre do retorno (ver MasterColumn). */
+  reverbRoom: RackReverbRoom;
+  /** segundos, 0.2..8 — duração da cauda do reverb compartilhado. */
+  reverbDecaySec: number;
+  /** BPM de referência do rack, usado pelos delays por camada quando "Sync" está ligado (ver RackLayer.delaySync). */
+  bpm: number;
 }
+
+/** Tipo de sala/algoritmo do reverb compartilhado do Rack — ver InstrumentRackState.reverbRoom. */
+export type RackReverbRoom = 'room' | 'hall' | 'plate' | 'spring';
 
 export interface AppSettings {
   outputDeviceId: string | null;
@@ -522,7 +644,11 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     midiChannel: 0,
     envelopeEnabled: false,
     attackMs: 5,
+    decayMs: 0,
     releaseMs: 350,
+    playMode: 'poly',
+    legato: false,
+    glideMs: 80,
     filterEnabled: false,
     cutoffHz: 20000,
     eqEnabled: false,
@@ -530,6 +656,7 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     eqMidDb: 0,
     eqTrebleDb: 0,
     eqMidFreqHz: 1000,
+    eqBands: defaultRackEqBands(),
     driveEnabled: false,
     driveType: 'warm',
     driveDb: 0,
@@ -539,6 +666,9 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     reverbEnabled: true,
     reverbSend: 1,
     compressorEnabled: false,
+    compressorAmount: 0.4,
+    compressorAttackMs: 8,
+    compressorReleaseMs: 140,
     compressorThresholdDb: -24,
     compressorRatio: 4,
     compressorMakeupDb: 0,
@@ -546,6 +676,15 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     delayTimeMs: 300,
     delayFeedback: 0.3,
     delayMix: 0.35,
+    delaySync: false,
+    delayDivision: '1/8',
+    delayPingPong: false,
+    chorusEnabled: false,
+    chorusMix: 0.25,
+    tremoloEnabled: false,
+    tremoloRateHz: 4,
+    tremoloDepth: 0.5,
+    tremoloStereo: 0,
     octaverEnabled: false,
     octaverMode: 'down',
     octaverMix: 0.7,
@@ -573,6 +712,9 @@ export const DEFAULT_RACK_STATE: InstrumentRackState = {
   bufferFrames: 0,
   scenes: [],
   chordDisplayEnabled: true,
+  reverbRoom: 'room',
+  reverbDecaySec: 1.8,
+  bpm: 120,
 };
 
 /**

@@ -12,25 +12,37 @@ import {
   X as XIcon,
 } from 'lucide-react';
 import { useStore } from '../state/useStore';
-import type { RackCharacter, RackDriveType, RackLayer, RackLayerFormat, RackOctaverMode, RackScene, RackVelocityCurve } from '../../shared/types';
-import { migrateRackLayers } from '../../shared/types';
+import type {
+  RackCharacter,
+  RackDelayDivision,
+  RackDriveType,
+  RackLayer,
+  RackLayerFormat,
+  RackOctaverMode,
+  RackReverbRoom,
+  RackScene,
+  RackVelocityCurve,
+} from '../../shared/types';
+import { defaultRackEqBands, migrateRackLayers } from '../../shared/types';
 import { rackEngine, detectRackFormat, PITCH_BEND_RANGE_SEMITONES } from '../audio/rack/RackEngine';
 import { applyLayerParamsToEngine, reloadAllRackLayers, reloadLayerFromDisk as reloadLayerFromDiskShared } from '../audio/rack/rackReload';
 import { onRackProgramChange, onRackRawNoteOn, computeVelocityCurve } from '../midi/rackMidiRouter';
 import TransportBar from './TransportBar';
 import PartsGrid from './PartsGrid';
+import RackEqGraph from './RackEqGraph';
 
 const DEFAULT_LAYER_FX: Partial<RackLayer> = {
   envelopeEnabled: false,
   attackMs: 5,
+  decayMs: 0,
   releaseMs: 350,
+  playMode: 'poly',
+  legato: false,
+  glideMs: 80,
   filterEnabled: false,
   cutoffHz: 20000,
   eqEnabled: false,
-  eqBassDb: 0,
-  eqMidDb: 0,
-  eqTrebleDb: 0,
-  eqMidFreqHz: 1000,
+  eqBands: defaultRackEqBands(),
   driveEnabled: false,
   driveType: 'warm',
   driveDb: 0,
@@ -38,18 +50,44 @@ const DEFAULT_LAYER_FX: Partial<RackLayer> = {
   reverbEnabled: true,
   reverbSend: 1,
   compressorEnabled: false,
-  compressorThresholdDb: -24,
-  compressorRatio: 4,
-  compressorMakeupDb: 0,
+  compressorAmount: 0.4,
+  compressorAttackMs: 8,
+  compressorReleaseMs: 140,
   delayEnabled: false,
   delayTimeMs: 300,
   delayFeedback: 0.3,
   delayMix: 0.35,
+  delaySync: false,
+  delayDivision: '1/8',
+  delayPingPong: false,
+  chorusEnabled: false,
+  chorusMix: 0.25,
+  tremoloEnabled: false,
+  tremoloRateHz: 4,
+  tremoloDepth: 0.5,
+  tremoloStereo: 0,
   octaverEnabled: false,
   octaverMode: 'down',
   octaverMix: 0.7,
   pan: 0,
 };
+
+const DELAY_DIVISION_OPTIONS: { value: RackDelayDivision; label: string }[] = [
+  { value: '1/16', label: '1/16' },
+  { value: '1/8t', label: '1/8 triplet' },
+  { value: '1/8', label: '1/8' },
+  { value: '1/8d', label: '1/8 pontuada' },
+  { value: '1/4', label: '1/4' },
+  { value: '1/4d', label: '1/4 pontuada' },
+  { value: '1/2', label: '1/2' },
+];
+
+const REVERB_ROOM_OPTIONS: { value: RackReverbRoom; label: string }[] = [
+  { value: 'room', label: 'Room' },
+  { value: 'hall', label: 'Hall' },
+  { value: 'plate', label: 'Plate' },
+  { value: 'spring', label: 'Spring' },
+];
 
 const OCTAVER_MODE_OPTIONS: { value: RackOctaverMode; label: string }[] = [
   { value: 'down', label: '-1 oitava' },
@@ -148,6 +186,18 @@ export default function InstrumentRack() {
   useEffect(() => {
     rackEngine.setReverb(rack.reverb);
   }, [rack.reverb]);
+
+  useEffect(() => {
+    rackEngine.setReverbRoom(rack.reverbRoom);
+  }, [rack.reverbRoom]);
+
+  useEffect(() => {
+    rackEngine.setReverbDecay(rack.reverbDecaySec);
+  }, [rack.reverbDecaySec]);
+
+  useEffect(() => {
+    rackEngine.setBpm(rack.bpm);
+  }, [rack.bpm]);
 
   // Restaura, uma única vez ao abrir a aba, os instrumentos que já estavam carregados da última sessão.
   useEffect(() => {
@@ -262,20 +312,17 @@ export default function InstrumentRack() {
     if ('octave' in patch) rackEngine.setOctave(index, layer.octave);
     if ('midiChannel' in patch) rackEngine.setMidiChannel(index, layer.midiChannel);
     if ('pan' in patch) rackEngine.setPan(index, layer.pan);
-    if ('envelopeEnabled' in patch || 'attackMs' in patch || 'releaseMs' in patch) {
-      rackEngine.setEnvelope(index, { enabled: layer.envelopeEnabled, attackMs: layer.attackMs, releaseMs: layer.releaseMs });
+    if ('envelopeEnabled' in patch || 'attackMs' in patch || 'decayMs' in patch || 'releaseMs' in patch) {
+      rackEngine.setEnvelope(index, { enabled: layer.envelopeEnabled, attackMs: layer.attackMs, decayMs: layer.decayMs, releaseMs: layer.releaseMs });
+    }
+    if ('playMode' in patch || 'legato' in patch || 'glideMs' in patch) {
+      rackEngine.setVoiceMode(index, { playMode: layer.playMode, legato: layer.legato, glideMs: layer.glideMs });
     }
     if ('filterEnabled' in patch || 'cutoffHz' in patch) {
       rackEngine.setFilter(index, { enabled: layer.filterEnabled, cutoffHz: layer.cutoffHz });
     }
-    if ('eqEnabled' in patch || 'eqBassDb' in patch || 'eqMidDb' in patch || 'eqTrebleDb' in patch || 'eqMidFreqHz' in patch) {
-      rackEngine.setEq(index, {
-        enabled: layer.eqEnabled,
-        bassDb: layer.eqBassDb,
-        midDb: layer.eqMidDb,
-        trebleDb: layer.eqTrebleDb,
-        midFreqHz: layer.eqMidFreqHz,
-      });
+    if ('eqEnabled' in patch || 'eqBands' in patch) {
+      rackEngine.setEqBands(index, layer.eqEnabled, layer.eqBands);
     }
     if ('driveEnabled' in patch || 'driveType' in patch || 'driveDb' in patch || 'driveMix' in patch) {
       rackEngine.setDrive(index, { enabled: layer.driveEnabled, type: layer.driveType, driveDb: layer.driveDb, mix: layer.driveMix });
@@ -283,25 +330,42 @@ export default function InstrumentRack() {
     if ('reverbEnabled' in patch || 'reverbSend' in patch) {
       rackEngine.setLayerReverb(index, { enabled: layer.reverbEnabled, send: layer.reverbSend });
     }
-    if (
-      'compressorEnabled' in patch ||
-      'compressorThresholdDb' in patch ||
-      'compressorRatio' in patch ||
-      'compressorMakeupDb' in patch
-    ) {
+    if ('compressorEnabled' in patch || 'compressorAmount' in patch || 'compressorAttackMs' in patch || 'compressorReleaseMs' in patch) {
       rackEngine.setCompressor(index, {
         enabled: layer.compressorEnabled,
-        thresholdDb: layer.compressorThresholdDb,
-        ratio: layer.compressorRatio,
-        makeupDb: layer.compressorMakeupDb,
+        amount: layer.compressorAmount,
+        attackMs: layer.compressorAttackMs,
+        releaseMs: layer.compressorReleaseMs,
       });
     }
-    if ('delayEnabled' in patch || 'delayTimeMs' in patch || 'delayFeedback' in patch || 'delayMix' in patch) {
+    if ('tremoloEnabled' in patch || 'tremoloRateHz' in patch || 'tremoloDepth' in patch || 'tremoloStereo' in patch) {
+      rackEngine.setTremolo(index, {
+        enabled: layer.tremoloEnabled,
+        rateHz: layer.tremoloRateHz,
+        depth: layer.tremoloDepth,
+        stereo: layer.tremoloStereo,
+      });
+    }
+    if ('chorusEnabled' in patch || 'chorusMix' in patch) {
+      rackEngine.setChorus(index, { enabled: layer.chorusEnabled, mix: layer.chorusMix });
+    }
+    if (
+      'delayEnabled' in patch ||
+      'delayTimeMs' in patch ||
+      'delayFeedback' in patch ||
+      'delayMix' in patch ||
+      'delaySync' in patch ||
+      'delayDivision' in patch ||
+      'delayPingPong' in patch
+    ) {
       rackEngine.setDelay(index, {
         enabled: layer.delayEnabled,
         timeMs: layer.delayTimeMs,
         feedback: layer.delayFeedback,
         mix: layer.delayMix,
+        sync: layer.delaySync,
+        division: layer.delayDivision,
+        pingPong: layer.delayPingPong,
       });
     }
     if ('octaverEnabled' in patch || 'octaverMode' in patch || 'octaverMix' in patch) {
@@ -380,6 +444,7 @@ export default function InstrumentRack() {
           key={layer.id}
           layer={layer}
           index={index}
+          bpm={rack.bpm}
           loading={loadingLayer === index}
           onLoad={() => handleLoad(index)}
           onClear={() => handleClear(index)}
@@ -398,9 +463,15 @@ export default function InstrumentRack() {
       <MasterColumn
         masterVolume={rack.masterVolume}
         reverb={rack.reverb}
+        reverbRoom={rack.reverbRoom}
+        reverbDecaySec={rack.reverbDecaySec}
+        bpm={rack.bpm}
         transpose={rack.transpose}
         onMasterVolumeChange={(v) => updateRack({ masterVolume: v })}
         onReverbChange={(v) => updateRack({ reverb: v })}
+        onReverbRoomChange={(v) => updateRack({ reverbRoom: v })}
+        onReverbDecayChange={(v) => updateRack({ reverbDecaySec: v })}
+        onBpmChange={(v) => updateRack({ bpm: v })}
         onTransposeChange={(v) => updateRack({ transpose: v })}
         onPanic={() => rackEngine.panic()}
         scenes={rack.scenes ?? []}
@@ -467,6 +538,7 @@ function SceneNameModal({
 function LayerCard({
   layer,
   index,
+  bpm,
   loading,
   onLoad,
   onClear,
@@ -482,6 +554,7 @@ function LayerCard({
 }: {
   layer: RackLayer;
   index: number;
+  bpm: number;
   loading: boolean;
   onLoad: () => void;
   onClear: () => void;
@@ -594,6 +667,7 @@ function LayerCard({
         <LayerEditPanel
           layer={layer}
           index={index}
+          bpm={bpm}
           onClose={() => setEditing(false)}
           onPatch={onEditPatch}
           onRootNoteChange={onRootNoteChange}
@@ -1134,9 +1208,43 @@ function LayerMeter({ index, active }: { index: number; active: boolean }) {
   );
 }
 
+/** Medidor de "GR" (redução de ganho) do compressor desta camada — mostra visualmente o quanto ele está atuando agora. */
+function CompressorMeter({ index, active }: { index: number; active: boolean }) {
+  const [reductionDb, setReductionDb] = useState(0);
+
+  useEffect(() => {
+    if (!active) {
+      setReductionDb(0);
+      return;
+    }
+    let raf = 0;
+    let lastFrame = 0;
+    function tick(now: number) {
+      if (now - lastFrame > 60) {
+        lastFrame = now;
+        setReductionDb(rackEngine.getCompressorReductionDb(index));
+      }
+      raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [index, active]);
+
+  const pct = Math.min(100, Math.round((Math.abs(reductionDb) / 24) * 100));
+  return (
+    <div className="rack-field">
+      <label>GR {reductionDb.toFixed(1)} dB</label>
+      <div className="rack-vu-track rack-gr-track">
+        <div className="rack-vu-fill rack-gr-fill" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function LayerEditPanel({
   layer,
   index,
+  bpm,
   onClose,
   onPatch,
   onRootNoteChange,
@@ -1145,6 +1253,7 @@ function LayerEditPanel({
 }: {
   layer: RackLayer;
   index: number;
+  bpm: number;
   onClose: () => void;
   onPatch: (patch: Partial<RackLayer>) => void;
   onRootNoteChange: (n: number) => void;
@@ -1274,7 +1383,7 @@ function LayerEditPanel({
             )}
           </div>
 
-          {/* topo-direita: envelope (attack/release) + filtro (cutoff) */}
+          {/* topo-direita: envelope (attack/decay/release) + filtro (cutoff) */}
           <div className="rack-edit-cell">
             <ToggleHeader title="Envelope" enabled={layer.envelopeEnabled} onToggle={(v) => onPatch({ envelopeEnabled: v })} />
             <div className="rack-field">
@@ -1282,9 +1391,14 @@ function LayerEditPanel({
               <input type="range" min={0} max={2000} value={layer.attackMs} onChange={(e) => onPatch({ attackMs: Number(e.target.value) })} />
             </div>
             <div className="rack-field">
+              <label>Decay (ms) {Math.round(layer.decayMs)}</label>
+              <input type="range" min={0} max={3000} value={layer.decayMs} onChange={(e) => onPatch({ decayMs: Number(e.target.value) })} />
+            </div>
+            <div className="rack-field">
               <label>Release (ms) {Math.round(layer.releaseMs)}</label>
               <input type="range" min={0} max={5000} value={layer.releaseMs} onChange={(e) => onPatch({ releaseMs: Number(e.target.value) })} />
             </div>
+            <div className="rack-edit-hint">Zero no Decay mantém o envelope original (só Attack/Release). Double-click num controle zera ele.</div>
             <div className="rack-field">
               <div className="rack-field-label-row">
                 <label>Cutoff (Hz) {Math.round(layer.cutoffHz)}</label>
@@ -1302,32 +1416,52 @@ function LayerEditPanel({
             <div className="rack-edit-hint">Cutoff: ligue o filtro e reduza os Hz para suavizar o som.</div>
           </div>
 
-          {/* baixo-esquerda: EQ de 3 bandas */}
+          {/* modo de voz: poly/mono + legato + glide */}
           <div className="rack-edit-cell">
-            <ToggleHeader title="EQ" enabled={layer.eqEnabled} onToggle={(v) => onPatch({ eqEnabled: v })} />
+            <label style={{ fontWeight: 700 }}>Modo de voz</label>
             <div className="rack-field">
-              <label>Graves (dB) {layer.eqBassDb.toFixed(2)}</label>
-              <input type="range" min={-24} max={24} step={0.5} value={layer.eqBassDb} onChange={(e) => onPatch({ eqBassDb: Number(e.target.value) })} />
+              <label>Play mode</label>
+              <select value={layer.playMode} onChange={(e) => onPatch({ playMode: e.target.value as RackLayer['playMode'] })}>
+                <option value="poly">Poly</option>
+                <option value="mono">Mono</option>
+              </select>
             </div>
-            <div className="rack-field">
-              <label>Médios (dB) {layer.eqMidDb.toFixed(2)}</label>
-              <input type="range" min={-24} max={24} step={0.5} value={layer.eqMidDb} onChange={(e) => onPatch({ eqMidDb: Number(e.target.value) })} />
-            </div>
-            <div className="rack-field">
-              <label>Agudos (dB) {layer.eqTrebleDb.toFixed(2)}</label>
-              <input type="range" min={-24} max={24} step={0.5} value={layer.eqTrebleDb} onChange={(e) => onPatch({ eqTrebleDb: Number(e.target.value) })} />
-            </div>
-            <div className="rack-field">
-              <label>Frequência dos médios (Hz) {Math.round(layer.eqMidFreqHz)}</label>
-              <input
-                type="range"
-                min={100}
-                max={8000}
-                step={10}
-                value={layer.eqMidFreqHz}
-                onChange={(e) => onPatch({ eqMidFreqHz: Number(e.target.value) })}
+            <div className="rack-field-label-row">
+              <label>Legato {layer.playMode === 'mono' ? '' : '(só em modo mono)'}</label>
+              <ToggleHeader
+                compact
+                title="Legato"
+                enabled={layer.legato}
+                onToggle={(v) => onPatch({ legato: v })}
               />
             </div>
+            <div className="rack-field">
+              <label>Glide (ms) {Math.round(layer.glideMs)}</label>
+              <input type="range" min={0} max={1000} value={layer.glideMs} onChange={(e) => onPatch({ glideMs: Number(e.target.value) })} />
+            </div>
+            <div className="rack-edit-hint">
+              Mono: só uma nota soa por vez nesta camada (bom pra baixo/solo). Com Legato ligado, tocar uma nota nova sem soltar a
+              anterior desliza a afinação em vez de reatacar — tempo do deslizamento é o Glide. Em Poly, cada nota toca numa voz
+              independente (acordes).
+            </div>
+          </div>
+
+          {/* EQ paramétrico de 6 bandas — gráfico interativo (RackEqGraph.tsx) */}
+          <div className="rack-edit-cell rack-edit-cell-wide">
+            <ToggleHeader title="EQ" enabled={layer.eqEnabled} onToggle={(v) => onPatch({ eqEnabled: v })} />
+            <RackEqGraph
+              layerIndex={index}
+              eqEnabled={layer.eqEnabled}
+              bands={layer.eqBands}
+              onChangeBand={(bandIndex, patch) => {
+                const bands = layer.eqBands.map((b, i) => (i === bandIndex ? { ...b, ...patch } : b));
+                onPatch({ eqBands: bands });
+              }}
+              onToggleBand={(bandIndex) => {
+                const bands = layer.eqBands.map((b, i) => (i === bandIndex ? { ...b, enabled: !b.enabled } : b));
+                onPatch({ eqBands: bands });
+              }}
+            />
           </div>
 
           {/* baixo-direita: drive/saturação + foto da camada */}
@@ -1375,14 +1509,14 @@ function LayerEditPanel({
             )}
           </div>
 
-          {/* reverb (envio por camada) + compressor */}
+          {/* reverb (envio por camada) */}
           <div className="rack-edit-cell">
             <div className="rack-field-label-row">
               <label style={{ fontWeight: 700 }}>Reverb</label>
               <ToggleHeader compact title="Reverb" enabled={layer.reverbEnabled} onToggle={(v) => onPatch({ reverbEnabled: v })} />
             </div>
             <div className="rack-field">
-              <label>Envio pro reverb compartilhado {Math.round(layer.reverbSend * 100)}%</label>
+              <label>Amount (envio pro reverb compartilhado) {Math.round(layer.reverbSend * 100)}%</label>
               <input
                 type="range"
                 min={0}
@@ -1392,58 +1526,133 @@ function LayerEditPanel({
                 onChange={(e) => onPatch({ reverbSend: Number(e.target.value) })}
               />
             </div>
-            <div className="rack-edit-hint">A quantidade geral de retorno do reverb fica no MASTER; aqui é só o quanto desta camada entra nele.</div>
+            <div className="rack-edit-hint">
+              A "sala" (Room/Hall/Plate/Spring) e a duração da cauda (Decay) do reverb ficam no MASTER, já que é um retorno
+              compartilhado por todas as camadas — aqui é só o quanto desta camada entra nele.
+            </div>
+          </div>
 
+          {/* compressor */}
+          <div className="rack-edit-cell">
             <ToggleHeader title="Compressor" enabled={layer.compressorEnabled} onToggle={(v) => onPatch({ compressorEnabled: v })} />
             <div className="rack-field">
-              <label>Threshold (dB) {Math.round(layer.compressorThresholdDb)}</label>
-              <input
-                type="range"
-                min={-60}
-                max={0}
-                step={1}
-                value={layer.compressorThresholdDb}
-                onChange={(e) => onPatch({ compressorThresholdDb: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-field">
-              <label>Razão {layer.compressorRatio.toFixed(1)}:1</label>
-              <input
-                type="range"
-                min={1}
-                max={20}
-                step={0.5}
-                value={layer.compressorRatio}
-                onChange={(e) => onPatch({ compressorRatio: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-field">
-              <label>Ganho de compensação (dB) {layer.compressorMakeupDb.toFixed(1)}</label>
+              <label>Amount {Math.round(layer.compressorAmount * 100)}%</label>
               <input
                 type="range"
                 min={0}
-                max={24}
-                step={0.5}
-                value={layer.compressorMakeupDb}
-                onChange={(e) => onPatch({ compressorMakeupDb: Number(e.target.value) })}
+                max={1}
+                step={0.01}
+                value={layer.compressorAmount}
+                onChange={(e) => onPatch({ compressorAmount: Number(e.target.value) })}
               />
             </div>
+            <div className="rack-field">
+              <label>Attack (ms) {Math.round(layer.compressorAttackMs)}</label>
+              <input
+                type="range"
+                min={0}
+                max={200}
+                value={layer.compressorAttackMs}
+                onChange={(e) => onPatch({ compressorAttackMs: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-field">
+              <label>Release (ms) {Math.round(layer.compressorReleaseMs)}</label>
+              <input
+                type="range"
+                min={10}
+                max={1000}
+                value={layer.compressorReleaseMs}
+                onChange={(e) => onPatch({ compressorReleaseMs: Number(e.target.value) })}
+              />
+            </div>
+            <CompressorMeter index={index} active={layer.compressorEnabled} />
+          </div>
+
+          {/* tremolo (modulação de amplitude) */}
+          <div className="rack-edit-cell">
+            <ToggleHeader title="Tremolo" enabled={layer.tremoloEnabled} onToggle={(v) => onPatch({ tremoloEnabled: v })} />
+            <div className="rack-field">
+              <label>Rate (Hz) {layer.tremoloRateHz.toFixed(1)}</label>
+              <input
+                type="range"
+                min={0.1}
+                max={20}
+                step={0.1}
+                value={layer.tremoloRateHz}
+                onChange={(e) => onPatch({ tremoloRateHz: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-field">
+              <label>Depth {Math.round(layer.tremoloDepth * 100)}%</label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={layer.tremoloDepth}
+                onChange={(e) => onPatch({ tremoloDepth: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-field">
+              <label>Stereo {Math.round(layer.tremoloStereo * 100)}%</label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={layer.tremoloStereo}
+                onChange={(e) => onPatch({ tremoloStereo: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+
+          {/* chorus */}
+          <div className="rack-edit-cell">
+            <ToggleHeader title="Chorus" enabled={layer.chorusEnabled} onToggle={(v) => onPatch({ chorusEnabled: v })} />
+            <div className="rack-field">
+              <label>Mix {Math.round(layer.chorusMix * 100)}%</label>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={layer.chorusMix}
+                onChange={(e) => onPatch({ chorusMix: Number(e.target.value) })}
+              />
+            </div>
+            <div className="rack-edit-hint">Engrossa/alarga o timbre com uma modulação sutil de afinação — útil em pads, cordas e guitarra limpa.</div>
           </div>
 
           {/* delay (eco) */}
           <div className="rack-edit-cell">
             <ToggleHeader title="Delay" enabled={layer.delayEnabled} onToggle={(v) => onPatch({ delayEnabled: v })} />
-            <div className="rack-field">
-              <label>Tempo (ms) {Math.round(layer.delayTimeMs)}</label>
-              <input
-                type="range"
-                min={0}
-                max={1500}
-                step={10}
-                value={layer.delayTimeMs}
-                onChange={(e) => onPatch({ delayTimeMs: Number(e.target.value) })}
-              />
+            <div className="rack-field-label-row">
+              <label>Sync {layer.delaySync ? `(${bpm.toFixed(1)} BPM)` : ''}</label>
+              <ToggleHeader compact title="Sync" enabled={layer.delaySync} onToggle={(v) => onPatch({ delaySync: v })} />
             </div>
+            {layer.delaySync ? (
+              <div className="rack-field">
+                <label>Divisão</label>
+                <select value={layer.delayDivision} onChange={(e) => onPatch({ delayDivision: e.target.value as RackDelayDivision })}>
+                  {DELAY_DIVISION_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="rack-field">
+                <label>Tempo (ms) {Math.round(layer.delayTimeMs)}</label>
+                <input
+                  type="range"
+                  min={0}
+                  max={1500}
+                  step={10}
+                  value={layer.delayTimeMs}
+                  onChange={(e) => onPatch({ delayTimeMs: Number(e.target.value) })}
+                />
+              </div>
+            )}
             <div className="rack-field">
               <label>Realimentação {Math.round(layer.delayFeedback * 100)}%</label>
               <input
@@ -1465,6 +1674,10 @@ function LayerEditPanel({
                 value={layer.delayMix}
                 onChange={(e) => onPatch({ delayMix: Number(e.target.value) })}
               />
+            </div>
+            <div className="rack-field-label-row">
+              <label>Ping-pong (eco alterna entre os canais)</label>
+              <ToggleHeader compact title="Ping-pong" enabled={layer.delayPingPong} onToggle={(v) => onPatch({ delayPingPong: v })} />
             </div>
             <div className="rack-edit-hint">Tempos maiores soam como eco separado; tempos bem curtos (abaixo de ~40ms) engrossam o timbre.</div>
           </div>
@@ -1524,9 +1737,15 @@ function ToggleHeader({
 function MasterColumn({
   masterVolume,
   reverb,
+  reverbRoom,
+  reverbDecaySec,
+  bpm,
   transpose,
   onMasterVolumeChange,
   onReverbChange,
+  onReverbRoomChange,
+  onReverbDecayChange,
+  onBpmChange,
   onTransposeChange,
   onPanic,
   scenes,
@@ -1536,9 +1755,15 @@ function MasterColumn({
 }: {
   masterVolume: number;
   reverb: number;
+  reverbRoom: RackReverbRoom;
+  reverbDecaySec: number;
+  bpm: number;
   transpose: number;
   onMasterVolumeChange: (v: number) => void;
   onReverbChange: (v: number) => void;
+  onReverbRoomChange: (v: RackReverbRoom) => void;
+  onReverbDecayChange: (v: number) => void;
+  onBpmChange: (v: number) => void;
   onTransposeChange: (v: number) => void;
   onPanic: () => void;
   scenes: RackScene[];
@@ -1586,6 +1811,37 @@ function MasterColumn({
         />
         <div className="rack-volume-value">{reverb.toFixed(2)}</div>
         <div className="rack-volume-label">Reverb</div>
+      </div>
+
+      <div className="rack-field" style={{ marginTop: 8, width: '100%' }}>
+        <label>Room</label>
+        <select value={reverbRoom} onChange={(e) => onReverbRoomChange(e.target.value as RackReverbRoom)}>
+          {REVERB_ROOM_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+      </div>
+      <div className="rack-field" style={{ width: '100%' }}>
+        <label>Decay (s) {reverbDecaySec.toFixed(1)}</label>
+        <input
+          type="range"
+          min={0.2}
+          max={8}
+          step={0.1}
+          value={reverbDecaySec}
+          onChange={(e) => onReverbDecayChange(Number(e.target.value))}
+        />
+      </div>
+      <div className="rack-field" style={{ width: '100%' }}>
+        <label>BPM (pra delay sincronizado) {bpm.toFixed(1)}</label>
+        <input
+          type="range"
+          min={40}
+          max={240}
+          step={0.5}
+          value={bpm}
+          onChange={(e) => onBpmChange(Number(e.target.value))}
+        />
       </div>
 
       <div className="rack-field" style={{ marginTop: 10, width: '100%' }}>
