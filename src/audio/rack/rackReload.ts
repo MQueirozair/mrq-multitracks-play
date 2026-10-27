@@ -47,6 +47,37 @@ export function applyLayerParamsToEngine(index: number, layer: RackLayer) {
     pingPong: layer.delayPingPong,
   });
   rackEngine.setLayerOctaver(index, { enabled: layer.octaverEnabled, mode: layer.octaverMode, mix: layer.octaverMix });
+  rackEngine.setGate(index, {
+    enabled: layer.gateEnabled,
+    thresholdDb: layer.gateThresholdDb,
+    attackMs: layer.gateAttackMs,
+    releaseMs: layer.gateReleaseMs,
+  });
+  rackEngine.setPhaser(index, {
+    enabled: layer.phaserEnabled,
+    rateHz: layer.phaserRateHz,
+    depth: layer.phaserDepth,
+    mix: layer.phaserMix,
+  });
+  rackEngine.setFlanger(index, {
+    enabled: layer.flangerEnabled,
+    rateHz: layer.flangerRateHz,
+    depth: layer.flangerDepth,
+    feedback: layer.flangerFeedback,
+    mix: layer.flangerMix,
+  });
+  rackEngine.setBitcrusher(index, {
+    enabled: layer.bitcrusherEnabled,
+    bits: layer.bitcrusherBits,
+    rateHz: layer.bitcrusherRateHz,
+    mix: layer.bitcrusherMix,
+  });
+  rackEngine.setShimmer(index, {
+    enabled: layer.shimmerEnabled,
+    mix: layer.shimmerMix,
+    feedback: layer.shimmerFeedback,
+    toneHz: layer.shimmerToneHz,
+  });
 }
 
 

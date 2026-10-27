@@ -55,6 +55,32 @@ input:focus-visible, textarea:focus-visible, select:focus-visible, button:focus-
   outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 input[type="range"] { accent-color: var(--accent); }
+
+/* fader estilo hardware (grupo de controles "linear" que não viraram knob
+   giratório — faixa de notas, pan, oitava, canal MIDI etc.) */
+input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel) {
+  -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; margin: 2px 0;
+}
+input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-webkit-slider-runnable-track {
+  height: 5px; border-radius: 3px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 70%, #000) 0%, #1a151e 0%);
+  box-shadow: inset 0 1px 2px #0009, 0 1px 0 #ffffff12;
+}
+input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; margin-top: -6px;
+  width: 16px; height: 16px; border-radius: 4px;
+  background: linear-gradient(180deg, #5a5260, #2c262f);
+  border: 1px solid #000a; box-shadow: 0 1px 3px #000a, inset 0 1px 0 #ffffff33;
+  cursor: ew-resize;
+}
+input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-moz-range-track {
+  height: 5px; border-radius: 3px; background: #1a151e; box-shadow: inset 0 1px 2px #0009;
+}
+input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 4px; border: 1px solid #000a;
+  background: linear-gradient(180deg, #5a5260, #2c262f); box-shadow: 0 1px 3px #000a, inset 0 1px 0 #ffffff33;
+  cursor: ew-resize;
+}
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #2c2e36; border-radius: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -848,9 +874,12 @@ input[type="range"] { accent-color: var(--accent); }
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .rack-edit-panel {
-  width: min(780px, 100%); max-height: 86vh; overflow: auto; padding: 18px 20px;
-  background: linear-gradient(165deg, #241225, #1a0f22); border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  box-shadow: 0 20px 60px #000a;
+  width: min(1180px, 100%); max-height: 90vh; overflow: auto; padding: 18px 20px;
+  background:
+    repeating-linear-gradient(180deg, #0000 0px, #0000 2px, #0003 2px, #0003 3px),
+    linear-gradient(165deg, #241225, #140a1a);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 20px 60px #000a, inset 0 0 80px #0007;
 }
 .rack-edit-panel-header {
   display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;
@@ -862,19 +891,10 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .rack-edit-close:hover { background: #5c2626; color: #fff; }
 .rack-edit-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 18px 26px;
-  position: relative;
-}
-.rack-edit-grid::before {
-  content: ''; position: absolute; left: 50%; top: -4px; bottom: -4px; width: 1px;
-  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); gap: 14px;
+  align-items: start;
 }
 .rack-edit-cell { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
-.rack-edit-cell:nth-child(3), .rack-edit-cell:nth-child(4),
-.rack-edit-cell:nth-child(5), .rack-edit-cell:nth-child(6),
-.rack-edit-cell:nth-child(7) {
-  border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); padding-top: 14px;
-}
 .rack-toggle-header {
   display: block; width: 100%; text-align: center; padding: 8px 10px; border-radius: 999px; border: none;
   background: linear-gradient(90deg, #a21f82, #7c1f9e); color: #fff; font-size: 11px; font-weight: 800;
@@ -882,7 +902,7 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .rack-toggle-header.on { background: linear-gradient(90deg, #2f8f5a, #1f9e7c); }
 .rack-toggle-header.compact { width: auto; padding: 3px 9px; font-size: 9px; flex-shrink: 0; }
-.rack-field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rack-field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .rack-field-label-row label { flex: 1; }
 .rack-edit-hint { font-size: 10px; color: var(--text-2); line-height: 1.4; }
 .rack-edit-photo-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
@@ -892,18 +912,83 @@ input[type="range"] { accent-color: var(--accent); }
 }
 .rack-photo-btn:hover { filter: brightness(1.15); }
 
+.rack-edit-cell-wide { grid-column: 1 / -1; }
+
+/* ---------- módulos de efeito estilo "unidade de rack/plugin de DAW" (RackFxModule.tsx) ---------- */
+.rack-fx-module {
+  position: relative; display: flex; flex-direction: column; gap: 10px;
+  background: linear-gradient(175deg, #2c2030, #1c141f);
+  border: 1px solid #000a; border-top: 1px solid #ffffff14;
+  border-radius: 8px; padding: 10px 12px 12px;
+  box-shadow: 0 3px 10px #0006, inset 0 1px 0 #ffffff0d;
+}
+.rack-fx-module.is-on { border-color: color-mix(in srgb, var(--accent) 45%, #000a); }
+.rack-fx-module-wide { grid-column: 1 / -1; }
+.rack-fx-screw {
+  position: absolute; width: 5px; height: 5px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #8886, #0008);
+  box-shadow: inset 0 0 1px #000, 0 0 0 1px #0005;
+}
+.rack-fx-screw-tl { top: 5px; left: 5px; }
+.rack-fx-screw-tr { top: 5px; right: 5px; }
+.rack-fx-screw-bl { bottom: 5px; left: 5px; }
+.rack-fx-screw-br { bottom: 5px; right: 5px; }
+.rack-fx-module-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 4px; }
+.rack-fx-module-title { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--text-1); }
+.rack-fx-led-btn {
+  display: inline-flex; align-items: center; gap: 5px; border: 1px solid #0007; background: #1a141c;
+  border-radius: 999px; padding: 3px 9px 3px 6px; font-size: 9px; font-weight: 800; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--text-2); cursor: pointer; flex-shrink: 0;
+}
+.rack-fx-led-btn.on { color: #fff; background: #241a28; }
+.rack-fx-led {
+  width: 7px; height: 7px; border-radius: 50%; background: #3a2f3e; flex-shrink: 0;
+  box-shadow: inset 0 0 2px #0008;
+}
+.rack-fx-module-extra { display: flex; align-items: center; gap: 8px; padding: 0 2px; flex-wrap: wrap; }
+.rack-fx-module-extra select { font-size: 10.5px; padding: 4px 6px; }
+.rack-fx-knob-row { display: flex; align-items: flex-start; justify-content: space-around; gap: 6px; flex-wrap: wrap; padding: 2px 0; }
+
 @media (max-width: 680px) {
+  .rack-edit-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 420px) {
   .rack-edit-grid { grid-template-columns: 1fr; }
-  .rack-edit-grid::before { display: none; }
-  .rack-edit-cell:nth-child(n+2) { border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); padding-top: 14px; }
 }
 
-/* cada camada agora tem mais seções que cabem em 2 colunas — qualquer uma a
-   partir da 2a ganha a linha divisória de cima, não só um conjunto fixo */
-.rack-edit-cell:not(:nth-child(-n+2)) {
-  border-top: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); padding-top: 14px;
+/* ---------- knob giratório (RackKnob.tsx) ---------- */
+/* flex-shrink:0 em toda a cadeia é necessário porque, sem isso, o Chrome
+   encolhe o <svg> (elemento substituído, min-height:auto não protege ele
+   como protegeria texto) bem abaixo do width/height reais sempre que o
+   conteúdo da célula do grid fica "apertado" — resultado: o knob aparece
+   visualmente achatado (oval) e a área clicável real fica menor que o
+   círculo desenhado, fazendo cliques/arrastos no centro visual errarem o
+   elemento. */
+.rack-fx-knob-row { flex-shrink: 0; }
+/* altura fixa (em vez de depender só de "auto" + gap + 2 linhas de texto)
+   evita um problema real de layout visto em teste: dentro do grid de
+   módulos, o cálculo "auto" do tamanho da linha de knobs podia ficar
+   inconsistente com o tamanho renderizado de verdade do SVG do knob,
+   fazendo a área clicável ficar deslocada do círculo desenhado. */
+.rack-knob {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; user-select: none; flex-shrink: 0; height: 74px;
+  cursor: ns-resize; touch-action: none;
 }
-.rack-edit-cell-wide { grid-column: 1 / -1; }
+.rack-knob-dial { flex-shrink: 0; width: 46px; height: 46px; pointer-events: none; }
+.rack-knob-dial[width="36"] { width: 36px; height: 36px; }
+.rack-knob.disabled { cursor: default; }
+.rack-knob.disabled .rack-knob-dial { opacity: 0.4; }
+.rack-knob-track { fill: #15111a; stroke: #000a; stroke-width: 1.5; }
+.rack-knob-arc { fill: none; stroke-width: 2.4; stroke-linecap: round; }
+.rack-knob-body {
+  fill: radial-gradient(circle, #3a3340, #1c1720);
+  fill: #322b38; stroke: #4a4250; stroke-width: 1;
+  filter: drop-shadow(0 1px 1px #0008);
+}
+.rack-knob-pointer { stroke-width: 2; stroke-linecap: round; }
+.rack-knob.dragging .rack-knob-dial { filter: brightness(1.2); }
+.rack-knob-value { font-size: 9.5px; font-weight: 700; color: var(--text-0); font-variant-numeric: tabular-nums; }
+.rack-knob-label { font-size: 8.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-2); }
 
 /* medidor de redução de ganho (GR) do compressor por camada */
 .rack-gr-track { background: #0007; }

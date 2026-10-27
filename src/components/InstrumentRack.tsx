@@ -30,6 +30,8 @@ import { onRackProgramChange, onRackRawNoteOn, computeVelocityCurve } from '../m
 import TransportBar from './TransportBar';
 import PartsGrid from './PartsGrid';
 import RackEqGraph from './RackEqGraph';
+import RackKnob from './RackKnob';
+import RackFxModule from './RackFxModule';
 
 const DEFAULT_LAYER_FX: Partial<RackLayer> = {
   envelopeEnabled: false,
@@ -70,6 +72,27 @@ const DEFAULT_LAYER_FX: Partial<RackLayer> = {
   octaverMode: 'down',
   octaverMix: 0.7,
   pan: 0,
+  gateEnabled: false,
+  gateThresholdDb: -40,
+  gateAttackMs: 5,
+  gateReleaseMs: 120,
+  phaserEnabled: false,
+  phaserRateHz: 0.5,
+  phaserDepth: 0.6,
+  phaserMix: 0.5,
+  flangerEnabled: false,
+  flangerRateHz: 0.25,
+  flangerDepth: 0.5,
+  flangerFeedback: 0.4,
+  flangerMix: 0.5,
+  bitcrusherEnabled: false,
+  bitcrusherBits: 12,
+  bitcrusherRateHz: 44100,
+  bitcrusherMix: 1,
+  shimmerEnabled: false,
+  shimmerMix: 0.35,
+  shimmerFeedback: 0.55,
+  shimmerToneHz: 6000,
 };
 
 const DELAY_DIVISION_OPTIONS: { value: RackDelayDivision; label: string }[] = [
@@ -370,6 +393,47 @@ export default function InstrumentRack() {
     }
     if ('octaverEnabled' in patch || 'octaverMode' in patch || 'octaverMix' in patch) {
       rackEngine.setLayerOctaver(index, { enabled: layer.octaverEnabled, mode: layer.octaverMode, mix: layer.octaverMix });
+    }
+    if ('gateEnabled' in patch || 'gateThresholdDb' in patch || 'gateAttackMs' in patch || 'gateReleaseMs' in patch) {
+      rackEngine.setGate(index, {
+        enabled: layer.gateEnabled,
+        thresholdDb: layer.gateThresholdDb,
+        attackMs: layer.gateAttackMs,
+        releaseMs: layer.gateReleaseMs,
+      });
+    }
+    if ('phaserEnabled' in patch || 'phaserRateHz' in patch || 'phaserDepth' in patch || 'phaserMix' in patch) {
+      rackEngine.setPhaser(index, {
+        enabled: layer.phaserEnabled,
+        rateHz: layer.phaserRateHz,
+        depth: layer.phaserDepth,
+        mix: layer.phaserMix,
+      });
+    }
+    if ('flangerEnabled' in patch || 'flangerRateHz' in patch || 'flangerDepth' in patch || 'flangerFeedback' in patch || 'flangerMix' in patch) {
+      rackEngine.setFlanger(index, {
+        enabled: layer.flangerEnabled,
+        rateHz: layer.flangerRateHz,
+        depth: layer.flangerDepth,
+        feedback: layer.flangerFeedback,
+        mix: layer.flangerMix,
+      });
+    }
+    if ('bitcrusherEnabled' in patch || 'bitcrusherBits' in patch || 'bitcrusherRateHz' in patch || 'bitcrusherMix' in patch) {
+      rackEngine.setBitcrusher(index, {
+        enabled: layer.bitcrusherEnabled,
+        bits: layer.bitcrusherBits,
+        rateHz: layer.bitcrusherRateHz,
+        mix: layer.bitcrusherMix,
+      });
+    }
+    if ('shimmerEnabled' in patch || 'shimmerMix' in patch || 'shimmerFeedback' in patch || 'shimmerToneHz' in patch) {
+      rackEngine.setShimmer(index, {
+        enabled: layer.shimmerEnabled,
+        mix: layer.shimmerMix,
+        feedback: layer.shimmerFeedback,
+        toneHz: layer.shimmerToneHz,
+      });
     }
   }
 
@@ -1241,6 +1305,38 @@ function CompressorMeter({ index, active }: { index: number; active: boolean }) 
   );
 }
 
+/** Mostra visualmente se a porta do Gate desta camada está aberta (deixando passar) ou fechada (silenciando) agora. */
+function GateMeter({ index, active }: { index: number; active: boolean }) {
+  const [openAmount, setOpenAmount] = useState(1);
+
+  useEffect(() => {
+    if (!active) {
+      setOpenAmount(1);
+      return;
+    }
+    let raf = 0;
+    let lastFrame = 0;
+    function tick(now: number) {
+      if (now - lastFrame > 60) {
+        lastFrame = now;
+        setOpenAmount(rackEngine.getGateOpenAmount(index));
+      }
+      raf = requestAnimationFrame(tick);
+    }
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [index, active]);
+
+  return (
+    <div className="rack-field">
+      <label>{openAmount > 0.5 ? 'Aberto' : 'Fechado'}</label>
+      <div className="rack-vu-track rack-gr-track">
+        <div className="rack-vu-fill" style={{ width: `${Math.round(openAmount * 100)}%`, background: openAmount > 0.5 ? '#4fae5e' : '#555' }} />
+      </div>
+    </div>
+  );
+}
+
 function LayerEditPanel({
   layer,
   index,
@@ -1384,71 +1480,55 @@ function LayerEditPanel({
           </div>
 
           {/* topo-direita: envelope (attack/decay/release) + filtro (cutoff) */}
-          <div className="rack-edit-cell">
-            <ToggleHeader title="Envelope" enabled={layer.envelopeEnabled} onToggle={(v) => onPatch({ envelopeEnabled: v })} />
-            <div className="rack-field">
-              <label>Attack (ms) {Math.round(layer.attackMs)}</label>
-              <input type="range" min={0} max={2000} value={layer.attackMs} onChange={(e) => onPatch({ attackMs: Number(e.target.value) })} />
-            </div>
-            <div className="rack-field">
-              <label>Decay (ms) {Math.round(layer.decayMs)}</label>
-              <input type="range" min={0} max={3000} value={layer.decayMs} onChange={(e) => onPatch({ decayMs: Number(e.target.value) })} />
-            </div>
-            <div className="rack-field">
-              <label>Release (ms) {Math.round(layer.releaseMs)}</label>
-              <input type="range" min={0} max={5000} value={layer.releaseMs} onChange={(e) => onPatch({ releaseMs: Number(e.target.value) })} />
-            </div>
-            <div className="rack-edit-hint">Zero no Decay mantém o envelope original (só Attack/Release). Double-click num controle zera ele.</div>
-            <div className="rack-field">
-              <div className="rack-field-label-row">
-                <label>Cutoff (Hz) {Math.round(layer.cutoffHz)}</label>
-                <ToggleHeader compact title="Filtro" enabled={layer.filterEnabled} onToggle={(v) => onPatch({ filterEnabled: v })} />
-              </div>
-              <input
-                type="range"
-                min={80}
-                max={20000}
-                step={10}
-                value={layer.cutoffHz}
-                onChange={(e) => onPatch({ cutoffHz: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-edit-hint">Cutoff: ligue o filtro e reduza os Hz para suavizar o som.</div>
-          </div>
+          {/* Envelope (ADR) */}
+          <RackFxModule title="Envelope" enabled={layer.envelopeEnabled} onToggle={(v) => onPatch({ envelopeEnabled: v })} accent="#d6b23c">
+            <RackKnob label="Attack" value={layer.attackMs} min={0} max={2000} step={1} defaultValue={5} unit="ms" format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ attackMs: v })} />
+            <RackKnob label="Decay" value={layer.decayMs} min={0} max={3000} step={1} defaultValue={0} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ decayMs: v })} />
+            <RackKnob label="Release" value={layer.releaseMs} min={0} max={5000} step={1} defaultValue={350} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ releaseMs: v })} />
+          </RackFxModule>
+
+          {/* Filtro (cutoff estático) */}
+          <RackFxModule title="Filtro" enabled={layer.filterEnabled} onToggle={(v) => onPatch({ filterEnabled: v })} accent="#8a5fd6" hint="Passa-baixa: reduza os Hz pra suavizar o timbre.">
+            <RackKnob label="Cutoff" value={layer.cutoffHz} min={80} max={20000} step={10} defaultValue={20000} format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}Hz`)} onChange={(v) => onPatch({ cutoffHz: v })} />
+          </RackFxModule>
 
           {/* modo de voz: poly/mono + legato + glide */}
-          <div className="rack-edit-cell">
-            <label style={{ fontWeight: 700 }}>Modo de voz</label>
-            <div className="rack-field">
-              <label>Play mode</label>
-              <select value={layer.playMode} onChange={(e) => onPatch({ playMode: e.target.value as RackLayer['playMode'] })}>
-                <option value="poly">Poly</option>
-                <option value="mono">Mono</option>
-              </select>
-            </div>
-            <div className="rack-field-label-row">
-              <label>Legato {layer.playMode === 'mono' ? '' : '(só em modo mono)'}</label>
-              <ToggleHeader
-                compact
-                title="Legato"
-                enabled={layer.legato}
-                onToggle={(v) => onPatch({ legato: v })}
-              />
-            </div>
-            <div className="rack-field">
-              <label>Glide (ms) {Math.round(layer.glideMs)}</label>
-              <input type="range" min={0} max={1000} value={layer.glideMs} onChange={(e) => onPatch({ glideMs: Number(e.target.value) })} />
-            </div>
-            <div className="rack-edit-hint">
-              Mono: só uma nota soa por vez nesta camada (bom pra baixo/solo). Com Legato ligado, tocar uma nota nova sem soltar a
-              anterior desliza a afinação em vez de reatacar — tempo do deslizamento é o Glide. Em Poly, cada nota toca numa voz
-              independente (acordes).
-            </div>
-          </div>
+          <RackFxModule
+            title="Modo de voz"
+            accent="#2fb8c6"
+            extra={
+              <div className="rack-field-label-row">
+                <select value={layer.playMode} onChange={(e) => onPatch({ playMode: e.target.value as RackLayer['playMode'] })}>
+                  <option value="poly">Poly</option>
+                  <option value="mono">Mono</option>
+                </select>
+                <button
+                  type="button"
+                  className={`rack-fx-led-btn ${layer.legato ? 'on' : ''}`}
+                  onClick={() => onPatch({ legato: !layer.legato })}
+                  title={`Legato: ${layer.legato ? 'ligado' : 'desligado'} (só em modo mono)`}
+                >
+                  <span className="rack-fx-led" style={layer.legato ? { background: '#2fb8c6', boxShadow: '0 0 6px #2fb8c6' } : undefined} />
+                  Legato
+                </button>
+              </div>
+            }
+            hint="Mono: só uma nota soa por vez (bom pra baixo/solo). Com Legato ligado, tocar uma nota nova sem soltar a anterior desliza a afinação (Glide) em vez de reatacar. Em Poly, cada nota toca numa voz independente (acordes)."
+          >
+            <RackKnob label="Glide" value={layer.glideMs} min={0} max={1000} step={1} defaultValue={80} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ glideMs: v })} />
+          </RackFxModule>
 
           {/* EQ paramétrico de 6 bandas — gráfico interativo (RackEqGraph.tsx) */}
-          <div className="rack-edit-cell rack-edit-cell-wide">
-            <ToggleHeader title="EQ" enabled={layer.eqEnabled} onToggle={(v) => onPatch({ eqEnabled: v })} />
+          <div className="rack-edit-cell rack-edit-cell-wide rack-fx-module rack-fx-module-wide is-on">
+            <div className="rack-fx-screw rack-fx-screw-tl" />
+            <div className="rack-fx-screw rack-fx-screw-tr" />
+            <div className="rack-fx-module-header">
+              <span className="rack-fx-module-title">Equalizador de 6 bandas</span>
+              <button type="button" className={`rack-fx-led-btn ${layer.eqEnabled ? 'on' : ''}`} onClick={() => onPatch({ eqEnabled: !layer.eqEnabled })}>
+                <span className="rack-fx-led" style={layer.eqEnabled ? { background: '#4fc3dc', boxShadow: '0 0 6px #4fc3dc' } : undefined} />
+                {layer.eqEnabled ? 'ON' : 'OFF'}
+              </button>
+            </div>
             <RackEqGraph
               layerIndex={index}
               eqEnabled={layer.eqEnabled}
@@ -1464,11 +1544,13 @@ function LayerEditPanel({
             />
           </div>
 
-          {/* baixo-direita: drive/saturação + foto da camada */}
-          <div className="rack-edit-cell">
-            <ToggleHeader title="Drive" enabled={layer.driveEnabled} onToggle={(v) => onPatch({ driveEnabled: v })} />
-            <div className="rack-field">
-              <label>Tipo de saturação</label>
+          {/* Drive / saturação */}
+          <RackFxModule
+            title="Drive"
+            enabled={layer.driveEnabled}
+            onToggle={(v) => onPatch({ driveEnabled: v })}
+            accent="#d6455d"
+            extra={
               <select value={layer.driveType} onChange={(e) => onPatch({ driveType: e.target.value as RackDriveType })}>
                 {DRIVE_TYPE_OPTIONS.map((o) => (
                   <option key={o.value} value={o.value}>
@@ -1476,15 +1558,15 @@ function LayerEditPanel({
                   </option>
                 ))}
               </select>
-            </div>
-            <div className="rack-field">
-              <label>Drive (dB) {layer.driveDb.toFixed(2)}</label>
-              <input type="range" min={0} max={24} step={0.5} value={layer.driveDb} onChange={(e) => onPatch({ driveDb: Number(e.target.value) })} />
-            </div>
-            <div className="rack-field">
-              <label>Mistura do drive {layer.driveMix.toFixed(2)}</label>
-              <input type="range" min={0} max={1} step={0.01} value={layer.driveMix} onChange={(e) => onPatch({ driveMix: Number(e.target.value) })} />
-            </div>
+            }
+          >
+            <RackKnob label="Drive" value={layer.driveDb} min={0} max={24} step={0.5} defaultValue={0} unit="dB" format={(v) => `${v.toFixed(1)}dB`} onChange={(v) => onPatch({ driveDb: v })} accent="#d6455d" />
+            <RackKnob label="Mix" value={layer.driveMix} min={0} max={1} step={0.01} defaultValue={1} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ driveMix: v })} accent="#d6455d" />
+          </RackFxModule>
+
+          {/* foto da camada + duplicar (não é um efeito, fica numa célula simples) */}
+          <div className="rack-edit-cell">
+            <label style={{ fontWeight: 700 }}>Camada</label>
             <div className="rack-edit-photo-row">
               <button className="btn rack-photo-btn" onClick={choosePhoto}>
                 Escolher foto
@@ -1510,206 +1592,158 @@ function LayerEditPanel({
           </div>
 
           {/* reverb (envio por camada) */}
-          <div className="rack-edit-cell">
-            <div className="rack-field-label-row">
-              <label style={{ fontWeight: 700 }}>Reverb</label>
-              <ToggleHeader compact title="Reverb" enabled={layer.reverbEnabled} onToggle={(v) => onPatch({ reverbEnabled: v })} />
-            </div>
-            <div className="rack-field">
-              <label>Amount (envio pro reverb compartilhado) {Math.round(layer.reverbSend * 100)}%</label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={layer.reverbSend}
-                onChange={(e) => onPatch({ reverbSend: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-edit-hint">
-              A "sala" (Room/Hall/Plate/Spring) e a duração da cauda (Decay) do reverb ficam no MASTER, já que é um retorno
-              compartilhado por todas as camadas — aqui é só o quanto desta camada entra nele.
-            </div>
-          </div>
+          <RackFxModule
+            title="Reverb"
+            enabled={layer.reverbEnabled}
+            onToggle={(v) => onPatch({ reverbEnabled: v })}
+            accent="#4fae5e"
+            hint='A "sala" (Room/Hall/Plate/Spring) e a duração da cauda (Decay) ficam no MASTER, já que é um retorno compartilhado por todas as camadas — aqui é só o quanto desta camada entra nele.'
+          >
+            <RackKnob label="Amount" value={layer.reverbSend} min={0} max={1} step={0.01} defaultValue={1} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ reverbSend: v })} accent="#4fae5e" />
+          </RackFxModule>
 
           {/* compressor */}
-          <div className="rack-edit-cell">
-            <ToggleHeader title="Compressor" enabled={layer.compressorEnabled} onToggle={(v) => onPatch({ compressorEnabled: v })} />
-            <div className="rack-field">
-              <label>Amount {Math.round(layer.compressorAmount * 100)}%</label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={layer.compressorAmount}
-                onChange={(e) => onPatch({ compressorAmount: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-field">
-              <label>Attack (ms) {Math.round(layer.compressorAttackMs)}</label>
-              <input
-                type="range"
-                min={0}
-                max={200}
-                value={layer.compressorAttackMs}
-                onChange={(e) => onPatch({ compressorAttackMs: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-field">
-              <label>Release (ms) {Math.round(layer.compressorReleaseMs)}</label>
-              <input
-                type="range"
-                min={10}
-                max={1000}
-                value={layer.compressorReleaseMs}
-                onChange={(e) => onPatch({ compressorReleaseMs: Number(e.target.value) })}
-              />
-            </div>
-            <CompressorMeter index={index} active={layer.compressorEnabled} />
-          </div>
+          <RackFxModule
+            title="Compressor"
+            enabled={layer.compressorEnabled}
+            onToggle={(v) => onPatch({ compressorEnabled: v })}
+            accent="#4fc3dc"
+            meter={<CompressorMeter index={index} active={layer.compressorEnabled} />}
+          >
+            <RackKnob label="Amount" value={layer.compressorAmount} min={0} max={1} step={0.01} defaultValue={0.4} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ compressorAmount: v })} />
+            <RackKnob label="Attack" value={layer.compressorAttackMs} min={0} max={200} step={1} defaultValue={8} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ compressorAttackMs: v })} />
+            <RackKnob label="Release" value={layer.compressorReleaseMs} min={10} max={1000} step={1} defaultValue={140} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ compressorReleaseMs: v })} />
+          </RackFxModule>
+
+          {/* gate (porta de ruído) */}
+          <RackFxModule
+            title="Gate"
+            enabled={layer.gateEnabled}
+            onToggle={(v) => onPatch({ gateEnabled: v })}
+            accent="#9aa0a6"
+            meter={<GateMeter index={index} active={layer.gateEnabled} />}
+            hint="Silencia o sinal abaixo do Threshold — útil em captações/amostras com ruído de fundo."
+          >
+            <RackKnob label="Threshold" value={layer.gateThresholdDb} min={-80} max={0} step={1} defaultValue={-40} format={(v) => `${Math.round(v)}dB`} onChange={(v) => onPatch({ gateThresholdDb: v })} accent="#9aa0a6" />
+            <RackKnob label="Attack" value={layer.gateAttackMs} min={0} max={100} step={1} defaultValue={5} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ gateAttackMs: v })} accent="#9aa0a6" />
+            <RackKnob label="Release" value={layer.gateReleaseMs} min={10} max={1000} step={1} defaultValue={120} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ gateReleaseMs: v })} accent="#9aa0a6" />
+          </RackFxModule>
 
           {/* tremolo (modulação de amplitude) */}
-          <div className="rack-edit-cell">
-            <ToggleHeader title="Tremolo" enabled={layer.tremoloEnabled} onToggle={(v) => onPatch({ tremoloEnabled: v })} />
-            <div className="rack-field">
-              <label>Rate (Hz) {layer.tremoloRateHz.toFixed(1)}</label>
-              <input
-                type="range"
-                min={0.1}
-                max={20}
-                step={0.1}
-                value={layer.tremoloRateHz}
-                onChange={(e) => onPatch({ tremoloRateHz: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-field">
-              <label>Depth {Math.round(layer.tremoloDepth * 100)}%</label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={layer.tremoloDepth}
-                onChange={(e) => onPatch({ tremoloDepth: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-field">
-              <label>Stereo {Math.round(layer.tremoloStereo * 100)}%</label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={layer.tremoloStereo}
-                onChange={(e) => onPatch({ tremoloStereo: Number(e.target.value) })}
-              />
-            </div>
-          </div>
+          <RackFxModule title="Tremolo" enabled={layer.tremoloEnabled} onToggle={(v) => onPatch({ tremoloEnabled: v })} accent="#d6782e">
+            <RackKnob label="Rate" value={layer.tremoloRateHz} min={0.1} max={20} step={0.1} defaultValue={4} format={(v) => `${v.toFixed(1)}Hz`} onChange={(v) => onPatch({ tremoloRateHz: v })} accent="#d6782e" />
+            <RackKnob label="Depth" value={layer.tremoloDepth} min={0} max={1} step={0.01} defaultValue={0.5} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ tremoloDepth: v })} accent="#d6782e" />
+            <RackKnob label="Stereo" value={layer.tremoloStereo} min={0} max={1} step={0.01} defaultValue={0} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ tremoloStereo: v })} accent="#d6782e" />
+          </RackFxModule>
+
+          {/* phaser */}
+          <RackFxModule title="Phaser" enabled={layer.phaserEnabled} onToggle={(v) => onPatch({ phaserEnabled: v })} accent="#b36bd6" hint="Filtros passa-tudo em cascata modulados por LFO — dá um giro/efeito 'swoosh' característico.">
+            <RackKnob label="Rate" value={layer.phaserRateHz} min={0.02} max={8} step={0.01} defaultValue={0.5} format={(v) => `${v.toFixed(2)}Hz`} onChange={(v) => onPatch({ phaserRateHz: v })} accent="#b36bd6" />
+            <RackKnob label="Depth" value={layer.phaserDepth} min={0} max={1} step={0.01} defaultValue={0.6} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ phaserDepth: v })} accent="#b36bd6" />
+            <RackKnob label="Mix" value={layer.phaserMix} min={0} max={1} step={0.01} defaultValue={0.5} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ phaserMix: v })} accent="#b36bd6" />
+          </RackFxModule>
+
+          {/* flanger */}
+          <RackFxModule title="Flanger" enabled={layer.flangerEnabled} onToggle={(v) => onPatch({ flangerEnabled: v })} accent="#5f9fd6" hint="Delay bem curto modulado + realimentação — som metálico, tipo 'jato'.">
+            <RackKnob label="Rate" value={layer.flangerRateHz} min={0.02} max={5} step={0.01} defaultValue={0.25} format={(v) => `${v.toFixed(2)}Hz`} onChange={(v) => onPatch({ flangerRateHz: v })} accent="#5f9fd6" />
+            <RackKnob label="Depth" value={layer.flangerDepth} min={0} max={1} step={0.01} defaultValue={0.5} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ flangerDepth: v })} accent="#5f9fd6" />
+            <RackKnob label="Feedback" value={layer.flangerFeedback} min={0} max={0.95} step={0.01} defaultValue={0.4} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ flangerFeedback: v })} accent="#5f9fd6" />
+            <RackKnob label="Mix" value={layer.flangerMix} min={0} max={1} step={0.01} defaultValue={0.5} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ flangerMix: v })} accent="#5f9fd6" />
+          </RackFxModule>
 
           {/* chorus */}
-          <div className="rack-edit-cell">
-            <ToggleHeader title="Chorus" enabled={layer.chorusEnabled} onToggle={(v) => onPatch({ chorusEnabled: v })} />
-            <div className="rack-field">
-              <label>Mix {Math.round(layer.chorusMix * 100)}%</label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={layer.chorusMix}
-                onChange={(e) => onPatch({ chorusMix: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-edit-hint">Engrossa/alarga o timbre com uma modulação sutil de afinação — útil em pads, cordas e guitarra limpa.</div>
-          </div>
+          <RackFxModule title="Chorus" enabled={layer.chorusEnabled} onToggle={(v) => onPatch({ chorusEnabled: v })} accent="#2fb8c6" hint="Engrossa/alarga o timbre com uma modulação sutil de afinação — útil em pads, cordas e guitarra limpa.">
+            <RackKnob label="Mix" value={layer.chorusMix} min={0} max={1} step={0.01} defaultValue={0.25} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ chorusMix: v })} accent="#2fb8c6" />
+          </RackFxModule>
+
+          {/* bitcrusher / lo-fi */}
+          <RackFxModule title="Lo-Fi" enabled={layer.bitcrusherEnabled} onToggle={(v) => onPatch({ bitcrusherEnabled: v })} accent="#c67c3c" hint="Reduz bits e taxa de amostragem de propósito — timbre retrô/digital sujo.">
+            <RackKnob label="Bits" value={layer.bitcrusherBits} min={1} max={16} step={1} defaultValue={12} format={(v) => `${Math.round(v)}bit`} onChange={(v) => onPatch({ bitcrusherBits: v })} accent="#c67c3c" />
+            <RackKnob label="Rate" value={layer.bitcrusherRateHz} min={500} max={44100} step={100} defaultValue={44100} format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}`)} onChange={(v) => onPatch({ bitcrusherRateHz: v })} accent="#c67c3c" />
+            <RackKnob label="Mix" value={layer.bitcrusherMix} min={0} max={1} step={0.01} defaultValue={1} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ bitcrusherMix: v })} accent="#c67c3c" />
+          </RackFxModule>
+
+          {/* shimmer */}
+          <RackFxModule
+            title="Shimmer"
+            enabled={layer.shimmerEnabled}
+            onToggle={(v) => onPatch({ shimmerEnabled: v })}
+            accent="#d64fb0"
+            hint="Reverb etérea: desloca o sinal uma oitava acima e realimenta numa cauda que vai clareando — diferente do Reverb (grave/sala), aqui é brilho/textura, autocontido nesta camada."
+          >
+            <RackKnob label="Mix" value={layer.shimmerMix} min={0} max={1} step={0.01} defaultValue={0.35} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ shimmerMix: v })} accent="#d64fb0" />
+            <RackKnob label="Feedback" value={layer.shimmerFeedback} min={0} max={0.92} step={0.01} defaultValue={0.55} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ shimmerFeedback: v })} accent="#d64fb0" />
+            <RackKnob label="Tone" value={layer.shimmerToneHz} min={500} max={14000} step={50} defaultValue={6000} format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}Hz`)} onChange={(v) => onPatch({ shimmerToneHz: v })} accent="#d64fb0" />
+          </RackFxModule>
 
           {/* delay (eco) */}
-          <div className="rack-edit-cell">
-            <ToggleHeader title="Delay" enabled={layer.delayEnabled} onToggle={(v) => onPatch({ delayEnabled: v })} />
-            <div className="rack-field-label-row">
-              <label>Sync {layer.delaySync ? `(${bpm.toFixed(1)} BPM)` : ''}</label>
-              <ToggleHeader compact title="Sync" enabled={layer.delaySync} onToggle={(v) => onPatch({ delaySync: v })} />
-            </div>
-            {layer.delaySync ? (
-              <div className="rack-field">
-                <label>Divisão</label>
-                <select value={layer.delayDivision} onChange={(e) => onPatch({ delayDivision: e.target.value as RackDelayDivision })}>
-                  {DELAY_DIVISION_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
+          <RackFxModule
+            title="Delay"
+            enabled={layer.delayEnabled}
+            onToggle={(v) => onPatch({ delayEnabled: v })}
+            accent="#4f8fae"
+            hint="Tempos maiores soam como eco separado; tempos bem curtos (abaixo de ~40ms) engrossam o timbre."
+            extra={
+              <div className="rack-field-label-row">
+                <button
+                  type="button"
+                  className={`rack-fx-led-btn ${layer.delaySync ? 'on' : ''}`}
+                  onClick={() => onPatch({ delaySync: !layer.delaySync })}
+                  title={`Sync: ${layer.delaySync ? 'ligado' : 'desligado'}${layer.delaySync ? ` (${bpm.toFixed(1)} BPM)` : ''}`}
+                >
+                  <span className="rack-fx-led" style={layer.delaySync ? { background: '#4f8fae', boxShadow: '0 0 6px #4f8fae' } : undefined} />
+                  Sync
+                </button>
+                {layer.delaySync ? (
+                  <select value={layer.delayDivision} onChange={(e) => onPatch({ delayDivision: e.target.value as RackDelayDivision })}>
+                    {DELAY_DIVISION_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                ) : null}
+                <button
+                  type="button"
+                  className={`rack-fx-led-btn ${layer.delayPingPong ? 'on' : ''}`}
+                  onClick={() => onPatch({ delayPingPong: !layer.delayPingPong })}
+                  title={`Ping-pong: ${layer.delayPingPong ? 'ligado' : 'desligado'}`}
+                >
+                  <span className="rack-fx-led" style={layer.delayPingPong ? { background: '#4f8fae', boxShadow: '0 0 6px #4f8fae' } : undefined} />
+                  Ping-pong
+                </button>
               </div>
-            ) : (
-              <div className="rack-field">
-                <label>Tempo (ms) {Math.round(layer.delayTimeMs)}</label>
-                <input
-                  type="range"
-                  min={0}
-                  max={1500}
-                  step={10}
-                  value={layer.delayTimeMs}
-                  onChange={(e) => onPatch({ delayTimeMs: Number(e.target.value) })}
-                />
-              </div>
+            }
+          >
+            {!layer.delaySync && (
+              <RackKnob label="Tempo" value={layer.delayTimeMs} min={0} max={1500} step={10} defaultValue={300} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ delayTimeMs: v })} accent="#4f8fae" />
             )}
-            <div className="rack-field">
-              <label>Realimentação {Math.round(layer.delayFeedback * 100)}%</label>
-              <input
-                type="range"
-                min={0}
-                max={0.9}
-                step={0.01}
-                value={layer.delayFeedback}
-                onChange={(e) => onPatch({ delayFeedback: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-field">
-              <label>Mistura (seco/eco) {Math.round(layer.delayMix * 100)}%</label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={layer.delayMix}
-                onChange={(e) => onPatch({ delayMix: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-field-label-row">
-              <label>Ping-pong (eco alterna entre os canais)</label>
-              <ToggleHeader compact title="Ping-pong" enabled={layer.delayPingPong} onToggle={(v) => onPatch({ delayPingPong: v })} />
-            </div>
-            <div className="rack-edit-hint">Tempos maiores soam como eco separado; tempos bem curtos (abaixo de ~40ms) engrossam o timbre.</div>
-          </div>
+            <RackKnob label="Feedback" value={layer.delayFeedback} min={0} max={0.9} step={0.01} defaultValue={0.3} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ delayFeedback: v })} accent="#4f8fae" />
+            <RackKnob label="Mix" value={layer.delayMix} min={0} max={1} step={0.01} defaultValue={0.35} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ delayMix: v })} accent="#4f8fae" />
+          </RackFxModule>
 
           {/* oitavador (por camada) */}
-          <div className="rack-edit-cell rack-octaver">
-            <ToggleHeader title="Oitavador" enabled={layer.octaverEnabled} onToggle={(v) => onPatch({ octaverEnabled: v })} />
-            <div className="rack-octaver-modes">
-              {OCTAVER_MODE_OPTIONS.map((o) => (
-                <button
-                  key={o.value}
-                  type="button"
-                  className={`rack-octaver-mode-btn ${layer.octaverMode === o.value ? 'on' : ''}`}
-                  onClick={() => onPatch({ octaverMode: o.value })}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-            <div className="rack-field" style={{ marginTop: 6 }}>
-              <label>Volume da oitava extra {Math.round(layer.octaverMix * 100)}%</label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={layer.octaverMix}
-                onChange={(e) => onPatch({ octaverMix: Number(e.target.value) })}
-              />
-            </div>
-            <div className="rack-edit-hint">Dobra toda nota tocada NESTA camada numa oitava abaixo/acima, pra engrossar o timbre dela.</div>
-          </div>
+          <RackFxModule
+            title="Oitavador"
+            enabled={layer.octaverEnabled}
+            onToggle={(v) => onPatch({ octaverEnabled: v })}
+            accent="#8a5fd6"
+            hint="Dobra toda nota tocada NESTA camada numa oitava abaixo/acima, pra engrossar o timbre dela."
+            extra={
+              <div className="rack-octaver-modes">
+                {OCTAVER_MODE_OPTIONS.map((o) => (
+                  <button
+                    key={o.value}
+                    type="button"
+                    className={`rack-octaver-mode-btn ${layer.octaverMode === o.value ? 'on' : ''}`}
+                    onClick={() => onPatch({ octaverMode: o.value })}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            }
+          >
+            <RackKnob label="Mix" value={layer.octaverMix} min={0} max={1} step={0.01} defaultValue={0.7} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ octaverMix: v })} accent="#8a5fd6" />
+          </RackFxModule>
         </div>
       </div>
     </div>

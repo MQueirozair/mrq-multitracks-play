@@ -151,6 +151,50 @@ export interface LayerOctaverSettings {
   mix: number;
 }
 
+export interface LayerGateSettings {
+  enabled: boolean;
+  thresholdDb: number;
+  attackMs: number;
+  releaseMs: number;
+}
+
+export interface LayerPhaserSettings {
+  enabled: boolean;
+  rateHz: number;
+  /** 0..1 */
+  depth: number;
+  /** 0..1 */
+  mix: number;
+}
+
+export interface LayerFlangerSettings {
+  enabled: boolean;
+  rateHz: number;
+  /** 0..1 */
+  depth: number;
+  /** 0..0.95 */
+  feedback: number;
+  /** 0..1 */
+  mix: number;
+}
+
+export interface LayerBitcrusherSettings {
+  enabled: boolean;
+  bits: number;
+  rateHz: number;
+  /** 0..1 */
+  mix: number;
+}
+
+export interface LayerShimmerSettings {
+  enabled: boolean;
+  /** 0..1 */
+  mix: number;
+  /** 0..0.92 */
+  feedback: number;
+  toneHz: number;
+}
+
 interface LayerRuntime {
   format: RackLayerFormat | null;
   voice: AnyLayerVoice | null;
@@ -246,6 +290,58 @@ interface LayerRuntime {
   delay: LayerDelaySettings;
   reverbSendGain: GainNode;
   reverb: LayerReverbSettings;
+
+  // gate (porta de ruído) — ver setGate(). Mede nível via gateAnalyser e
+  // "pilota" gateGainNode (0 fechado / 1 aberto) por um timer periódico.
+  gateAnalyser: AnalyserNode;
+  gateAnalyserBuf: Float32Array;
+  gateGainNode: GainNode;
+  gateTimer: ReturnType<typeof setInterval> | null;
+  gateOpenAmount: number;
+  gate: LayerGateSettings;
+
+  // phaser (passa-tudo em cascata modulados por LFO) — ver setPhaser().
+  phaserStages: BiquadFilterNode[];
+  phaserLfo: OscillatorNode;
+  phaserLfoDepth: GainNode[];
+  phaserDry: GainNode;
+  phaserWet: GainNode;
+  phaserOutMix: GainNode;
+  phaser: LayerPhaserSettings;
+
+  // flanger (delay bem curto modulado + realimentação) — ver setFlanger().
+  flangerDelay: DelayNode;
+  flangerLfo: OscillatorNode;
+  flangerLfoDepth: GainNode;
+  flangerFeedbackGain: GainNode;
+  flangerDry: GainNode;
+  flangerWet: GainNode;
+  flangerOutMix: GainNode;
+  flanger: LayerFlangerSettings;
+
+  // bitcrusher/lo-fi (redução de bits + taxa de amostragem) — ver setBitcrusher().
+  bitcrusherShaper: WaveShaperNode;
+  bitcrusherProcessor: ScriptProcessorNode;
+  bitcrusherDry: GainNode;
+  bitcrusherWet: GainNode;
+  bitcrusherOutMix: GainNode;
+  bitcrusher: LayerBitcrusherSettings;
+  /** estado do "sample and hold" da redução de taxa — ver setBitcrusher/bitcrusherProcessor.onaudioprocess. */
+  bitcrusherHoldState: { phase: number; held: Float32Array };
+
+  // shimmer (deslocamento de oitava + realimentação etérea) — ver setShimmer().
+  shimmerInput: GainNode;
+  shimmerDelayA: DelayNode;
+  shimmerDelayB: DelayNode;
+  shimmerLfoA: OscillatorNode;
+  shimmerLfoB: OscillatorNode;
+  shimmerEnvA: GainNode;
+  shimmerEnvB: GainNode;
+  shimmerSum: GainNode;
+  shimmerTone: BiquadFilterNode;
+  shimmerFeedbackGain: GainNode;
+  shimmerWet: GainNode;
+  shimmer: LayerShimmerSettings;
 }
 
 function applyCharacter(filter: BiquadFilterNode, character: RackCharacter) {
@@ -349,6 +445,34 @@ function createDriveCurve(type: RackDriveType, amount: number): Float32Array {
         break;
       }
     }
+  }
+  return curve;
+}
+
+/**
+ * Curva pro WaveShaperNode que transforma uma onda dente-de-serra (-1..1) num
+ * envelope triangular (0..1) que sobe suave no começo do "grão" e desce
+ * suave perto do fim — usado pelo cross-fade do pitch shifter do Shimmer
+ * (ver createLayerRuntime), pra evitar o clique do salto abrupto da serra.
+ */
+function createTriangleEnvelopeCurve(): Float32Array {
+  const n = 1024;
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = i / (n - 1); // 0..1 (mapeado a partir de -1..1 do dente-de-serra)
+    curve[i] = 1 - Math.abs(x * 2 - 1);
+  }
+  return curve;
+}
+
+/** Curva de quantização de bits pro WaveShaperNode do Bitcrusher/Lo-Fi por camada — "achata" o sinal em degraus de 2^bits níveis. */
+function createBitcrusherCurve(bits: number): Float32Array {
+  const n = 4096;
+  const curve = new Float32Array(n);
+  const levels = Math.pow(2, Math.max(1, Math.min(16, bits)));
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = Math.round(x * levels) / levels;
   }
   return curve;
 }
@@ -540,6 +664,36 @@ export class RackEngine {
     eqAnalyser.fftSize = 2048;
     eqAnalyser.smoothingTimeConstant = 0.75;
 
+    // Gate (porta de ruído) — gateAnalyser mede o nível de entrada; um timer
+    // periódico (ver setGate/startGateTimer) pilota gateGainNode (1 aberto, 0
+    // fechado) com ataque/liberação suaves via setTargetAtTime.
+    const gateAnalyser = ctx.createAnalyser();
+    gateAnalyser.fftSize = 512;
+    gateAnalyser.smoothingTimeConstant = 0;
+    const gateAnalyserBuf = new Float32Array(gateAnalyser.fftSize);
+    const gateGainNode = ctx.createGain();
+    gateGainNode.gain.value = 1;
+    const gateTimer = setInterval(() => {
+      const layer = this.layers.find((l) => l.gateAnalyser === gateAnalyser);
+      if (!layer || !this.ctx) return;
+      if (!layer.gate.enabled) {
+        layer.gateGainNode.gain.setTargetAtTime(1, this.ctx.currentTime, 0.015);
+        layer.gateOpenAmount = 1;
+        return;
+      }
+      layer.gateAnalyser.getFloatTimeDomainData(layer.gateAnalyserBuf as Float32Array<ArrayBuffer>);
+      let peak = 0;
+      for (let i = 0; i < layer.gateAnalyserBuf.length; i++) {
+        const abs = Math.abs(layer.gateAnalyserBuf[i]);
+        if (abs > peak) peak = abs;
+      }
+      const db = peak > 0.00001 ? 20 * Math.log10(peak) : -100;
+      const target = db >= layer.gate.thresholdDb ? 1 : 0;
+      const timeConstant = target === 1 ? Math.max(0.001, layer.gate.attackMs / 1000) : Math.max(0.005, layer.gate.releaseMs / 1000);
+      layer.gateGainNode.gain.setTargetAtTime(target, this.ctx.currentTime, timeConstant);
+      layer.gateOpenAmount = target;
+    }, 10);
+
     const drivePreGain = ctx.createGain();
     drivePreGain.gain.value = 1;
     const driveShaper = ctx.createWaveShaper();
@@ -585,6 +739,55 @@ export class RackEngine {
     tremoloPanDepth.connect(panNode.pan);
     tremoloLfo.start();
 
+    // Phaser por camada (4 filtros passa-tudo em cascata, cada um modulado
+    // pelo mesmo LFO) — ver setPhaser().
+    const phaserStageCount = 4;
+    const phaserStages = Array.from({ length: phaserStageCount }, () => {
+      const node = ctx.createBiquadFilter();
+      node.type = 'allpass';
+      node.frequency.value = 800;
+      node.Q.value = 0.6;
+      return node;
+    });
+    const phaserLfo = ctx.createOscillator();
+    phaserLfo.type = 'sine';
+    phaserLfo.frequency.value = 0.5;
+    const phaserLfoDepth = phaserStages.map((_, i) => {
+      const g = ctx.createGain();
+      g.gain.value = 0;
+      phaserLfo.connect(g);
+      // leve defasagem entre estágios (via peso diferente), dá mais corpo ao giro
+      g.gain.value = 0;
+      return g;
+    });
+    phaserLfo.start();
+    const phaserDry = ctx.createGain();
+    phaserDry.gain.value = 1;
+    const phaserWet = ctx.createGain();
+    phaserWet.gain.value = 0;
+    const phaserOutMix = ctx.createGain();
+    phaserOutMix.gain.value = 1;
+
+    // Flanger por camada (delay bem curto modulado + realimentação) — ver setFlanger().
+    const flangerDelay = ctx.createDelay(0.03);
+    flangerDelay.delayTime.value = 0.004;
+    const flangerLfo = ctx.createOscillator();
+    flangerLfo.type = 'sine';
+    flangerLfo.frequency.value = 0.25;
+    const flangerLfoDepth = ctx.createGain();
+    flangerLfoDepth.gain.value = 0;
+    flangerLfo.connect(flangerLfoDepth);
+    flangerLfoDepth.connect(flangerDelay.delayTime);
+    flangerLfo.start();
+    const flangerFeedbackGain = ctx.createGain();
+    flangerFeedbackGain.gain.value = 0;
+    const flangerDry = ctx.createGain();
+    flangerDry.gain.value = 1;
+    const flangerWet = ctx.createGain();
+    flangerWet.gain.value = 0;
+    const flangerOutMix = ctx.createGain();
+    flangerOutMix.gain.value = 1;
+
     // Chorus por camada (linha de delay curta modulada por um LFO lento, somada ao seco) — ver setChorus().
     const chorusDelay = ctx.createDelay(0.1);
     chorusDelay.delayTime.value = 0.02;
@@ -602,6 +805,34 @@ export class RackEngine {
     chorusWet.gain.value = 0;
     const chorusOutMix = ctx.createGain();
     chorusOutMix.gain.value = 1;
+
+    // Bitcrusher/Lo-Fi por camada — WaveShaper quantiza os bits; o
+    // ScriptProcessorNode faz "sample and hold" pra reduzir a taxa de
+    // amostragem efetiva (ver setBitcrusher/onaudioprocess).
+    const bitcrusherShaper = ctx.createWaveShaper();
+    bitcrusherShaper.curve = createBitcrusherCurve(16) as Float32Array<ArrayBuffer>;
+    const bitcrusherProcessor = ctx.createScriptProcessor(1024, 2, 2);
+    const bitcrusherHoldState = { phase: 0, held: new Float32Array(2) };
+    bitcrusherProcessor.onaudioprocess = (e: AudioProcessingEvent) => {
+      const layer = this.layers.find((l) => l.bitcrusherProcessor === bitcrusherProcessor);
+      const step = layer ? Math.max(1, Math.round(ctx.sampleRate / Math.max(500, layer.bitcrusher.rateHz))) : 1;
+      const state = bitcrusherHoldState;
+      for (let ch = 0; ch < e.outputBuffer.numberOfChannels; ch++) {
+        const input = e.inputBuffer.getChannelData(ch);
+        const output = e.outputBuffer.getChannelData(ch);
+        for (let i = 0; i < input.length; i++) {
+          if (state.phase % step === 0) state.held[ch] = input[i];
+          output[i] = state.held[ch];
+          if (ch === e.outputBuffer.numberOfChannels - 1) state.phase++;
+        }
+      }
+    };
+    const bitcrusherDry = ctx.createGain();
+    bitcrusherDry.gain.value = 1;
+    const bitcrusherWet = ctx.createGain();
+    bitcrusherWet.gain.value = 0;
+    const bitcrusherOutMix = ctx.createGain();
+    bitcrusherOutMix.gain.value = 1;
 
     // Delay (eco) por camada — via barramento seco/molhado em paralelo, pra
     // poder ter mix 0 (totalmente limpo) sem desconectar nada. delayNodeR +
@@ -632,12 +863,75 @@ export class RackEngine {
     const reverbSendGain = ctx.createGain();
     reverbSendGain.gain.value = 1;
 
+    // Shimmer por camada — rede própria de deslocamento de oitava (duas
+    // linhas de delay com LFOs em dente-de-serra defasados 180°, técnica
+    // clássica de "pitch shift por modulação de delay", sem precisar de
+    // AudioWorklet) + realimentação com filtro de brilho, formando uma cauda
+    // etérea que vai subindo de oitava a cada repetição — ver setShimmer().
+    const shimmerInput = ctx.createGain();
+    shimmerInput.gain.value = 1;
+    const shimmerGrainSec = 0.08;
+    const shimmerDelayA = ctx.createDelay(0.2);
+    const shimmerDelayB = ctx.createDelay(0.2);
+    const shimmerLfoA = ctx.createOscillator();
+    shimmerLfoA.type = 'sawtooth';
+    shimmerLfoA.frequency.value = 1 / shimmerGrainSec;
+    const shimmerLfoB = ctx.createOscillator();
+    shimmerLfoB.type = 'sawtooth';
+    shimmerLfoB.frequency.value = 1 / shimmerGrainSec;
+    const shimmerDelayScaleA = ctx.createGain();
+    shimmerDelayScaleA.gain.value = -shimmerGrainSec / 2;
+    const shimmerDelayOffsetA = ctx.createConstantSource();
+    shimmerDelayOffsetA.offset.value = shimmerGrainSec / 2;
+    const shimmerDelayScaleB = ctx.createGain();
+    shimmerDelayScaleB.gain.value = -shimmerGrainSec / 2;
+    const shimmerDelayOffsetB = ctx.createConstantSource();
+    shimmerDelayOffsetB.offset.value = shimmerGrainSec / 2;
+    shimmerLfoA.connect(shimmerDelayScaleA);
+    shimmerDelayScaleA.connect(shimmerDelayA.delayTime);
+    shimmerDelayOffsetA.connect(shimmerDelayA.delayTime);
+    shimmerLfoB.connect(shimmerDelayScaleB);
+    shimmerDelayScaleB.connect(shimmerDelayB.delayTime);
+    shimmerDelayOffsetB.connect(shimmerDelayB.delayTime);
+    // envelopes triangulares (derivados dos mesmos LFOs via retificação em
+    // onda quadrada aproximada) que cruzam suavemente entre os dois "grãos",
+    // evitando o clique do salto do dente-de-serra.
+    const shimmerEnvShaperA = ctx.createWaveShaper();
+    shimmerEnvShaperA.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
+    const shimmerEnvShaperB = ctx.createWaveShaper();
+    shimmerEnvShaperB.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
+    const shimmerEnvA = ctx.createGain();
+    shimmerEnvA.gain.value = 1;
+    const shimmerEnvB = ctx.createGain();
+    shimmerEnvB.gain.value = 1;
+    shimmerLfoA.connect(shimmerEnvShaperA);
+    shimmerEnvShaperA.connect(shimmerEnvA.gain);
+    shimmerLfoB.connect(shimmerEnvShaperB);
+    shimmerEnvShaperB.connect(shimmerEnvB.gain);
+    // shimmerLfoB começa meio período depois de shimmerLfoA (defasagem de
+    // 180°) — é isso que faz os dois "grãos" se alternarem suavemente em vez
+    // de pularem juntos (ver createTriangleEnvelopeCurve acima).
+    shimmerLfoA.start();
+    shimmerLfoB.start(ctx.currentTime + shimmerGrainSec / 2);
+    shimmerDelayOffsetA.start();
+    shimmerDelayOffsetB.start();
+    const shimmerSum = ctx.createGain();
+    shimmerSum.gain.value = 1;
+    const shimmerTone = ctx.createBiquadFilter();
+    shimmerTone.type = 'lowpass';
+    shimmerTone.frequency.value = 6000;
+    shimmerTone.Q.value = 0.5;
+    const shimmerFeedbackGain = ctx.createGain();
+    shimmerFeedbackGain.gain.value = 0;
+    const shimmerWet = ctx.createGain();
+    shimmerWet.gain.value = 0;
+
     // voice.output (ligado depois, em loadLayer) -> envelopeGain -> cutoffFilter
-    // -> eqBandNodes[0..5] (6 bandas) -> eqAnalyser (tap) -> drivePreGain -> { driveDry, driveShaper->driveWet }
+    // -> eqBandNodes[0..5] (6 bandas) -> eqAnalyser (tap) -> gateGainNode -> drivePreGain -> { driveDry, driveShaper->driveWet }
     // -> volumeGain -> panNode -> characterFilter -> compressorNode -> compressorMakeupGain
-    // -> tremoloGain -> { chorusDry, chorusDelay->chorusWet } -> chorusOutMix
-    // -> { delayDryGain, delayNode(+feedback/ping-pong)->delayWetGain } -> delayOutMix
-    // -> { masterGain, reverbSendGain -> reverbBus (compartilhado) }
+    // -> phaser -> flanger -> tremoloGain -> { chorusDry, chorusDelay->chorusWet } -> chorusOutMix
+    // -> bitcrusher -> { delayDryGain, delayNode(+feedback/ping-pong)->delayWetGain } -> delayOutMix
+    // -> { masterGain, reverbSendGain -> reverbBus (compartilhado), shimmerInput -> ... -> shimmerWet -> masterGain }
     envelopeGain.connect(cutoffFilter);
     let eqChainTail: AudioNode = cutoffFilter;
     for (const band of eqBandNodes) {
@@ -645,7 +939,9 @@ export class RackEngine {
       eqChainTail = band;
     }
     eqChainTail.connect(eqAnalyser);
-    eqChainTail.connect(drivePreGain);
+    eqAnalyser.connect(gateAnalyser); // só análise (nível de entrada do gate), não carrega o grafo de áudio adiante
+    eqChainTail.connect(gateGainNode);
+    gateGainNode.connect(drivePreGain);
     drivePreGain.connect(driveDry);
     drivePreGain.connect(driveShaper);
     driveShaper.connect(driveWet);
@@ -654,9 +950,9 @@ export class RackEngine {
     volumeGain.connect(panNode);
     panNode.connect(characterFilter);
 
-    // Rede de segurança: a cadeia nova (compressor/tremolo/chorus/delay/envio
-    // de reverb por camada) é só "tempero" por cima do som básico — se por
-    // QUALQUER motivo (plataforma/driver específico etc.) a montagem dela
+    // Rede de segurança: a cadeia nova (compressor/moduladores/delay/envio de
+    // reverb e shimmer por camada) é só "tempero" por cima do som básico — se
+    // por QUALQUER motivo (plataforma/driver específico etc.) a montagem dela
     // falhar, a camada NUNCA pode ficar muda por causa disso. Em caso de erro,
     // a ligação cai pro grafo simples de antes desses efeitos existirem
     // (characterFilter direto pro master/reverb compartilhado), e os nós
@@ -666,14 +962,37 @@ export class RackEngine {
     try {
       characterFilter.connect(compressorNode);
       compressorNode.connect(compressorMakeupGain);
-      compressorMakeupGain.connect(tremoloGain);
+      compressorMakeupGain.connect(phaserDry);
+      compressorMakeupGain.connect(phaserStages[0]);
+      for (let i = 0; i < phaserStages.length; i++) {
+        phaserLfo.connect(phaserLfoDepth[i]);
+        phaserLfoDepth[i].connect(phaserStages[i].frequency);
+        if (i < phaserStages.length - 1) phaserStages[i].connect(phaserStages[i + 1]);
+      }
+      phaserStages[phaserStages.length - 1].connect(phaserWet);
+      phaserDry.connect(phaserOutMix);
+      phaserWet.connect(phaserOutMix);
+      phaserOutMix.connect(flangerDry);
+      phaserOutMix.connect(flangerDelay);
+      flangerDelay.connect(flangerFeedbackGain);
+      flangerFeedbackGain.connect(flangerDelay);
+      flangerDelay.connect(flangerWet);
+      flangerDry.connect(flangerOutMix);
+      flangerWet.connect(flangerOutMix);
+      flangerOutMix.connect(tremoloGain);
       tremoloGain.connect(chorusDry);
       tremoloGain.connect(chorusDelay);
       chorusDelay.connect(chorusWet);
       chorusDry.connect(chorusOutMix);
       chorusWet.connect(chorusOutMix);
-      chorusOutMix.connect(delayDryGain);
-      chorusOutMix.connect(delayNode);
+      chorusOutMix.connect(bitcrusherDry);
+      chorusOutMix.connect(bitcrusherProcessor);
+      bitcrusherProcessor.connect(bitcrusherShaper);
+      bitcrusherShaper.connect(bitcrusherWet);
+      bitcrusherDry.connect(bitcrusherOutMix);
+      bitcrusherWet.connect(bitcrusherOutMix);
+      bitcrusherOutMix.connect(delayDryGain);
+      bitcrusherOutMix.connect(delayNode);
       // auto-feedback (mono) — rota padrão; vira ping-pong via setDelay() reconectando delayNode/delayNodeR.
       delayNode.connect(delayFeedbackGain);
       delayFeedbackGain.connect(delayNode);
@@ -683,6 +1002,21 @@ export class RackEngine {
       delayOutMix.connect(masterGain);
       delayOutMix.connect(reverbSendGain);
       reverbSendGain.connect(reverbBus);
+      // Shimmer — tocado em paralelo (parte do mesmo ponto do envio de reverb),
+      // autocontido (não usa o barramento de reverb compartilhado).
+      delayOutMix.connect(shimmerInput);
+      shimmerInput.connect(shimmerDelayA);
+      shimmerInput.connect(shimmerDelayB);
+      shimmerFeedbackGain.connect(shimmerDelayA);
+      shimmerFeedbackGain.connect(shimmerDelayB);
+      shimmerDelayA.connect(shimmerEnvA);
+      shimmerDelayB.connect(shimmerEnvB);
+      shimmerEnvA.connect(shimmerSum);
+      shimmerEnvB.connect(shimmerSum);
+      shimmerSum.connect(shimmerTone);
+      shimmerTone.connect(shimmerFeedbackGain);
+      shimmerTone.connect(shimmerWet);
+      shimmerWet.connect(masterGain);
       postCharacterOutput = delayOutMix;
     } catch (err) {
       console.error('[rack] falha ao montar compressor/delay/reverb por camada — usando cadeia simples pra garantir som', err);
@@ -767,6 +1101,46 @@ export class RackEngine {
       pitchBendSemitones: 0,
       meterAnalyser,
       meterBuf: new Float32Array(meterAnalyser.fftSize),
+      gateAnalyser,
+      gateAnalyserBuf,
+      gateGainNode,
+      gateTimer,
+      gateOpenAmount: 1,
+      gate: { enabled: false, thresholdDb: -40, attackMs: 5, releaseMs: 120 },
+      phaserStages,
+      phaserLfo,
+      phaserLfoDepth,
+      phaserDry,
+      phaserWet,
+      phaserOutMix,
+      phaser: { enabled: false, rateHz: 0.5, depth: 0.6, mix: 0.5 },
+      flangerDelay,
+      flangerLfo,
+      flangerLfoDepth,
+      flangerFeedbackGain,
+      flangerDry,
+      flangerWet,
+      flangerOutMix,
+      flanger: { enabled: false, rateHz: 0.25, depth: 0.5, feedback: 0.4, mix: 0.5 },
+      bitcrusherShaper,
+      bitcrusherProcessor,
+      bitcrusherDry,
+      bitcrusherWet,
+      bitcrusherOutMix,
+      bitcrusher: { enabled: false, bits: 12, rateHz: 44100, mix: 1 },
+      bitcrusherHoldState,
+      shimmerInput,
+      shimmerDelayA,
+      shimmerDelayB,
+      shimmerLfoA,
+      shimmerLfoB,
+      shimmerEnvA,
+      shimmerEnvB,
+      shimmerSum,
+      shimmerTone,
+      shimmerFeedbackGain,
+      shimmerWet,
+      shimmer: { enabled: false, mix: 0.35, feedback: 0.55, toneHz: 6000 },
     };
   }
 
@@ -1264,6 +1638,88 @@ export class RackEngine {
     const layer = this.layers[index];
     if (!layer) return;
     layer.octaver = { ...settings, mix: Math.min(1, Math.max(0, settings.mix)) };
+  }
+
+  // --- gate (porta de ruído) ---
+
+  /**
+   * `thresholdDb`/`attackMs`/`releaseMs` só são lidos pelo timer periódico
+   * criado em createLayerRuntime (gateTimer) — aqui só guardamos as
+   * configurações; quando desligado, o timer garante que gateGainNode volte
+   * suavemente a 1 (aberto/transparente).
+   */
+  setGate(index: number, settings: LayerGateSettings) {
+    const layer = this.layers[index];
+    if (!layer) return;
+    layer.gate = settings;
+  }
+
+  /** Quanto a porta deste gate está aberta agora (0 fechada .. 1 totalmente aberta) — pro medidor da UI. */
+  getGateOpenAmount(index: number): number {
+    return this.layers[index]?.gateGainNode.gain.value ?? 1;
+  }
+
+  // --- phaser ---
+
+  setPhaser(index: number, settings: LayerPhaserSettings) {
+    const layer = this.layers[index];
+    if (!layer || !this.ctx) return;
+    layer.phaser = settings;
+    const now = this.ctx.currentTime;
+    layer.phaserLfo.frequency.setTargetAtTime(Math.max(0.02, settings.rateHz), now, 0.01);
+    const depth = settings.enabled ? Math.max(0, Math.min(1, settings.depth)) : 0;
+    // cada estágio varia a frequência central numa faixa proporcional à profundidade, em torno de ~800Hz
+    for (const g of layer.phaserLfoDepth) g.gain.setTargetAtTime(depth * 1400, now, 0.01);
+    for (const stage of layer.phaserStages) stage.frequency.setTargetAtTime(800, now, 0.01);
+    const wet = settings.enabled ? Math.max(0, Math.min(1, settings.mix)) : 0;
+    layer.phaserWet.gain.setTargetAtTime(wet, now, 0.01);
+    layer.phaserDry.gain.setTargetAtTime(1 - wet * 0.5, now, 0.01);
+  }
+
+  // --- flanger ---
+
+  setFlanger(index: number, settings: LayerFlangerSettings) {
+    const layer = this.layers[index];
+    if (!layer || !this.ctx) return;
+    layer.flanger = settings;
+    const now = this.ctx.currentTime;
+    layer.flangerLfo.frequency.setTargetAtTime(Math.max(0.02, settings.rateHz), now, 0.01);
+    const depth = settings.enabled ? Math.max(0, Math.min(1, settings.depth)) : 0;
+    // profundidade de modulação em torno de um delay base de 4ms (0..~9ms)
+    layer.flangerLfoDepth.gain.setTargetAtTime(depth * 0.0045, now, 0.01);
+    layer.flangerDelay.delayTime.setTargetAtTime(0.0045, now, 0.01);
+    const feedback = settings.enabled ? Math.min(0.95, Math.max(0, settings.feedback)) : 0;
+    layer.flangerFeedbackGain.gain.setTargetAtTime(feedback, now, 0.01);
+    const wet = settings.enabled ? Math.max(0, Math.min(1, settings.mix)) : 0;
+    layer.flangerWet.gain.setTargetAtTime(wet, now, 0.01);
+    layer.flangerDry.gain.setTargetAtTime(1, now, 0.01);
+  }
+
+  // --- bitcrusher / lo-fi ---
+
+  setBitcrusher(index: number, settings: LayerBitcrusherSettings) {
+    const layer = this.layers[index];
+    if (!layer || !this.ctx) return;
+    layer.bitcrusher = settings;
+    layer.bitcrusherShaper.curve = createBitcrusherCurve(settings.bits) as Float32Array<ArrayBuffer>;
+    const wet = settings.enabled ? Math.max(0, Math.min(1, settings.mix)) : 0;
+    const now = this.ctx.currentTime;
+    layer.bitcrusherWet.gain.setTargetAtTime(wet, now, 0.01);
+    layer.bitcrusherDry.gain.setTargetAtTime(1 - wet, now, 0.01);
+  }
+
+  // --- shimmer ---
+
+  setShimmer(index: number, settings: LayerShimmerSettings) {
+    const layer = this.layers[index];
+    if (!layer || !this.ctx) return;
+    layer.shimmer = settings;
+    const now = this.ctx.currentTime;
+    const wet = settings.enabled ? Math.max(0, Math.min(1, settings.mix)) : 0;
+    layer.shimmerWet.gain.setTargetAtTime(wet, now, 0.01);
+    const feedback = settings.enabled ? Math.min(0.92, Math.max(0, settings.feedback)) : 0;
+    layer.shimmerFeedbackGain.gain.setTargetAtTime(feedback, now, 0.01);
+    layer.shimmerTone.frequency.setTargetAtTime(Math.max(300, Math.min(16000, settings.toneHz)), now, 0.02);
   }
 
   /**

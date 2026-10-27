@@ -834,10 +834,57 @@ export default function HelpPanel() {
           <p>
             Além do reverb geral do MASTER (quantidade de retorno), cada camada tem seu próprio <b>envio de reverb</b>{' '}
             (quanto dela entra no barramento compartilhado — ligado e em 100% por padrão, igual sempre foi), um{' '}
-            <b>compressor</b> (threshold, razão e ganho de compensação, pra nivelar um timbre que varia muito de
-            volume) e um <b>delay/eco</b> (tempo, realimentação e mistura seco/molhado) — tudo no painel "Editar" de
-            cada camada, abaixo do Drive.
+            <b>compressor</b> (controle único <b>Amount</b>, mais Attack/Release e um medidor GR) e um{' '}
+            <b>delay/eco</b> (tempo ou Sync, realimentação, mistura seco/molhado e Ping-pong) — tudo no painel
+            "Editar" de cada camada, nos módulos abaixo do Drive.
           </p>
+
+          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Novidade — visual de rack de verdade (knobs) e 5 novos efeitos</h3>
+          <p>
+            O painel "Editar" de cada camada foi reorganizado pra parecer um <b>rack de pedais/plugins de verdade</b>:
+            cada efeito agora é um "módulo" com cantos arredondados, parafusos decorativos nos cantos e um{' '}
+            <b>LED liga/desliga</b> no cabeçalho (clique nele pra ativar/desativar o efeito), no lugar da antiga grade
+            corrida de controles. Os ajustes numéricos viraram <b>knobs giratórios</b> (como um plugin de DAW ou um
+            pedal de efeito real) em vez de barras deslizantes simples:
+          </p>
+          <ul>
+            <li><b>Arraste pra cima/baixo</b> em cima de um knob pra aumentar/diminuir o valor (quanto mais você arrasta, mais ele muda — não importa se o mouse sai de cima do desenho redondo, continue segurando e arrastando).</li>
+            <li><b>Duplo-clique</b> num knob volta ele pro valor padrão de fábrica daquele parâmetro.</li>
+            <li><b>Scroll do mouse</b> em cima de um knob faz um ajuste fino, passo a passo.</li>
+          </ul>
+          <p>
+            Essa reorganização trouxe junto <b>5 efeitos novos por camada</b>, que não existiam antes — cada um no seu
+            próprio módulo, entre o Compressor e o Delay:
+          </p>
+          <ul>
+            <li>
+              <b>Gate</b> (porta de ruído): silencia automaticamente o sinal sempre que ele cai abaixo do{' '}
+              <b>Threshold</b> — útil em captações/amostras com chiado ou ruído de fundo constante. <b>Attack</b>{' '}
+              controla a rapidez com que a porta abre quando o som volta, <b>Release</b> a rapidez com que ela fecha
+              no silêncio; o medidor mostra "Aberto"/"Fechado" em tempo real.
+            </li>
+            <li>
+              <b>Phaser</b>: quatro filtros em cascata modulados por um LFO lento, dando o giro/"swoosh" clássico de
+              pedal de phaser — <b>Rate</b> (velocidade do giro), <b>Depth</b> (intensidade da modulação) e{' '}
+              <b>Mix</b> (seco/efeito).
+            </li>
+            <li>
+              <b>Flanger</b>: delay bem curto modulado com realimentação, som metálico/"jato de avião" — <b>Rate</b>,{' '}
+              <b>Depth</b>, <b>Feedback</b> (quanto mais alto, mais metálico/ressonante) e <b>Mix</b>.
+            </li>
+            <li>
+              <b>Lo-Fi</b> (bitcrusher): reduz de propósito a resolução do áudio — <b>Bits</b> (quanto menor, mais
+              "quadrado"/digital o som) e <b>Rate</b> (taxa de amostragem reduzida; quanto menor, mais abafado/retrô),
+              mais <b>Mix</b>.
+            </li>
+            <li>
+              <b>Shimmer</b>: uma cauda etérea que desloca o sinal uma oitava <b>acima</b> e vai realimentando/
+              clareando a cada repetição (técnica clássica de reverbs "shimmer" de pedaleira/estúdio) — <b>Mix</b>,{' '}
+              <b>Feedback</b> (quanto maior, mais longa e brilhante a cauda) e <b>Tone</b> (filtro que escurece/
+              clareia a cauda). É diferente do Reverb normal da camada (que é grave/tipo "sala"): aqui o efeito é
+              todo autocontido nesta camada, sem usar o barramento de reverb compartilhado do MASTER.
+            </li>
+          </ul>
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Oitavador por camada</h3>
           <p>

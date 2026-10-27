@@ -531,6 +531,59 @@ export interface RackLayer {
   octaverMode: RackOctaverMode;
   /** 0..1 — volume relativo (fração da velocity original) das notas extras geradas pelo oitavador */
   octaverMix: number;
+
+  /** Gate (porta de ruído) por camada — silencia o sinal abaixo de um limiar, útil em captações/samples com ruído de fundo. */
+  gateEnabled: boolean;
+  /** dB, -80..0 */
+  gateThresholdDb: number;
+  /** ms, 0..100 — quão rápido a porta abre quando o sinal cruza o limiar. */
+  gateAttackMs: number;
+  /** ms, 10..1000 — quão rápido a porta fecha depois que o sinal cai abaixo do limiar. */
+  gateReleaseMs: number;
+
+  /** Phaser por camada — filtros passa-tudo em cascata modulados por LFO, dá aquele "giro" característico. */
+  phaserEnabled: boolean;
+  /** Hz, 0.02..8 */
+  phaserRateHz: number;
+  /** 0..1 */
+  phaserDepth: number;
+  /** 0..1 */
+  phaserMix: number;
+
+  /** Flanger por camada — linha de delay bem curta modulada por LFO + realimentação, som metálico/"jato". */
+  flangerEnabled: boolean;
+  /** Hz, 0.02..5 */
+  flangerRateHz: number;
+  /** 0..1 */
+  flangerDepth: number;
+  /** 0..0.95 */
+  flangerFeedback: number;
+  /** 0..1 */
+  flangerMix: number;
+
+  /** Bitcrusher/Lo-Fi por camada — reduz resolução (bits) e taxa de amostragem de propósito, pra um timbre "retrô"/digital sujo. */
+  bitcrusherEnabled: boolean;
+  /** 1..16 bits */
+  bitcrusherBits: number;
+  /** Hz, 500..44100 — taxa de amostragem "efetiva" alvo (quanto menor, mais granulado/retrô). */
+  bitcrusherRateHz: number;
+  /** 0..1 */
+  bitcrusherMix: number;
+
+  /**
+   * Shimmer por camada — variante etérea de reverb: desloca o sinal uma
+   * oitava acima e realimenta numa cauda que vai clareando/sumindo,
+   * diferente do reverb normal (MASTER). Autocontido por camada (não usa o
+   * barramento de reverb compartilhado), pois depende de uma rede própria
+   * de deslocamento de afinação por camada.
+   */
+  shimmerEnabled: boolean;
+  /** 0..1 — quanto do sinal "brilhante" (uma oitava acima, com cauda) é somado à saída. */
+  shimmerMix: number;
+  /** 0..0.92 — realimentação da cauda etérea; mais alto = cauda mais longa (pode acumular várias oitavas). */
+  shimmerFeedback: number;
+  /** Hz, 500..14000 — filtro passa-baixa dentro do loop de realimentação, controla o "brilho"/abafamento da cauda. */
+  shimmerToneHz: number;
 }
 
 /** Curva de resposta de velocidade aplicada à entrada MIDI física inteira do rack. */
@@ -688,6 +741,27 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     octaverEnabled: false,
     octaverMode: 'down',
     octaverMix: 0.7,
+    gateEnabled: false,
+    gateThresholdDb: -40,
+    gateAttackMs: 5,
+    gateReleaseMs: 120,
+    phaserEnabled: false,
+    phaserRateHz: 0.5,
+    phaserDepth: 0.6,
+    phaserMix: 0.5,
+    flangerEnabled: false,
+    flangerRateHz: 0.25,
+    flangerDepth: 0.5,
+    flangerFeedback: 0.4,
+    flangerMix: 0.5,
+    bitcrusherEnabled: false,
+    bitcrusherBits: 12,
+    bitcrusherRateHz: 44100,
+    bitcrusherMix: 1,
+    shimmerEnabled: false,
+    shimmerMix: 0.35,
+    shimmerFeedback: 0.55,
+    shimmerToneHz: 6000,
   };
 }
 
