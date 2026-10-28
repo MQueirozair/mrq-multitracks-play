@@ -2290,7 +2290,7 @@ function MasterColumn({
 
     {fxOpen && (
       <div className="rack-edit-overlay" onClick={() => setFxOpen(false)}>
-        <div className="rack-edit-panel card" onClick={(e) => e.stopPropagation()}>
+        <div className="rack-edit-panel card" style={{ width: 'min(640px, 100%)' }} onClick={(e) => e.stopPropagation()}>
           <div className="rack-edit-panel-header">
             <span>MASTER / FX</span>
             <button className="rack-edit-close" onClick={() => setFxOpen(false)} title="Fechar">
@@ -2298,26 +2298,29 @@ function MasterColumn({
             </button>
           </div>
 
-          <div className="rack-field" style={{ width: '100%', marginBottom: 14 }}>
-            <label>BPM (pra delay sincronizado) {bpm.toFixed(1)}</label>
-            <input
-              type="range"
-              min={40}
-              max={240}
-              step={0.5}
-              value={bpm}
-              onChange={(e) => onBpmChange(Number(e.target.value))}
-            />
-          </div>
+          <div className="rack-edit-grid">
+            <div className="rack-edit-cell">
+              <div className="rack-field">
+                <label>BPM (pra delay sincronizado) {bpm.toFixed(1)}</label>
+                <input
+                  type="range"
+                  min={40}
+                  max={240}
+                  step={0.5}
+                  value={bpm}
+                  onChange={(e) => onBpmChange(Number(e.target.value))}
+                />
+              </div>
+            </div>
 
-          <RackFxModule
-            title="Reverb"
-            accent="#4fae5e"
-            hint={'Bus único do rack (plate algorítmico estilo Dattorro) — o envio de cada camada é o "Amount" do Reverb dela. Shimmer é outro efeito, por camada.'}
-          >
-            <div className="rack-toggle-label">Mode</div>
-            <div className="rack-reverb-room-list">
-              {REVERB_ROOM_OPTIONS.map((o) => (
+            <RackFxModule
+              title="Reverb"
+              accent="#4fae5e"
+              hint={'Bus único do rack (plate algorítmico estilo Dattorro) — o envio de cada camada é o "Amount" do Reverb dela. Shimmer é outro efeito, por camada.'}
+            >
+              <div className="rack-toggle-label">Mode</div>
+              <div className="rack-reverb-room-list">
+                {REVERB_ROOM_OPTIONS.map((o) => (
                 <button
                   key={o.value}
                   type="button"
@@ -2388,7 +2391,8 @@ function MasterColumn({
                 MODERN
               </button>
             </div>
-          </RackFxModule>
+            </RackFxModule>
+          </div>
         </div>
       </div>
     )}
