@@ -1170,9 +1170,15 @@ export default function HelpPanel() {
           <div className="help-grid-2">
             <div>
               <p>
-                O MRQ verifica novas versões automaticamente em segundo plano. Quando encontra uma, baixa só os
-                arquivos que mudaram e avisa quando está pronta pra instalar — basta clicar em{' '}
-                <b>"Instalar e reiniciar"</b>. Suas músicas, tons e configurações são preservados entre versões.
+                O MRQ verifica novas versões automaticamente em segundo plano (ao abrir e depois a cada 4 horas).
+                Quando encontra uma, já baixa sozinho, sem pedir nada — e assim que termina, aparece uma pílula{' '}
+                <b>"Atualização pronta — instalar"</b> piscando direto na barra do título. Clicar nela instala e
+                reinicia na hora.
+              </p>
+              <p>
+                Se preferir não clicar, não precisa: na próxima vez que você simplesmente fechar o app normalmente,
+                ele já instala a versão baixada sozinho antes de fechar — não tem "baixar e instalar do zero" toda
+                vez, é tudo automático. Suas músicas, tons e configurações são preservados entre versões.
               </p>
               <p>
                 Em <b>Ajustes → Atualização</b> também dá pra forçar uma verificação manual com{' '}

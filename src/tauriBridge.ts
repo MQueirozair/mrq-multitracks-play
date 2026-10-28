@@ -33,18 +33,34 @@ let forceClose = false;
 
 getCurrentWindow()
   .onCloseRequested(async (event) => {
-    if (forceClose || !playbackActive) return;
-    event.preventDefault();
-    const confirmed = await ask(
-      'A música ainda está tocando. Tem certeza que quer fechar o MRQ - Multitracks Play?',
-      {
-        title: 'Música tocando',
-        kind: 'warning',
-        okLabel: 'Fechar mesmo assim',
-        cancelLabel: 'Cancelar',
+    if (!forceClose && playbackActive) {
+      event.preventDefault();
+      const confirmed = await ask(
+        'A música ainda está tocando. Tem certeza que quer fechar o MRQ - Multitracks Play?',
+        {
+          title: 'Música tocando',
+          kind: 'warning',
+          okLabel: 'Fechar mesmo assim',
+          cancelLabel: 'Cancelar',
+        }
+      );
+      if (!confirmed) return;
+      forceClose = true;
+    }
+    // Atualização automática "sem clique": se uma versão nova já terminou de
+    // baixar em segundo plano (ver updateReadyToInstall mais abaixo) e o
+    // usuário nunca foi lá apertar "Instalar e reiniciar", aproveita o
+    // fechamento do app — que ele já ia fazer de qualquer jeito — pra
+    // instalar sozinho. Na próxima vez que abrir o MRQ já está na versão
+    // nova, sem precisar baixar/instalar nada na mão.
+    if (updateReadyToInstall && pendingUpdate && !installingOnQuit) {
+      installingOnQuit = true;
+      event.preventDefault();
+      try {
+        await pendingUpdate.install();
+      } catch {
+        /* se a instalação silenciosa falhar, não trava o fechamento */
       }
-    );
-    if (confirmed) {
       forceClose = true;
       await getCurrentWindow().close();
     }
@@ -229,13 +245,20 @@ const MRQI_SAVE_FILTERS = [{ name: 'MRQ Instrument (.mrqi)', extensions: ['mrqi'
 // ---------- Auto-atualização (tauri-plugin-updater + GitHub Releases) ----------
 // Equivalente ao setupAutoUpdater() do electron/main.ts: autoDownload=true
 // (baixa assim que encontra uma versão nova) e checagem automática ao abrir
-// + a cada 4 horas. A diferença de comportamento em relação ao Electron:
-// autoInstallOnAppQuit (instalar sozinho ao fechar o app, sem o usuário
-// clicar em nada) não tem equivalente direto na API do plugin — aqui a
-// instalação final sempre depende de uma chamada explícita a update.install()
-// (ex.: o usuário clicando em "Reiniciar e atualizar" na tela de ajuda).
+// + a cada 4 horas. A instalação final acontece de duas formas, pra não
+// obrigar o usuário a sempre baixar/instalar tudo na mão:
+// 1) Clicando em "Instalar e reiniciar" (pill na titlebar ou Ajustes →
+//    Atualização) — aplica e relança o app na hora.
+// 2) Automático "sem clique": se ele simplesmente fechar o app normalmente
+//    com uma versão já baixada e pronta, o onCloseRequested abaixo aproveita
+//    o fechamento (que já ia acontecer) pra instalar sozinho — na próxima
+//    vez que abrir já está na versão nova (ver updateReadyToInstall).
 const updateStatusListeners = new Set<(payload: UpdateStatusPayload) => void>();
 let pendingUpdate: Update | null = null;
+// true assim que o download termina (evento 'Finished') — usado tanto pelo
+// indicador da titlebar quanto pelo auto-instalar-ao-fechar acima.
+let updateReadyToInstall = false;
+let installingOnQuit = false;
 
 function emitUpdateStatus(payload: UpdateStatusPayload) {
   updateStatusListeners.forEach((cb) => cb(payload));
@@ -263,6 +286,7 @@ async function performUpdateCheck(): Promise<UpdateStatusPayload> {
         const percent = totalBytes > 0 ? (downloadedBytes / totalBytes) * 100 : undefined;
         emitUpdateStatus({ status: 'downloading', percent });
       } else if (event.event === 'Finished') {
+        updateReadyToInstall = true;
         emitUpdateStatus({ status: 'downloaded', version: update.version });
       }
     });

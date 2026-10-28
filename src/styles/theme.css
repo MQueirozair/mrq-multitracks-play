@@ -116,6 +116,24 @@ input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-moz-ra
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); display: inline-block; }
 .dot.off { background: #666; }
 
+/* ---------- indicador de atualização na titlebar ---------- */
+/* Pílula "silenciosa" enquanto baixa em segundo plano; vira um BOTÃO
+   piscando (mesma cor de destaque do app) assim que a versão nova termina
+   de baixar — clicar nela instala e reinicia na hora, sem precisar abrir
+   Ajustes. Se o usuário não clicar, o fechamento normal do app já instala
+   sozinho (ver tauriBridge.ts / onCloseRequested). */
+.update-pill-downloading { color: var(--text-2); }
+.update-pill-ready {
+  cursor: pointer; font-weight: 700; color: #0c1a0f !important;
+  background: var(--accent) !important; border-color: var(--accent) !important;
+  animation: update-pill-pulse 1.6s ease-in-out infinite;
+}
+.update-pill-ready:hover { filter: brightness(1.08); }
+@keyframes update-pill-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+  50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 0%, transparent); }
+}
+
 /* ---------- mostrador de acorde em tempo real (Rack) ---------- */
 /* Largura e altura FIXAS de propósito (ver feedback do usuário): a pílula
    nunca aparece/some nem muda de tamanho conforme as notas tocadas mudam —

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Minus, Monitor, Square, X } from 'lucide-react';
+import { Minus, Monitor, Square, X, Download } from 'lucide-react';
 import { useStore } from '../state/useStore';
 import SessionTimer from './SessionTimer';
 import RackMidiPanel from './RackMidiPanel';
@@ -14,10 +14,24 @@ export default function TitleBar() {
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const syncLeaderState = useStore((s) => s.syncLeaderState);
+  const [updateStatus, setUpdateStatus] = useState<{
+    status: string;
+    version?: string;
+    percent?: number;
+  }>({ status: 'idle' });
 
   useEffect(() => {
     window.api.remote.getInfo().then(setRemoteInfo).catch(() => {});
   }, [settings.remote.port, settings.remote.enabled]);
+
+  // Indicador de atualização "na barra": o download em si já roda sozinho em
+  // segundo plano (ver tauriBridge.ts) — isso aqui só torna visível o
+  // progresso e, principalmente, dá um jeito de instalar com 1 clique assim
+  // que terminar, sem precisar abrir Ajustes → Atualização pra descobrir.
+  useEffect(() => {
+    const off = window.api.update?.onStatus((payload) => setUpdateStatus(payload));
+    return () => off?.();
+  }, []);
 
   return (
     <div className="titlebar">
@@ -46,6 +60,21 @@ export default function TitleBar() {
             🔗 Líder: {syncLeaderState.isPlaying ? '▶' : '■'} {syncLeaderState.bpm || '-'} BPM · {syncLeaderState.key}
           </div>
         )}
+        {updateStatus.status === 'downloading' && (
+          <div className="pill update-pill-downloading" title="Baixando a atualização sozinho, em segundo plano">
+            <Download size={12} /> Atualizando {Math.round(updateStatus.percent ?? 0)}%
+          </div>
+        )}
+        {updateStatus.status === 'downloaded' && (
+          <button
+            type="button"
+            className="pill update-pill-ready"
+            onClick={() => window.api.update.install()}
+            title={`Versão ${updateStatus.version ?? ''} já baixada — clique pra instalar e reiniciar agora (ou só feche o app depois, que ele instala sozinho)`}
+          >
+            <Download size={12} /> Atualização pronta — instalar
+          </button>
+        )}
         {nav === 'rack' && <RackMidiPanel />}
         <SessionTimer />
         <button
@@ -65,3 +94,4 @@ export default function TitleBar() {
     </div>
   );
 }
+
