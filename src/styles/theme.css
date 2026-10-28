@@ -962,6 +962,21 @@ input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-moz-ra
 .rack-fx-module-extra { display: flex; align-items: center; gap: 8px; padding: 0 2px; flex-wrap: wrap; }
 .rack-fx-module-extra select { font-size: 10.5px; padding: 4px 6px; }
 .rack-fx-knob-row { display: flex; align-items: flex-start; justify-content: space-around; gap: 6px; flex-wrap: wrap; padding: 2px 0; }
+/* botão "FAST" do Compressor — centralizado, acima do medidor GR (ver foto de referência: fica embaixo do knob Amount). */
+.rack-fx-fast-btn { display: flex; margin: 0 auto 6px; }
+.rack-fx-delay-footer { margin-top: 4px; padding: 0 2px; }
+.rack-fx-filter-select {
+  display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-2);
+  text-transform: uppercase; letter-spacing: .06em; font-weight: 700;
+}
+.rack-fx-filter-select select { font-size: 10.5px; padding: 4px 6px; flex: initial; }
+.rack-fx-tap-btn {
+  padding: 5px 14px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: .06em;
+  text-transform: uppercase; background: linear-gradient(180deg, #3a3340, #241f28); border: 1px solid var(--border);
+  color: var(--text-1); flex-shrink: 0;
+}
+.rack-fx-tap-btn:hover { color: #fff; border-color: #4f8fae; }
+.rack-fx-tap-btn:active { background: #1a3038; border-color: #4f8fae; }
 
 @media (max-width: 680px) {
   .rack-edit-grid { grid-template-columns: 1fr 1fr; }

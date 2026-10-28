@@ -327,6 +327,9 @@ export type RackPlayMode = 'poly' | 'mono';
 /** Divisão de compasso usada pelo delay sincronizado (ver RackLayer.delaySync). */
 export type RackDelayDivision = '1/16' | '1/8t' | '1/8' | '1/8d' | '1/4' | '1/4d' | '1/2';
 
+/** Tipo de filtro na cauda do delay por camada — ver RackLayer.delayFilterType. */
+export type RackDelayFilterType = 'off' | 'low' | 'high' | 'band';
+
 /** Duração de cada divisão em "tempos" (1 tempo = 1 nota semínima/quarter note), pra converter BPM em milissegundos: ms = (60000/bpm) * tempos. */
 export const RACK_DELAY_DIVISION_BEATS: Record<RackDelayDivision, number> = {
   '1/16': 0.25,
@@ -507,6 +510,14 @@ export interface RackLayer {
   compressorAttackMs: number;
   /** ms, 0..1000 — tempo de soltura depois que o som cai. */
   compressorReleaseMs: number;
+  /**
+   * Atalho "FAST" (igual ao botão da foto de referência): quando true, ignora
+   * compressorAttackMs/compressorReleaseMs e usa um ataque/soltura bem
+   * rápidos fixos (modo "limitador", pega transientes rápidos) — os dois
+   * knobs continuam guardando o valor deles (ficam desabilitados na UI
+   * enquanto FAST está ligado) pra voltar fácil ao ajuste manual.
+   */
+  compressorFast: boolean;
   /** dB, -60..0 — mantido por compatibilidade (sessões antigas); não editável na UI atual. */
   compressorThresholdDb: number;
   /** 1..20 (1 = sem compressão) — mantido por compatibilidade (sessões antigas); não editável na UI atual. */
@@ -528,6 +539,15 @@ export interface RackLayer {
   delayDivision: RackDelayDivision;
   /** true = ecos alternam entre os canais esquerdo/direito (eco "ping-pong" estéreo) em vez de repetir no mesmo canal. */
   delayPingPong: boolean;
+  /**
+   * "ANALOG" (igual ao botão da foto de referência): caráter de eco de fita
+   * analógica — satura levemente cada repetição e adiciona uma oscilação sutil
+   * de afinação (wow/flutter, como uma fita de verdade com variação de
+   * velocidade do motor) — ver RackEngine.setDelay/createTapeSaturationCurve.
+   */
+  delayAnalog: boolean;
+  /** Filtro na cauda do eco (igual ao menu "Filter" da foto) — cada repetição fica mais escura/fina/telefônica conforme o tipo. */
+  delayFilterType: RackDelayFilterType;
 
   /** Chorus por camada — engrossa/alarga o timbre com uma modulação sutil de afinação. */
   chorusEnabled: boolean;
@@ -782,6 +802,7 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     compressorAmount: 0.4,
     compressorAttackMs: 8,
     compressorReleaseMs: 140,
+    compressorFast: false,
     compressorThresholdDb: -24,
     compressorRatio: 4,
     compressorMakeupDb: 0,
@@ -792,6 +813,8 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     delaySync: false,
     delayDivision: '1/8',
     delayPingPong: false,
+    delayAnalog: false,
+    delayFilterType: 'off',
     chorusEnabled: false,
     chorusMix: 0.25,
     tremoloEnabled: false,

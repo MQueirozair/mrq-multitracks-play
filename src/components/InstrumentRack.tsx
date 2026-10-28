@@ -17,6 +17,7 @@ import type {
   RackArpPattern,
   RackCharacter,
   RackDelayDivision,
+  RackDelayFilterType,
   RackDriveType,
   RackLayer,
   RackLayerFormat,
@@ -390,12 +391,19 @@ export default function InstrumentRack() {
     if ('reverbEnabled' in patch || 'reverbSend' in patch) {
       rackEngine.setLayerReverb(index, { enabled: layer.reverbEnabled, send: layer.reverbSend });
     }
-    if ('compressorEnabled' in patch || 'compressorAmount' in patch || 'compressorAttackMs' in patch || 'compressorReleaseMs' in patch) {
+    if (
+      'compressorEnabled' in patch ||
+      'compressorAmount' in patch ||
+      'compressorAttackMs' in patch ||
+      'compressorReleaseMs' in patch ||
+      'compressorFast' in patch
+    ) {
       rackEngine.setCompressor(index, {
         enabled: layer.compressorEnabled,
         amount: layer.compressorAmount,
         attackMs: layer.compressorAttackMs,
         releaseMs: layer.compressorReleaseMs,
+        fast: layer.compressorFast,
       });
     }
     if ('tremoloEnabled' in patch || 'tremoloRateHz' in patch || 'tremoloDepth' in patch || 'tremoloStereo' in patch) {
@@ -416,7 +424,9 @@ export default function InstrumentRack() {
       'delayMix' in patch ||
       'delaySync' in patch ||
       'delayDivision' in patch ||
-      'delayPingPong' in patch
+      'delayPingPong' in patch ||
+      'delayAnalog' in patch ||
+      'delayFilterType' in patch
     ) {
       rackEngine.setDelay(index, {
         enabled: layer.delayEnabled,
@@ -426,6 +436,8 @@ export default function InstrumentRack() {
         sync: layer.delaySync,
         division: layer.delayDivision,
         pingPong: layer.delayPingPong,
+        analog: layer.delayAnalog,
+        filterType: layer.delayFilterType,
       });
     }
     if ('octaverEnabled' in patch || 'octaverMode' in patch || 'octaverMix' in patch) {
@@ -1422,6 +1434,24 @@ function LayerEditPanel({
   const [learningRange, setLearningRange] = useState(false);
   const learnBoundsRef = useRef<{ min: number; max: number } | null>(null);
 
+  // "TAP" do Delay (igual ao botão da foto de referência): cada clique guarda
+  // o instante; com 2+ cliques recentes (menos de 2s entre eles), a média dos
+  // intervalos vira o novo Tempo do eco — e desliga o Sync, já que tap manual
+  // só faz sentido no modo "tempo livre" (ms fixos, não ligado ao BPM).
+  const delayTapTimesRef = useRef<number[]>([]);
+  function handleDelayTap() {
+    const now = performance.now();
+    const times = delayTapTimesRef.current;
+    if (times.length > 0 && now - times[times.length - 1] > 2000) times.length = 0;
+    times.push(now);
+    if (times.length > 5) times.shift();
+    if (times.length >= 2) {
+      const intervals = times.slice(1).map((t, i) => t - times[i]);
+      const avgMs = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      onPatch({ delayTimeMs: Math.round(Math.min(1500, Math.max(10, avgMs)) / 10) * 10, delaySync: false });
+    }
+  }
+
   function choosePhoto() {
     fileInputRef.current?.click();
   }
@@ -1704,11 +1734,25 @@ function LayerEditPanel({
             enabled={layer.compressorEnabled}
             onToggle={(v) => onPatch({ compressorEnabled: v })}
             accent="#4fc3dc"
-            meter={<CompressorMeter index={index} active={layer.compressorEnabled} />}
+            hint='"FAST" (igual à foto de referência): liga um ataque/soltura bem rápidos fixos (modo limitador) e desativa os knobs Attack/Release enquanto estiver ligado.'
+            meter={
+              <>
+                <button
+                  type="button"
+                  className={`rack-fx-led-btn rack-fx-fast-btn ${layer.compressorFast ? 'on' : ''}`}
+                  onClick={() => onPatch({ compressorFast: !layer.compressorFast })}
+                  title={`Fast: ${layer.compressorFast ? 'ligado' : 'desligado'}`}
+                >
+                  <span className="rack-fx-led" style={layer.compressorFast ? { background: '#4fc3dc', boxShadow: '0 0 6px #4fc3dc' } : undefined} />
+                  Fast
+                </button>
+                <CompressorMeter index={index} active={layer.compressorEnabled} />
+              </>
+            }
           >
             <RackKnob label="Amount" value={layer.compressorAmount} min={0} max={1} step={0.01} defaultValue={0.4} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ compressorAmount: v })} />
-            <RackKnob label="Attack" value={layer.compressorAttackMs} min={0} max={200} step={1} defaultValue={8} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ compressorAttackMs: v })} />
-            <RackKnob label="Release" value={layer.compressorReleaseMs} min={10} max={1000} step={1} defaultValue={140} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ compressorReleaseMs: v })} />
+            <RackKnob label="Attack" value={layer.compressorAttackMs} min={0} max={200} step={1} defaultValue={8} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ compressorAttackMs: v })} disabled={layer.compressorFast} />
+            <RackKnob label="Release" value={layer.compressorReleaseMs} min={10} max={1000} step={1} defaultValue={140} format={(v) => `${Math.round(v)}ms`} onChange={(v) => onPatch({ compressorReleaseMs: v })} disabled={layer.compressorFast} />
           </RackFxModule>
 
           {/* gate (porta de ruído) */}
@@ -1805,6 +1849,31 @@ function LayerEditPanel({
                 >
                   <span className="rack-fx-led" style={layer.delayPingPong ? { background: '#4f8fae', boxShadow: '0 0 6px #4f8fae' } : undefined} />
                   Ping-pong
+                </button>
+                <button
+                  type="button"
+                  className={`rack-fx-led-btn ${layer.delayAnalog ? 'on' : ''}`}
+                  onClick={() => onPatch({ delayAnalog: !layer.delayAnalog })}
+                  title={`Analog: ${layer.delayAnalog ? 'ligado' : 'desligado'} — satura a cauda + leve oscilação de afinação (wow/flutter), tipo eco de fita`}
+                >
+                  <span className="rack-fx-led" style={layer.delayAnalog ? { background: '#4f8fae', boxShadow: '0 0 6px #4f8fae' } : undefined} />
+                  Analog
+                </button>
+              </div>
+            }
+            meter={
+              <div className="rack-field-label-row rack-fx-delay-footer">
+                <label className="rack-fx-filter-select">
+                  <span>Filter</span>
+                  <select value={layer.delayFilterType} onChange={(e) => onPatch({ delayFilterType: e.target.value as RackDelayFilterType })}>
+                    <option value="off">Off</option>
+                    <option value="low">Low</option>
+                    <option value="high">High</option>
+                    <option value="band">Band</option>
+                  </select>
+                </label>
+                <button type="button" className="rack-fx-tap-btn" onClick={handleDelayTap} title="Tap: clique no ritmo 2x ou mais pra ajustar o Tempo do eco">
+                  Tap
                 </button>
               </div>
             }

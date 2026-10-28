@@ -29,6 +29,7 @@ export function applyLayerParamsToEngine(index: number, layer: RackLayer) {
     amount: layer.compressorAmount,
     attackMs: layer.compressorAttackMs,
     releaseMs: layer.compressorReleaseMs,
+    fast: layer.compressorFast,
   });
   rackEngine.setTremolo(index, {
     enabled: layer.tremoloEnabled,
@@ -45,6 +46,8 @@ export function applyLayerParamsToEngine(index: number, layer: RackLayer) {
     sync: layer.delaySync,
     division: layer.delayDivision,
     pingPong: layer.delayPingPong,
+    analog: layer.delayAnalog,
+    filterType: layer.delayFilterType,
   });
   rackEngine.setLayerOctaver(index, { enabled: layer.octaverEnabled, mode: layer.octaverMode, mix: layer.octaverMix });
   rackEngine.setGate(index, {

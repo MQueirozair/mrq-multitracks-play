@@ -3,6 +3,7 @@ import type {
   RackArpPattern,
   RackCharacter,
   RackDelayDivision,
+  RackDelayFilterType,
   RackDriveType,
   RackEqBandSettings,
   RackLayerFormat,
@@ -124,6 +125,8 @@ export interface LayerCompressorSettings {
   amount: number;
   attackMs: number;
   releaseMs: number;
+  /** "FAST": ignora attackMs/releaseMs e usa um ataque/soltura fixos bem rápidos (modo limitador). */
+  fast: boolean;
 }
 
 export interface LayerDelaySettings {
@@ -134,6 +137,10 @@ export interface LayerDelaySettings {
   sync: boolean;
   division: RackDelayDivision;
   pingPong: boolean;
+  /** "ANALOG": satura a cauda + adiciona wow/flutter (oscilação de afinação de fita). */
+  analog: boolean;
+  /** Filtro na cauda do eco — ver RackDelayFilterType. */
+  filterType: RackDelayFilterType;
 }
 
 export interface LayerChorusSettings {
@@ -330,6 +337,17 @@ interface LayerRuntime {
   delayFeedbackGain: GainNode;
   /** realimentação R->L, usada só em modo ping-pong (ver reconnectDelayRouting). */
   delayFeedbackGainR: GainNode;
+  /** Filtro "FILTER" da cauda (Off/Low/High/Band) — fica logo após cada delayNode/delayNodeR. */
+  delayToneFilter: BiquadFilterNode;
+  delayToneFilterR: BiquadFilterNode;
+  /** Saturação "ANALOG" (curve=null quando desligado = transparente). */
+  delayAnalogShaper: WaveShaperNode;
+  delayAnalogShaperR: WaveShaperNode;
+  /** Wow/flutter "ANALOG" — osciladores somam uma oscilação sutil de afinação em cima do delayTime (ver setDelay). */
+  delayWowLfo: OscillatorNode;
+  delayWowDepth: GainNode;
+  delayFlutterLfo: OscillatorNode;
+  delayFlutterDepth: GainNode;
   delayDryGain: GainNode;
   delayWetGain: GainNode;
   delayOutMix: GainNode;
@@ -542,6 +560,24 @@ function createBitcrusherCurve(bits: number): Float32Array {
   for (let i = 0; i < n; i++) {
     const x = (i / (n - 1)) * 2 - 1;
     curve[i] = Math.round(x * levels) / levels;
+  }
+  return curve;
+}
+
+/**
+ * Curva de saturação suave ("tape") pro WaveShaperNode do botão "ANALOG" do
+ * Delay por camada — um soft-clip tipo tanh com um leve viés assimétrico
+ * (mais comum em saturação de fita real do que um clip simétrico), só o
+ * suficiente pra colorir as repetições sem distorcer agressivamente.
+ */
+function createTapeSaturationCurve(): Float32Array {
+  const n = 1024;
+  const curve = new Float32Array(n);
+  const drive = 1.8;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    const biased = x + 0.04 * x * x; // leve assimetria par (achata um pouco mais um lado da onda)
+    curve[i] = Math.tanh(biased * drive) / Math.tanh(drive);
   }
   return curve;
 }
@@ -932,6 +968,41 @@ export class RackEngine {
     delayNode.delayTime.value = 0.3;
     const delayNodeR = ctx.createDelay(4);
     delayNodeR.delayTime.value = 0.3;
+    // "FILTER" (Off/Low/High/Band) — ver setDelay(); 'off' usa type='allpass'
+    // (só muda fase, não amplitude) pra ficar acusticamente transparente sem
+    // precisar desconectar o nó.
+    const delayToneFilter = ctx.createBiquadFilter();
+    delayToneFilter.type = 'allpass';
+    delayToneFilter.frequency.value = 1200;
+    const delayToneFilterR = ctx.createBiquadFilter();
+    delayToneFilterR.type = 'allpass';
+    delayToneFilterR.frequency.value = 1200;
+    // "ANALOG" (satura a cauda) — curve=null é transparente (identidade) até
+    // setDelay() ligar; ver createTapeSaturationCurve().
+    const delayAnalogShaper = ctx.createWaveShaper();
+    const delayAnalogShaperR = ctx.createWaveShaper();
+    // "ANALOG" wow (lento, ~0.4Hz) + flutter (rápido, ~6Hz) somados direto no
+    // delayTime dos dois canais — mesma técnica usada no Flanger/Chorus desta
+    // classe (osc -> gain de profundidade -> AudioParam), profundidade parte
+    // em 0 (desligado) e só sobe quando analog=true (ver setDelay).
+    const delayWowLfo = ctx.createOscillator();
+    delayWowLfo.type = 'sine';
+    delayWowLfo.frequency.value = 0.4;
+    const delayWowDepth = ctx.createGain();
+    delayWowDepth.gain.value = 0;
+    const delayFlutterLfo = ctx.createOscillator();
+    delayFlutterLfo.type = 'sine';
+    delayFlutterLfo.frequency.value = 6;
+    const delayFlutterDepth = ctx.createGain();
+    delayFlutterDepth.gain.value = 0;
+    delayWowLfo.connect(delayWowDepth);
+    delayWowDepth.connect(delayNode.delayTime);
+    delayWowDepth.connect(delayNodeR.delayTime);
+    delayFlutterLfo.connect(delayFlutterDepth);
+    delayFlutterDepth.connect(delayNode.delayTime);
+    delayFlutterDepth.connect(delayNodeR.delayTime);
+    delayWowLfo.start();
+    delayFlutterLfo.start();
     const delayPannerL = ctx.createStereoPanner();
     delayPannerL.pan.value = -1;
     const delayPannerR = ctx.createStereoPanner();
@@ -1083,10 +1154,18 @@ export class RackEngine {
       bitcrusherWet.connect(bitcrusherOutMix);
       bitcrusherOutMix.connect(delayDryGain);
       bitcrusherOutMix.connect(delayNode);
-      // auto-feedback (mono) — rota padrão; vira ping-pong via setDelay() reconectando delayNode/delayNodeR.
-      delayNode.connect(delayFeedbackGain);
+      // delayNode(R) -> delayToneFilter(R) (FILTER) -> delayAnalogShaper(R) (ANALOG) são conexões fixas
+      // (nunca desfeitas) — só o que vem DEPOIS do shaper é reconectado dinamicamente por
+      // reconnectDelayRouting() ao alternar mono/ping-pong. Assim FILTER e ANALOG coloram tanto a
+      // realimentação quanto o eco audível, como num eco de fita de verdade, nos dois modos de rota.
+      delayNode.connect(delayToneFilter);
+      delayToneFilter.connect(delayAnalogShaper);
+      delayNodeR.connect(delayToneFilterR);
+      delayToneFilterR.connect(delayAnalogShaperR);
+      // auto-feedback (mono) — rota padrão; vira ping-pong via setDelay() chamando reconnectDelayRouting().
+      delayAnalogShaper.connect(delayFeedbackGain);
       delayFeedbackGain.connect(delayNode);
-      delayNode.connect(delayWetGain);
+      delayAnalogShaper.connect(delayWetGain);
       delayDryGain.connect(delayOutMix);
       delayWetGain.connect(delayOutMix);
       delayOutMix.connect(masterGain);
@@ -1163,7 +1242,7 @@ export class RackEngine {
       characterFilter,
       compressorNode,
       compressorMakeupGain,
-      compressor: { enabled: false, amount: 0.4, attackMs: 8, releaseMs: 140 },
+      compressor: { enabled: false, amount: 0.4, attackMs: 8, releaseMs: 140, fast: false },
       tremoloGain,
       tremoloLfo,
       tremoloDepthGain,
@@ -1182,10 +1261,18 @@ export class RackEngine {
       delayPannerR,
       delayFeedbackGain,
       delayFeedbackGainR,
+      delayToneFilter,
+      delayToneFilterR,
+      delayAnalogShaper,
+      delayAnalogShaperR,
+      delayWowLfo,
+      delayWowDepth,
+      delayFlutterLfo,
+      delayFlutterDepth,
       delayDryGain,
       delayWetGain,
       delayOutMix,
-      delay: { enabled: false, timeMs: 300, feedback: 0.3, mix: 0.35, sync: false, division: '1/8', pingPong: false },
+      delay: { enabled: false, timeMs: 300, feedback: 0.3, mix: 0.35, sync: false, division: '1/8', pingPong: false, analog: false, filterType: 'off' },
       reverbSendGain,
       reverb: { enabled: true, send: 1 },
       pitchBendSemitones: 0,
@@ -1585,10 +1672,16 @@ export class RackEngine {
     const threshold = settings.enabled ? -amount * 42 : 0;
     const ratio = settings.enabled ? 1 + amount * 14 : 1;
     const makeup = settings.enabled ? amount * 10 : 0;
+    // "FAST" (botão da foto de referência): ignora os knobs Attack/Release e
+    // usa um ataque quase instantâneo + soltura curta fixos — modo
+    // "limitador", pega transiente rápido em vez do groove mais lento/natural
+    // que os knobs normalmente permitem ajustar.
+    const attackMs = settings.fast ? 3 : settings.attackMs;
+    const releaseMs = settings.fast ? 60 : settings.releaseMs;
     layer.compressorNode.threshold.setTargetAtTime(threshold, now, 0.01);
     layer.compressorNode.ratio.setTargetAtTime(ratio, now, 0.01);
-    layer.compressorNode.attack.setTargetAtTime(Math.max(0.0005, settings.attackMs / 1000), now, 0.005);
-    layer.compressorNode.release.setTargetAtTime(Math.max(0.01, settings.releaseMs / 1000), now, 0.005);
+    layer.compressorNode.attack.setTargetAtTime(Math.max(0.0005, attackMs / 1000), now, 0.005);
+    layer.compressorNode.release.setTargetAtTime(Math.max(0.01, releaseMs / 1000), now, 0.005);
     layer.compressorMakeupGain.gain.setTargetAtTime(Math.pow(10, makeup / 20), now, 0.01);
   }
 
@@ -1642,6 +1735,29 @@ export class RackEngine {
     const wet = settings.enabled ? settings.mix : 0;
     layer.delayWetGain.gain.setTargetAtTime(wet, now, 0.01);
     layer.delayDryGain.gain.setTargetAtTime(1, now, 0.01); // dry sempre 100% — o delay só soma eco por cima, nunca "rouba" o sinal limpo
+
+    // "FILTER": cada repetição fica mais escura (low), mais fina/"dub" (high)
+    // ou tipo rádio/telefone (band); 'off' = allpass (transparente).
+    const filterParams: Record<RackDelayFilterType, { type: BiquadFilterType; freq: number; q: number }> = {
+      off: { type: 'allpass', freq: 1200, q: 0.7 },
+      low: { type: 'lowpass', freq: 2200, q: 0.7 },
+      high: { type: 'highpass', freq: 700, q: 0.7 },
+      band: { type: 'bandpass', freq: 1200, q: 1.1 },
+    };
+    const f = filterParams[settings.filterType] ?? filterParams.off;
+    layer.delayToneFilter.type = f.type;
+    layer.delayToneFilterR.type = f.type;
+    layer.delayToneFilter.frequency.setTargetAtTime(f.freq, now, 0.01);
+    layer.delayToneFilterR.frequency.setTargetAtTime(f.freq, now, 0.01);
+    layer.delayToneFilter.Q.setTargetAtTime(f.q, now, 0.01);
+    layer.delayToneFilterR.Q.setTargetAtTime(f.q, now, 0.01);
+
+    // "ANALOG": satura a cauda (curve=null é transparente/identidade quando
+    // desligado) + liga o wow (lento) / flutter (rápido) de afinação.
+    layer.delayAnalogShaper.curve = settings.analog ? (createTapeSaturationCurve() as Float32Array<ArrayBuffer>) : null;
+    layer.delayAnalogShaperR.curve = settings.analog ? (createTapeSaturationCurve() as Float32Array<ArrayBuffer>) : null;
+    layer.delayWowDepth.gain.setTargetAtTime(settings.analog ? 0.0015 : 0, now, 0.15);
+    layer.delayFlutterDepth.gain.setTargetAtTime(settings.analog ? 0.0004 : 0, now, 0.08);
     if (pingPongChanged) this.reconnectDelayRouting(layer, settings.pingPong);
   }
 
@@ -1653,29 +1769,31 @@ export class RackEngine {
    */
   private reconnectDelayRouting(layer: LayerRuntime, pingPong: boolean) {
     try {
-      layer.delayNode.disconnect();
-      layer.delayNodeR.disconnect();
+      // delayNode(R) -> delayToneFilter(R) -> delayAnalogShaper(R) são conexões fixas (ver buildGraph) —
+      // só desconectamos/reconectamos a partir do shaper pra dentro/fora do laço de realimentação.
+      layer.delayAnalogShaper.disconnect();
+      layer.delayAnalogShaperR.disconnect();
       layer.delayFeedbackGain.disconnect();
       layer.delayFeedbackGainR.disconnect();
     } catch {
       // ignora — pode já estar parcialmente desconectado
     }
     if (pingPong) {
-      // entrada -> delayNode(L) -> pannerL -> wet ; delayNode -> feedbackGain -> delayNodeR(R) -> pannerR -> wet
-      // ; delayNodeR -> feedbackGainR -> delayNode (fecha o laço, alternando de lado a cada repetição)
-      layer.delayNode.connect(layer.delayPannerL);
+      // shaper(L) -> pannerL -> wet ; shaper(L) -> feedbackGain -> delayNodeR(R)
+      // ; shaper(R) -> pannerR -> wet ; shaper(R) -> feedbackGainR -> delayNode (fecha o laço, alternando de lado a cada repetição)
+      layer.delayAnalogShaper.connect(layer.delayPannerL);
       layer.delayPannerL.connect(layer.delayWetGain);
-      layer.delayNode.connect(layer.delayFeedbackGain);
+      layer.delayAnalogShaper.connect(layer.delayFeedbackGain);
       layer.delayFeedbackGain.connect(layer.delayNodeR);
-      layer.delayNodeR.connect(layer.delayPannerR);
+      layer.delayAnalogShaperR.connect(layer.delayPannerR);
       layer.delayPannerR.connect(layer.delayWetGain);
-      layer.delayNodeR.connect(layer.delayFeedbackGainR);
+      layer.delayAnalogShaperR.connect(layer.delayFeedbackGainR);
       layer.delayFeedbackGainR.connect(layer.delayNode);
     } else {
       // comportamento original: um eco só, realimentando ele mesmo, sem pan extra.
-      layer.delayNode.connect(layer.delayFeedbackGain);
+      layer.delayAnalogShaper.connect(layer.delayFeedbackGain);
       layer.delayFeedbackGain.connect(layer.delayNode);
-      layer.delayNode.connect(layer.delayWetGain);
+      layer.delayAnalogShaper.connect(layer.delayWetGain);
     }
   }
 

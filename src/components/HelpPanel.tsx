@@ -746,8 +746,10 @@ export default function HelpPanel() {
           <ul>
             <li>
               <b>Compressor</b> ganhou um controle único, <b>Amount</b>, que ajusta threshold/razão/ganho de
-              compensação juntos (quanto mais alto, mais compressão), além de <b>Attack</b>/<b>Release</b> próprios e
-              um medidor <b>GR</b> (redução de ganho) mostrando quanto ele está atuando agora, ao vivo.
+              compensação juntos (quanto mais alto, mais compressão), além de <b>Attack</b>/<b>Release</b> próprios,
+              um botão <b>Fast</b> (liga um ataque/soltura bem rápidos fixos — modo "limitador" — e desativa os
+              knobs Attack/Release enquanto estiver ligado) e um medidor <b>GR</b> (redução de ganho) mostrando
+              quanto ele está atuando agora, ao vivo.
             </li>
             <li>
               <b>Tremolo</b> (novo): modula o volume periodicamente — <b>Rate</b> (velocidade), <b>Depth</b>{' '}
@@ -760,9 +762,13 @@ export default function HelpPanel() {
             </li>
             <li>
               <b>Delay</b> ganhou <b>Sync</b> (o tempo do eco segue o <b>BPM</b> do rack — ajustável no MASTER — em
-              vez de milissegundos fixos, com divisões de 1/16 a 1/2, incluindo pontuadas e tercinas) e{' '}
+              vez de milissegundos fixos, com divisões de 1/16 a 1/2, incluindo pontuadas e tercinas),{' '}
               <b>Ping-pong</b> (o eco alterna entre os canais esquerdo/direito a cada repetição, em vez de ficar
-              sempre no mesmo lado).
+              sempre no mesmo lado), <b>Analog</b> (caráter de eco de fita: satura levemente cada repetição e
+              adiciona uma oscilação sutil de afinação, como uma fita de verdade com variação de velocidade do
+              motor), <b>Filter</b> (escurece/afina/deixa tipo-rádio cada repetição: Off/Low/High/Band) e{' '}
+              <b>Tap</b> (clique no ritmo da música 2 vezes ou mais pra ajustar o Tempo do eco por batida, em vez de
+              girar o knob — desliga o Sync automaticamente, já que aí o tempo vira manual).
             </li>
           </ul>
           <p className="help-callout">
