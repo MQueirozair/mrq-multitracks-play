@@ -47,18 +47,37 @@ export default function RackKnob({
 
   const clamp = useCallback((v: number) => Math.min(max, Math.max(min, v)), [min, max]);
 
-  const onPointerMove = useCallback(
-    (e: PointerEvent) => {
-      if (!dragRef.current) return;
-      const dy = dragRef.current.startY - e.clientY;
-      // ~140px de arrasto cobre a faixa inteira — sensibilidade parecida com knobs de plugin de verdade
-      const range = max - min;
-      const next = clamp(dragRef.current.startValue + (dy / 140) * range);
-      const snapped = step > 0 ? Math.round(next / step) * step : next;
-      onChange(clamp(snapped));
-    },
-    [clamp, max, min, onChange, step]
-  );
+  // Guarda sempre a versão mais recente de min/max/step/onChange numa ref —
+  // ATUALIZADA EM TODO RENDER (sem lista de dependências), mas LIDA só dentro
+  // dos listeners de pointermove/pointerup abaixo. Isso existe por causa de um
+  // bug real encontrado: como `onChange` normalmente é uma arrow function
+  // nova a cada render do componente-pai, o antigo `onPointerMove` (um
+  // useCallback com `onChange` na lista de dependências) trocava de
+  // identidade assim que o PRIMEIRO pointermove do arraste disparava
+  // onChange() (-> re-render do pai -> nova função). O useEffect de limpeza
+  // (que reagia a essa troca de identidade) então removia do `window` o
+  // listener registrado em startDrag — mas nada o registrava de novo — e o
+  // knob parava de responder depois de mover só 1 pixel, pro resto daquele
+  // arraste (só "destravava" num novo mousedown). Lendo tudo de uma ref
+  // estável em vez de depender da identidade do callback, onPointerMove e
+  // stopDrag agora NUNCA trocam de identidade, então os listeners registrados
+  // em startDrag sobrevivem ao arraste inteiro até o pointerup de verdade.
+  const liveRef = useRef({ min, max, step, onChange });
+  useEffect(() => {
+    liveRef.current = { min, max, step, onChange };
+  });
+
+  const onPointerMove = useCallback((e: PointerEvent) => {
+    if (!dragRef.current) return;
+    const { min, max, step, onChange } = liveRef.current;
+    const dy = dragRef.current.startY - e.clientY;
+    // ~140px de arrasto cobre a faixa inteira — sensibilidade parecida com knobs de plugin de verdade
+    const range = max - min;
+    const clampLive = (v: number) => Math.min(max, Math.max(min, v));
+    const next = clampLive(dragRef.current.startValue + (dy / 140) * range);
+    const snapped = step > 0 ? Math.round(next / step) * step : next;
+    onChange(clampLive(snapped));
+  }, []);
 
   const stopDrag = useCallback(() => {
     dragRef.current = null;

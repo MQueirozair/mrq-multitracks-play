@@ -688,12 +688,19 @@ export interface InstrumentRackState {
   reverbRoom: RackReverbRoom;
   /** segundos, 0.2..8 — duração da cauda do reverb compartilhado. */
   reverbDecaySec: number;
+  /**
+   * Tom/brilho da cauda do reverb compartilhado, 0..1 (0 = Escuro/abafado,
+   * 1 = Claro/aberto) — controla um filtro passa-baixa na cauda (ver
+   * RackEngine.setReverbTone/regenerateReverbImpulse). Dois botões na UI
+   * (Escuro/Claro) escolhem valores nas pontas; o parâmetro em si é contínuo.
+   */
+  reverbTone: number;
   /** BPM de referência do rack, usado pelos delays por camada quando "Sync" está ligado (ver RackLayer.delaySync). */
   bpm: number;
 }
 
 /** Tipo de sala/algoritmo do reverb compartilhado do Rack — ver InstrumentRackState.reverbRoom. */
-export type RackReverbRoom = 'room' | 'hall' | 'plate' | 'spring';
+export type RackReverbRoom = 'room' | 'hall' | 'plate' | 'spring' | 'stage' | 'booth';
 
 export interface AppSettings {
   outputDeviceId: string | null;
@@ -851,6 +858,7 @@ export const DEFAULT_RACK_STATE: InstrumentRackState = {
   chordDisplayEnabled: true,
   reverbRoom: 'room',
   reverbDecaySec: 1.8,
+  reverbTone: 0.6,
   bpm: 120,
 };
 

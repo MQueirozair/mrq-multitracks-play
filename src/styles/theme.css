@@ -809,23 +809,37 @@ input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-moz-ra
 }
 .rack-bottom-row .rack-x-btn:hover { background: #3a1f1f; border-color: #5c2a2a; color: #f2a0a0; filter: none; }
 .rack-master-col {
-  width: 150px; flex-shrink: 0; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  width: 192px; flex-shrink: 0; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--radius-lg);
   padding: 12px 10px; display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: 0 2px 10px #0004;
 }
 .rack-master-title { font-size: 12px; font-weight: 800; letter-spacing: .1em; color: var(--text-0); }
-.rack-knob-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.rack-knob {
-  width: 52px; height: 52px; border-radius: 50%; background: var(--bg-3); border: 1px solid var(--border);
-  position: relative; display: flex; align-items: center; justify-content: center;
+/* ---------- Reverb compartilhado (MASTER) — lista de salas + tom Escuro/Claro ---------- */
+.rack-reverb-room-list {
+  display: grid; grid-template-columns: 1fr; gap: 3px; width: 100%; margin-bottom: 8px;
 }
-.rack-knob::before {
-  content: ''; position: absolute; inset: 0; border-radius: 50%; padding: 3px;
-  background: conic-gradient(var(--accent) calc(var(--knob-pct) * 1%), transparent 0);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor; mask-composite: exclude;
+.rack-reverb-room-item {
+  display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 6px;
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--text-2);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .02em; text-align: left;
 }
-.rack-knob-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
-.rack-knob-slider { width: 90px; }
+.rack-reverb-room-item:hover { color: var(--text-1); }
+.rack-reverb-room-item.active { color: var(--text-0); border-color: color-mix(in srgb, #4fae5e 50%, var(--border)); }
+.rack-reverb-room-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: var(--bg-2); border: 1px solid var(--border); flex-shrink: 0;
+}
+.rack-reverb-room-item.active .rack-reverb-room-dot { background: #4fae5e; border-color: #4fae5e; box-shadow: 0 0 5px #4fae5ea0; }
+.rack-reverb-select-btn {
+  grid-column: 1 / -1; padding: 6px 4px; border-radius: 6px; font-size: 10.5px; font-weight: 800; letter-spacing: .08em;
+  background: linear-gradient(180deg, #3a3340, #241f28); border: 1px solid var(--border); color: var(--text-1);
+}
+.rack-reverb-select-btn:not(:disabled):hover { color: #fff; border-color: #4fae5e; }
+.rack-reverb-select-btn:disabled { opacity: 0.45; cursor: default; }
+.rack-reverb-tone-row { display: flex; gap: 4px; width: 100%; margin-top: 8px; }
+.rack-reverb-tone-btn {
+  flex: 1; padding: 6px 4px; border-radius: 6px; font-size: 10px; font-weight: 800; letter-spacing: .06em;
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--text-2);
+}
+.rack-reverb-tone-btn.active { background: linear-gradient(180deg, #5a4f24, #2e2912); border-color: #c9a62f; color: #f2d98a; }
 .rack-panic-btn {
   width: 100%; padding: 10px 4px; background: #5c2626; border: 1px solid #7a3030; color: #fff; font-weight: 800;
   font-size: 11.5px; letter-spacing: .04em; border-radius: var(--radius-md);

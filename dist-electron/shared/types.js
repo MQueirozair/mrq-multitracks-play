@@ -192,6 +192,7 @@ exports.DEFAULT_RACK_STATE = {
     chordDisplayEnabled: true,
     reverbRoom: 'room',
     reverbDecaySec: 1.8,
+    reverbTone: 0.6,
     bpm: 120,
 };
 /**

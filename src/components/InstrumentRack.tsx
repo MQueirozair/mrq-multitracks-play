@@ -9,7 +9,6 @@ import {
   Piano,
   Plus,
   RotateCcw,
-  Volume2,
   X as XIcon,
 } from 'lucide-react';
 import { useStore } from '../state/useStore';
@@ -136,11 +135,13 @@ const DELAY_DIVISION_OPTIONS: { value: RackDelayDivision; label: string }[] = [
   { value: '1/2', label: '1/2' },
 ];
 
-const REVERB_ROOM_OPTIONS: { value: RackReverbRoom; label: string }[] = [
-  { value: 'room', label: 'Room' },
-  { value: 'hall', label: 'Hall' },
-  { value: 'plate', label: 'Plate' },
-  { value: 'spring', label: 'Spring' },
+const REVERB_ROOM_OPTIONS: { value: RackReverbRoom; label: string; hint: string }[] = [
+  { value: 'room', label: 'Room', hint: 'Sala pequena/média — ambiência natural, de uso geral.' },
+  { value: 'stage', label: 'Stage', hint: 'Palco de médio/grande porte — mais aberto, bom pra banda ao vivo.' },
+  { value: 'hall', label: 'Hall', hint: 'Salão grande — cauda longa e cheia, mais \"igreja/teatro\".' },
+  { value: 'booth', label: 'Booth', hint: 'Cabine isolada — bem curto e seco, quase sem cauda.' },
+  { value: 'plate', label: 'Plate', hint: 'Placa metálica — brilhante e denso, clássico de estúdio.' },
+  { value: 'spring', label: 'Spring', hint: 'Mola (amp de guitarra) — com uma leve trepidação característica.' },
 ];
 
 const OCTAVER_MODE_OPTIONS: { value: RackOctaverMode; label: string }[] = [
@@ -249,6 +250,10 @@ export default function InstrumentRack() {
   useEffect(() => {
     rackEngine.setReverbDecay(rack.reverbDecaySec);
   }, [rack.reverbDecaySec]);
+
+  useEffect(() => {
+    rackEngine.setReverbTone(rack.reverbTone);
+  }, [rack.reverbTone]);
 
   useEffect(() => {
     rackEngine.setBpm(rack.bpm);
@@ -584,12 +589,14 @@ export default function InstrumentRack() {
         reverb={rack.reverb}
         reverbRoom={rack.reverbRoom}
         reverbDecaySec={rack.reverbDecaySec}
+        reverbTone={rack.reverbTone}
         bpm={rack.bpm}
         transpose={rack.transpose}
         onMasterVolumeChange={(v) => updateRack({ masterVolume: v })}
         onReverbChange={(v) => updateRack({ reverb: v })}
         onReverbRoomChange={(v) => updateRack({ reverbRoom: v })}
         onReverbDecayChange={(v) => updateRack({ reverbDecaySec: v })}
+        onReverbToneChange={(v) => updateRack({ reverbTone: v })}
         onBpmChange={(v) => updateRack({ bpm: v })}
         onTransposeChange={(v) => updateRack({ transpose: v })}
         onPanic={() => rackEngine.panic()}
@@ -1913,12 +1920,14 @@ function MasterColumn({
   reverb,
   reverbRoom,
   reverbDecaySec,
+  reverbTone,
   bpm,
   transpose,
   onMasterVolumeChange,
   onReverbChange,
   onReverbRoomChange,
   onReverbDecayChange,
+  onReverbToneChange,
   onBpmChange,
   onTransposeChange,
   onPanic,
@@ -1931,12 +1940,14 @@ function MasterColumn({
   reverb: number;
   reverbRoom: RackReverbRoom;
   reverbDecaySec: number;
+  reverbTone: number;
   bpm: number;
   transpose: number;
   onMasterVolumeChange: (v: number) => void;
   onReverbChange: (v: number) => void;
   onReverbRoomChange: (v: RackReverbRoom) => void;
   onReverbDecayChange: (v: number) => void;
+  onReverbToneChange: (v: number) => void;
   onBpmChange: (v: number) => void;
   onTransposeChange: (v: number) => void;
   onPanic: () => void;
@@ -1945,6 +1956,10 @@ function MasterColumn({
   onLoadScene: (scene: RackScene) => void;
   onDeleteScene: (id: string) => void;
 }) {
+  const [pendingRoom, setPendingRoom] = useState<RackReverbRoom>(reverbRoom);
+  useEffect(() => {
+    setPendingRoom(reverbRoom);
+  }, [reverbRoom]);
   return (
     <div className="rack-master-col">
       <div className="rack-master-title">MASTER</div>
@@ -1970,42 +1985,56 @@ function MasterColumn({
       <div className="rack-volume-value">{masterVolume.toFixed(2)}</div>
       <div className="rack-volume-label">Saída</div>
 
-      <div className="rack-knob-wrap">
-        <div className="rack-knob" style={{ ['--knob-pct' as any]: Math.round(reverb * 100) }}>
-          <Volume2 size={16} style={{ opacity: 0.35 }} />
+      <div style={{ width: '100%' }}>
+      <RackFxModule title="Reverb" accent="#4fae5e" hint={'Bus único do rack — o envio de cada camada é o "Amount" do Reverb dela. Shimmer é outro efeito, por camada.'}>
+        <div className="rack-reverb-room-list">
+          {REVERB_ROOM_OPTIONS.map((o) => (
+            <button
+              key={o.value}
+              type="button"
+              className={`rack-reverb-room-item ${pendingRoom === o.value ? 'active' : ''}`}
+              onClick={() => setPendingRoom(o.value)}
+              title={o.hint}
+            >
+              <span className="rack-reverb-room-dot" />
+              {o.label}
+            </button>
+          ))}
+          <button
+            type="button"
+            className="rack-reverb-select-btn"
+            disabled={pendingRoom === reverbRoom}
+            onClick={() => onReverbRoomChange(pendingRoom)}
+            title="Aplica a sala selecionada na lista acima ao reverb compartilhado"
+          >
+            SELECT
+          </button>
         </div>
-        <input
-          className="rack-knob-slider"
-          type="range"
-          min={0}
-          max={1}
-          step={0.01}
-          value={reverb}
-          onChange={(e) => onReverbChange(Number(e.target.value))}
-        />
-        <div className="rack-volume-value">{reverb.toFixed(2)}</div>
-        <div className="rack-volume-label">Reverb</div>
+        <div className="rack-fx-knob-row">
+          <RackKnob label="Amount" value={reverb} min={0} max={1} step={0.01} defaultValue={0} format={(v) => `${Math.round(v * 100)}%`} onChange={onReverbChange} accent="#4fae5e" />
+          <RackKnob label="Decay" value={reverbDecaySec} min={0.2} max={8} step={0.1} defaultValue={1.8} unit="s" onChange={onReverbDecayChange} accent="#4fae5e" />
+        </div>
+        <div className="rack-reverb-tone-row">
+          <button
+            type="button"
+            className={`rack-reverb-tone-btn ${reverbTone < 0.5 ? 'active' : ''}`}
+            onClick={() => onReverbToneChange(0.2)}
+            title="Tom escuro/abafado — corta mais agudo da cauda do reverb"
+          >
+            ESCURO
+          </button>
+          <button
+            type="button"
+            className={`rack-reverb-tone-btn ${reverbTone >= 0.5 ? 'active' : ''}`}
+            onClick={() => onReverbToneChange(0.9)}
+            title="Tom claro/aberto — deixa a cauda do reverb mais brilhante"
+          >
+            CLARO
+          </button>
+        </div>
+      </RackFxModule>
       </div>
 
-      <div className="rack-field" style={{ marginTop: 8, width: '100%' }}>
-        <label>Room</label>
-        <select value={reverbRoom} onChange={(e) => onReverbRoomChange(e.target.value as RackReverbRoom)}>
-          {REVERB_ROOM_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>{o.label}</option>
-          ))}
-        </select>
-      </div>
-      <div className="rack-field" style={{ width: '100%' }}>
-        <label>Decay (s) {reverbDecaySec.toFixed(1)}</label>
-        <input
-          type="range"
-          min={0.2}
-          max={8}
-          step={0.1}
-          value={reverbDecaySec}
-          onChange={(e) => onReverbDecayChange(Number(e.target.value))}
-        />
-      </div>
       <div className="rack-field" style={{ width: '100%' }}>
         <label>BPM (pra delay sincronizado) {bpm.toFixed(1)}</label>
         <input

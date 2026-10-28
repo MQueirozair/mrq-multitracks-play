@@ -766,11 +766,15 @@ export default function HelpPanel() {
             </li>
           </ul>
           <p className="help-callout">
-            <b>Reverb por camada</b> agora chama o controle de envio de <b>"Amount"</b> (mesmo campo de sempre, só com
-            nome igual ao de plugins conhecidos) — a <b>"sala"</b> (Room: Room/Hall/Plate/Spring) e a duração da cauda
-            (<b>Decay</b>, em segundos) do reverb ficam na coluna <b>MASTER</b>, junto com o novo campo <b>BPM</b>{' '}
-            (usado pelos delays com Sync ligado) — já que o reverb é um retorno compartilhado por todas as 7 camadas,
-            não dá pra ter uma "sala" diferente em cada uma ao mesmo tempo sem pesar demais no processador.
+            <b>Reverb por camada</b> chama o controle de envio de <b>"Amount"</b> (mesmo campo de sempre, só com nome
+            igual ao de plugins conhecidos) — o reverb em si é um retorno <b>compartilhado por todas as 7 camadas</b>{' '}
+            (não dá pra ter uma "sala" diferente em cada uma ao mesmo tempo sem pesar demais no processador), e mora
+            na coluna <b>MASTER</b>, dentro do módulo <b>Reverb</b>: uma lista com 6 salas (<b>Room, Stage, Hall,
+            Booth, Plate, Spring</b> — clique numa da lista e depois em <b>SELECT</b> pra aplicar), os knobs{' '}
+            <b>Amount</b> (quanto do retorno volta pra mixagem) e <b>Decay</b> (duração da cauda, em segundos), e dois
+            botões <b>Escuro/Claro</b> que controlam o <b>Tom</b> da cauda (um filtro que corta mais ou menos agudo —
+            Escuro = mais abafado/quente, Claro = mais brilhante/aberto). O campo <b>BPM</b> (usado pelos delays com
+            Sync ligado) fica logo abaixo desse módulo, na mesma coluna.
           </p>
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Teclado MIDI físico, latência e teclado virtual</h3>
@@ -869,6 +873,11 @@ export default function HelpPanel() {
             <li><b>Duplo-clique</b> num knob volta ele pro valor padrão de fábrica daquele parâmetro.</li>
             <li><b>Scroll do mouse</b> em cima de um knob faz um ajuste fino, passo a passo.</li>
           </ul>
+          <p className="help-callout">
+            <b>Correção</b>: um bug fazia o knob "travar" depois de mover só 1 pixel dentro do mesmo arraste (dava
+            pra soltar e pegar de novo pra continuar ajustando, mas não dava pra fazer um arraste longo contínuo) —
+            já corrigido; agora qualquer knob do Rack acompanha o mouse do início ao fim do gesto.
+          </p>
           <p>
             Essa reorganização trouxe junto <b>5 efeitos novos por camada</b>, que não existiam antes — cada um no seu
             próprio módulo, entre o Compressor e o Delay:

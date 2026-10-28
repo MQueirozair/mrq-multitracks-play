@@ -424,6 +424,19 @@ function applyCharacter(filter: BiquadFilterNode, character: RackCharacter) {
  * (densa e brilhante) e Spring (com uma leve ondulação periódica, lembrando
  * o "boing" característico de springs de amplificador de guitarra).
  */
+/**
+ * Converte o parâmetro de Tom (0 = Escuro, 1 = Claro) na frequência de corte
+ * (Hz) do passa-baixa colocado na cauda do reverb compartilhado — escala
+ * exponencial (como a maioria dos knobs de frequência de verdade) entre uma
+ * "sala abafada" (~900 Hz) e uma "sala bem aberta" (~16 kHz, quase sem corte).
+ */
+function reverbToneToHz(tone: number): number {
+  const t = Math.max(0, Math.min(1, tone));
+  const minHz = 900;
+  const maxHz = 16000;
+  return minHz * Math.pow(maxHz / minHz, t);
+}
+
 function createReverbImpulse(ctx: AudioContext, room: RackReverbRoom, decaySec: number): AudioBuffer {
   const rate = ctx.sampleRate;
   const base = Math.max(0.2, Math.min(8, decaySec));
@@ -447,6 +460,16 @@ function createReverbImpulse(ctx: AudioContext, room: RackReverbRoom, decaySec: 
       durationSec = base * 0.9;
       decayExponent = 2.6;
       flutterHz = 7;
+      break;
+    case 'stage':
+      // palco de médio/grande porte: mais aberto que "room", mais contido que "hall".
+      durationSec = base * 1.3;
+      decayExponent = 2.0;
+      break;
+    case 'booth':
+      // cabine vocal/isolada: bem curta e seca, decaimento rápido.
+      durationSec = base * 0.5;
+      decayExponent = 4.2;
       break;
   }
   const length = Math.max(1, Math.floor(rate * durationSec));
@@ -549,10 +572,14 @@ export class RackEngine {
   private reverbBus: GainNode | null = null;
   private reverbWetGain: GainNode | null = null;
   private convolver: ConvolverNode | null = null;
+  /** passa-baixa na cauda do reverb compartilhado — dá o controle de Tom (Escuro/Claro), ver setReverbTone(). */
+  private reverbToneFilter: BiquadFilterNode | null = null;
   private layers: LayerRuntime[] = [];
   private reverbAmount = 0;
   private reverbRoom: RackReverbRoom = 'room';
   private reverbDecaySec = 1.8;
+  /** 0 (Escuro/abafado) .. 1 (Claro/aberto) — ver setReverbTone(). */
+  private reverbTone = 0.6;
   private masterVolume = 0.8;
   /** BPM de referência do rack, usado pelos delays sincronizados por camada (ver setDelay/RackLayer.delaySync). */
   private bpm = 120;
@@ -597,13 +624,19 @@ export class RackEngine {
     convolver.buffer = createReverbImpulse(ctx, this.reverbRoom, this.reverbDecaySec);
     const reverbBus = ctx.createGain();
     reverbBus.gain.value = 1;
+    const reverbToneFilter = ctx.createBiquadFilter();
+    reverbToneFilter.type = 'lowpass';
+    reverbToneFilter.Q.value = 0.6;
+    reverbToneFilter.frequency.value = reverbToneToHz(this.reverbTone);
     const reverbWetGain = ctx.createGain();
     reverbWetGain.gain.value = this.reverbAmount;
     reverbBus.connect(convolver);
-    convolver.connect(reverbWetGain);
+    convolver.connect(reverbToneFilter);
+    reverbToneFilter.connect(reverbWetGain);
     reverbWetGain.connect(masterGain);
     this.convolver = convolver;
     this.reverbBus = reverbBus;
+    this.reverbToneFilter = reverbToneFilter;
     this.reverbWetGain = reverbWetGain;
 
     this.layers = [];
@@ -633,6 +666,7 @@ export class RackEngine {
     this.reverbBus = null;
     this.reverbWetGain = null;
     this.convolver = null;
+    this.reverbToneFilter = null;
     this.layers = [];
     try {
       await oldCtx.close();
@@ -1695,6 +1729,14 @@ export class RackEngine {
   setReverbDecay(decaySec: number) {
     this.reverbDecaySec = Math.max(0.2, Math.min(8, decaySec));
     this.regenerateReverbImpulse();
+  }
+
+  /** Tom da cauda do reverb compartilhado: 0 (Escuro/abafado) .. 1 (Claro/aberto) — ajusta na hora, sem precisar regenerar a resposta impulsiva. */
+  setReverbTone(tone: number) {
+    this.reverbTone = Math.max(0, Math.min(1, tone));
+    if (this.reverbToneFilter && this.ctx) {
+      this.reverbToneFilter.frequency.setTargetAtTime(reverbToneToHz(this.reverbTone), this.ctx.currentTime, 0.02);
+    }
   }
 
   private regenerateReverbImpulse() {
