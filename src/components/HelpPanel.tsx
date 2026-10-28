@@ -775,12 +775,51 @@ export default function HelpPanel() {
             <b>Reverb por camada</b> chama o controle de envio de <b>"Amount"</b> (mesmo campo de sempre, só com nome
             igual ao de plugins conhecidos) — o reverb em si é um retorno <b>compartilhado por todas as 7 camadas</b>{' '}
             (não dá pra ter uma "sala" diferente em cada uma ao mesmo tempo sem pesar demais no processador), e mora
-            na coluna <b>MASTER</b>, dentro do módulo <b>Reverb</b>: uma lista com 6 salas (<b>Room, Stage, Hall,
-            Booth, Plate, Spring</b> — clique numa da lista e depois em <b>SELECT</b> pra aplicar), os knobs{' '}
-            <b>Amount</b> (quanto do retorno volta pra mixagem) e <b>Decay</b> (duração da cauda, em segundos), e dois
-            botões <b>Escuro/Claro</b> que controlam o <b>Tom</b> da cauda (um filtro que corta mais ou menos agudo —
-            Escuro = mais abafado/quente, Claro = mais brilhante/aberto). O campo <b>BPM</b> (usado pelos delays com
-            Sync ligado) fica logo abaixo desse módulo, na mesma coluna.
+            na coluna <b>MASTER</b>, dentro do módulo <b>Reverb</b>. Esse módulo foi reconstruído do zero como um{' '}
+            <b>reverb algorítmico tipo plate</b> (arquitetura de Dattorro — predelay, difusão de entrada e um
+            "tanque" com duas metades moduladas cruzadas entre si, a mesma base técnica por trás de plugins como o
+            Valhalla VintageVerb), no lugar do reverb por resposta impulsiva (convolução) de versões anteriores —
+            pensado pra ter mais corpo e "punch" em caixas de som (PA), com os seguintes controles:
+          </p>
+          <ul>
+            <li>
+              <b>Mode</b>: lista com 6 tipos de espaço (<b>Room, Stage, Hall, Booth, Plate, Spring</b> — clique num
+              da lista e depois em <b>SELECT</b> pra aplicar). Cada um ajusta de uma vez os knobs de{' '}
+              <b>Size/Diffusion/Damping/Mod</b> pra um ponto de partida típico daquele espaço — depois disso, todos
+              esses knobs continuam livres pra ajustar na mão, igual nos plugins de referência.
+            </li>
+            <li>
+              <b>Mix</b> (retorno geral, era "Amount"), <b>Predelay</b> (atraso antes da cauda começar, separa o
+              ataque seco do início do reverb) e <b>Decay</b> (tempo de decaimento da cauda, em segundos).
+            </li>
+            <li>
+              <b>Shape: Size</b> (tamanho do "tanque" interno — espaço maior/menor) e <b>Attack</b> (mistura um tap
+              mais cedo/direto da difusão de entrada com a cauda cheia — mais Attack = ataque mais rápido/denso).
+            </li>
+            <li>
+              <b>Diffusion: Early</b> (difusão na entrada, antes do tanque — borra o transiente de entrada) e{' '}
+              <b>Late</b> (difusão dentro do próprio tanque — controla se a cauda soa mais "eco" ou mais lisa/densa).
+            </li>
+            <li>
+              <b>Damping: HighFreq</b> (corta agudo dentro do tanque — controla a velocidade com que os agudos somem
+              da cauda) e <b>BassMult</b> (multiplicador do tempo de decaimento dos graves em relação ao Decay geral
+              — acima de 1x os graves "seguram" mais, abaixo somem mais rápido).
+            </li>
+            <li>
+              <b>Mod: Rate/Depth</b> (um LFO sutil modulando o tanque por dentro — evita colorações metálicas e dá
+              vida/movimento à cauda, técnica clássica de reverbs de plate).
+            </li>
+            <li>
+              <b>EQ: LowCut/HighCut</b> no retorno final (diferente do Damping, que só afeta a velocidade de
+              decaimento dos agudos dentro do tanque — o EQ aqui é o brilho/peso geral do retorno).
+            </li>
+            <li>
+              <b>Color</b>: <b>1970s</b> acrescenta uma saturação bem sutil dentro do loop do tanque (o "warmth" de
+              reverbs de hardware/plate antigos) e <b>Modern</b> deixa o loop limpo/linear.
+            </li>
+          </ul>
+          <p>
+            O campo <b>BPM</b> (usado pelos delays com Sync ligado) fica logo abaixo desse módulo, na mesma coluna.
           </p>
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Teclado MIDI físico, latência e teclado virtual</h3>
@@ -910,11 +949,22 @@ export default function HelpPanel() {
               mais <b>Mix</b>.
             </li>
             <li>
-              <b>Shimmer</b>: uma cauda etérea que desloca o sinal uma oitava <b>acima</b> e vai realimentando/
-              clareando a cada repetição (técnica clássica de reverbs "shimmer" de pedaleira/estúdio) — <b>Mix</b>,{' '}
-              <b>Feedback</b> (quanto maior, mais longa e brilhante a cauda) e <b>Tone</b> (filtro que escurece/
-              clareia a cauda). É diferente do Reverb normal da camada (que é grave/tipo "sala"): aqui o efeito é
-              todo autocontido nesta camada, sem usar o barramento de reverb compartilhado do MASTER.
+              <b>Shimmer</b> (redesenhado com todos os controles de plugins de referência como o Valhalla Shimmer):
+              um <b>pitch shifter dentro do próprio loop de realimentação</b> de uma rede de difusão/delay (não um
+              deslocamento seguido de reverb — o shifter faz parte do loop, é isso que dá a textura etérea
+              característica). É diferente do Reverb normal da camada (que é grave/tipo "sala"): aqui o efeito é
+              todo autocontido nesta camada, sem usar o barramento de reverb compartilhado do MASTER. Controles:
+              <ul>
+                <li><b>Mix</b> (seco/efeito) e <b>Feedback</b> (realimentação do loop — quanto maior, mais longa a cauda e mais evidente o deslocamento de afinação).</li>
+                <li><b>Shift</b>: -12 a +12 semitons — o clássico "shimmer" é +12 (uma oitava acima) com Feedback alto; valores negativos descem a afinação.</li>
+                <li><b>Diffusion</b>: dois allpasses dentro do loop — baixo soa mais "eco repetindo", alto vira uma cauda lisa e densa.</li>
+                <li><b>Size</b>: um delay extra dentro do loop — dá sensação de tamanho de espaço, independente do Feedback.</li>
+                <li><b>Low Cut/High Cut</b>: filtros passa-alta/passa-baixa dentro do loop (o antigo "Tone" virou High Cut) — tiram grave/agudo da cauda a cada repetição.</li>
+                <li><b>Mod Rate/Mod Depth</b>: um LFO sutil modulando o loop — dá movimento/vida à cauda, evita soar estático.</li>
+                <li><b>Reverb Mode</b>: Mono (loop centralizado, artefato de pitch mais evidente/"cru") ou Stereo (soma um 2º canal decorrelacionado — cauda mais larga e suave).</li>
+                <li><b>Pitch Mode</b>: Single (desloca só na direção do Shift — clássico Eno/Lanois) ou Dual (desloca pra cima E pra baixo ao mesmo tempo — mais denso/sinfônico).</li>
+                <li><b>Color</b>: atalhos Dark/Bright que ajustam Low Cut e High Cut juntos (equivalente ao Escuro/Claro do Reverb MASTER, só que para a cauda do Shimmer).</li>
+              </ul>
             </li>
           </ul>
 

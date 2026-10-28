@@ -80,6 +80,15 @@ export function applyLayerParamsToEngine(index: number, layer: RackLayer) {
     mix: layer.shimmerMix,
     feedback: layer.shimmerFeedback,
     toneHz: layer.shimmerToneHz,
+    shiftSemitones: layer.shimmerShiftSemitones,
+    diffusion: layer.shimmerDiffusion,
+    size: layer.shimmerSize,
+    lowCutHz: layer.shimmerLowCutHz,
+    modRateHz: layer.shimmerModRateHz,
+    modDepth: layer.shimmerModDepth,
+    reverbMode: layer.shimmerReverbMode,
+    pitchMode: layer.shimmerPitchMode,
+    color: layer.shimmerColor,
   });
   rackEngine.setArp(index, {
     enabled: layer.arpEnabled,

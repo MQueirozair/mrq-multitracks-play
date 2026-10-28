@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   AudioLines,
   ChevronDown,
@@ -23,11 +23,12 @@ import type {
   RackLayerFormat,
   RackOctaverMode,
   RackReverbRoom,
+  RackReverbColor,
   RackScene,
   RackVelocityCurve,
 } from '../../shared/types';
 import { defaultRackEqBands, migrateRackLayers } from '../../shared/types';
-import { rackEngine, detectRackFormat, PITCH_BEND_RANGE_SEMITONES } from '../audio/rack/RackEngine';
+import { rackEngine, detectRackFormat, PITCH_BEND_RANGE_SEMITONES, reverbModePreset } from '../audio/rack/RackEngine';
 import { applyLayerParamsToEngine, reloadAllRackLayers, reloadLayerFromDisk as reloadLayerFromDiskShared } from '../audio/rack/rackReload';
 import { onRackProgramChange, onRackRawNoteOn, computeVelocityCurve } from '../midi/rackMidiRouter';
 import TransportBar from './TransportBar';
@@ -96,6 +97,15 @@ const DEFAULT_LAYER_FX: Partial<RackLayer> = {
   shimmerMix: 0.35,
   shimmerFeedback: 0.55,
   shimmerToneHz: 6000,
+  shimmerShiftSemitones: 12,
+  shimmerDiffusion: 0.6,
+  shimmerSize: 1,
+  shimmerLowCutHz: 200,
+  shimmerModRateHz: 0.6,
+  shimmerModDepth: 0.25,
+  shimmerReverbMode: 'mono',
+  shimmerPitchMode: 'single',
+  shimmerColor: 'bright',
   arpEnabled: false,
   arpPattern: 'up',
   arpSync: true,
@@ -253,8 +263,40 @@ export default function InstrumentRack() {
   }, [rack.reverbDecaySec]);
 
   useEffect(() => {
-    rackEngine.setReverbTone(rack.reverbTone);
-  }, [rack.reverbTone]);
+    rackEngine.setReverbDamping(rack.reverbDampingHz);
+  }, [rack.reverbDampingHz]);
+
+  useEffect(() => {
+    rackEngine.setReverbBassMult(rack.reverbBassMult);
+  }, [rack.reverbBassMult]);
+
+  useEffect(() => {
+    rackEngine.setReverbPredelay(rack.reverbPredelayMs);
+  }, [rack.reverbPredelayMs]);
+
+  useEffect(() => {
+    rackEngine.setReverbSize(rack.reverbSize);
+  }, [rack.reverbSize]);
+
+  useEffect(() => {
+    rackEngine.setReverbAttack(rack.reverbAttack);
+  }, [rack.reverbAttack]);
+
+  useEffect(() => {
+    rackEngine.setReverbDiffusion(rack.reverbDiffusionEarly, rack.reverbDiffusionLate);
+  }, [rack.reverbDiffusionEarly, rack.reverbDiffusionLate]);
+
+  useEffect(() => {
+    rackEngine.setReverbMod(rack.reverbModRateHz, rack.reverbModDepth);
+  }, [rack.reverbModRateHz, rack.reverbModDepth]);
+
+  useEffect(() => {
+    rackEngine.setReverbEq(rack.reverbEqLowCutHz, rack.reverbEqHighCutHz);
+  }, [rack.reverbEqLowCutHz, rack.reverbEqHighCutHz]);
+
+  useEffect(() => {
+    rackEngine.setReverbColor(rack.reverbColor);
+  }, [rack.reverbColor]);
 
   useEffect(() => {
     rackEngine.setBpm(rack.bpm);
@@ -499,12 +541,34 @@ export default function InstrumentRack() {
         mix: layer.bitcrusherMix,
       });
     }
-    if ('shimmerEnabled' in patch || 'shimmerMix' in patch || 'shimmerFeedback' in patch || 'shimmerToneHz' in patch) {
+    if (
+      'shimmerEnabled' in patch ||
+      'shimmerMix' in patch ||
+      'shimmerFeedback' in patch ||
+      'shimmerToneHz' in patch ||
+      'shimmerShiftSemitones' in patch ||
+      'shimmerDiffusion' in patch ||
+      'shimmerSize' in patch ||
+      'shimmerLowCutHz' in patch ||
+      'shimmerModRateHz' in patch ||
+      'shimmerModDepth' in patch ||
+      'shimmerReverbMode' in patch ||
+      'shimmerPitchMode' in patch
+    ) {
       rackEngine.setShimmer(index, {
         enabled: layer.shimmerEnabled,
         mix: layer.shimmerMix,
         feedback: layer.shimmerFeedback,
         toneHz: layer.shimmerToneHz,
+        shiftSemitones: layer.shimmerShiftSemitones,
+        diffusion: layer.shimmerDiffusion,
+        size: layer.shimmerSize,
+        lowCutHz: layer.shimmerLowCutHz,
+        modRateHz: layer.shimmerModRateHz,
+        modDepth: layer.shimmerModDepth,
+        reverbMode: layer.shimmerReverbMode,
+        pitchMode: layer.shimmerPitchMode,
+        color: layer.shimmerColor,
       });
     }
   }
@@ -601,14 +665,50 @@ export default function InstrumentRack() {
         reverb={rack.reverb}
         reverbRoom={rack.reverbRoom}
         reverbDecaySec={rack.reverbDecaySec}
-        reverbTone={rack.reverbTone}
+        reverbDampingHz={rack.reverbDampingHz}
+        reverbBassMult={rack.reverbBassMult}
+        reverbPredelayMs={rack.reverbPredelayMs}
+        reverbSize={rack.reverbSize}
+        reverbAttack={rack.reverbAttack}
+        reverbDiffusionEarly={rack.reverbDiffusionEarly}
+        reverbDiffusionLate={rack.reverbDiffusionLate}
+        reverbModRateHz={rack.reverbModRateHz}
+        reverbModDepth={rack.reverbModDepth}
+        reverbEqLowCutHz={rack.reverbEqLowCutHz}
+        reverbEqHighCutHz={rack.reverbEqHighCutHz}
+        reverbColor={rack.reverbColor}
         bpm={rack.bpm}
         transpose={rack.transpose}
         onMasterVolumeChange={(v) => updateRack({ masterVolume: v })}
         onReverbChange={(v) => updateRack({ reverb: v })}
-        onReverbRoomChange={(v) => updateRack({ reverbRoom: v })}
+        onReverbRoomChange={(v) => {
+          // Mode/SELECT — aplica o preset inteiro (Size/Diffusion/Damping/Mod)
+          // no RackState de uma vez, pra UI e motor de áudio nunca ficarem
+          // dessincronizados (ver RackEngine.setReverbRoom).
+          const preset = reverbModePreset(v);
+          updateRack({
+            reverbRoom: v,
+            reverbSize: preset.size,
+            reverbDiffusionEarly: preset.diffusionEarly,
+            reverbDiffusionLate: preset.diffusionLate,
+            reverbDampingHz: preset.dampingHz,
+            reverbModRateHz: preset.modRateHz,
+            reverbModDepth: preset.modDepth,
+          });
+        }}
         onReverbDecayChange={(v) => updateRack({ reverbDecaySec: v })}
-        onReverbToneChange={(v) => updateRack({ reverbTone: v })}
+        onReverbDampingChange={(v) => updateRack({ reverbDampingHz: v })}
+        onReverbBassMultChange={(v) => updateRack({ reverbBassMult: v })}
+        onReverbPredelayChange={(v) => updateRack({ reverbPredelayMs: v })}
+        onReverbSizeChange={(v) => updateRack({ reverbSize: v })}
+        onReverbAttackChange={(v) => updateRack({ reverbAttack: v })}
+        onReverbDiffusionEarlyChange={(v) => updateRack({ reverbDiffusionEarly: v })}
+        onReverbDiffusionLateChange={(v) => updateRack({ reverbDiffusionLate: v })}
+        onReverbModRateChange={(v) => updateRack({ reverbModRateHz: v })}
+        onReverbModDepthChange={(v) => updateRack({ reverbModDepth: v })}
+        onReverbEqLowCutChange={(v) => updateRack({ reverbEqLowCutHz: v })}
+        onReverbEqHighCutChange={(v) => updateRack({ reverbEqHighCutHz: v })}
+        onReverbColorChange={(v) => updateRack({ reverbColor: v })}
         onBpmChange={(v) => updateRack({ bpm: v })}
         onTransposeChange={(v) => updateRack({ transpose: v })}
         onPanic={() => rackEngine.panic()}
@@ -1803,17 +1903,60 @@ function LayerEditPanel({
             <RackKnob label="Mix" value={layer.bitcrusherMix} min={0} max={1} step={0.01} defaultValue={1} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ bitcrusherMix: v })} accent="#c67c3c" />
           </RackFxModule>
 
-          {/* shimmer */}
+          {/* shimmer — controles equivalentes ao Valhalla Shimmer (Mix/Shift/Feedback/Diffusion/Size/Low Cut/High Cut/Mod Rate/Mod Depth/Reverb Mode/Pitch Mode/Color) */}
           <RackFxModule
             title="Shimmer"
             enabled={layer.shimmerEnabled}
             onToggle={(v) => onPatch({ shimmerEnabled: v })}
             accent="#d64fb0"
-            hint="Reverb etérea: desloca o sinal uma oitava acima e realimenta numa cauda que vai clareando — diferente do Reverb (grave/sala), aqui é brilho/textura, autocontido nesta camada."
+            hint="Pitch shifter dentro de um loop de realimentação difuso (como o Valhalla Shimmer) — desloca o sinal (Shift) e vai acumulando numa cauda etérea, diferente do Reverb (grave/sala), autocontido nesta camada."
           >
-            <RackKnob label="Mix" value={layer.shimmerMix} min={0} max={1} step={0.01} defaultValue={0.35} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ shimmerMix: v })} accent="#d64fb0" />
-            <RackKnob label="Feedback" value={layer.shimmerFeedback} min={0} max={0.92} step={0.01} defaultValue={0.55} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ shimmerFeedback: v })} accent="#d64fb0" />
-            <RackKnob label="Tone" value={layer.shimmerToneHz} min={500} max={14000} step={50} defaultValue={6000} format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}Hz`)} onChange={(v) => onPatch({ shimmerToneHz: v })} accent="#d64fb0" />
+            <div className="rack-fx-knob-row">
+              <RackKnob label="Mix" value={layer.shimmerMix} min={0} max={1} step={0.01} defaultValue={0.35} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ shimmerMix: v })} accent="#d64fb0" />
+              <RackKnob label="Shift" value={layer.shimmerShiftSemitones} min={-12} max={12} step={1} defaultValue={12} unit="st" onChange={(v) => onPatch({ shimmerShiftSemitones: Math.round(v) })} accent="#d64fb0" />
+              <RackKnob label="Feedback" value={layer.shimmerFeedback} min={0} max={0.92} step={0.01} defaultValue={0.55} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ shimmerFeedback: v })} accent="#d64fb0" />
+            </div>
+            <div className="rack-fx-knob-row">
+              <RackKnob label="Diffusion" value={layer.shimmerDiffusion} min={0} max={0.9} step={0.01} defaultValue={0.6} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ shimmerDiffusion: v })} accent="#d64fb0" />
+              <RackKnob label="Size" value={layer.shimmerSize} min={0.3} max={2} step={0.01} defaultValue={1} format={(v) => `${v.toFixed(2)}x`} onChange={(v) => onPatch({ shimmerSize: v })} accent="#d64fb0" />
+            </div>
+            <div className="rack-fx-knob-row">
+              <RackKnob label="Low Cut" value={layer.shimmerLowCutHz} min={20} max={2000} step={10} defaultValue={200} format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}Hz`)} onChange={(v) => onPatch({ shimmerLowCutHz: v })} accent="#d64fb0" />
+              <RackKnob label="High Cut" value={layer.shimmerToneHz} min={500} max={14000} step={50} defaultValue={6000} format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}Hz`)} onChange={(v) => onPatch({ shimmerToneHz: v })} accent="#d64fb0" />
+            </div>
+            <div className="rack-fx-knob-row">
+              <RackKnob label="Mod Rate" value={layer.shimmerModRateHz} min={0.05} max={5} step={0.01} defaultValue={0.6} unit="Hz" onChange={(v) => onPatch({ shimmerModRateHz: v })} accent="#d64fb0" />
+              <RackKnob label="Mod Depth" value={layer.shimmerModDepth} min={0} max={1} step={0.01} defaultValue={0.25} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ shimmerModDepth: v })} accent="#d64fb0" />
+            </div>
+            <div className="rack-toggle-label">Reverb mode</div>
+            <div className="rack-toggle-row" style={{ '--toggle-accent': '#d64fb0' } as CSSProperties}>
+              <button type="button" className={`rack-toggle-btn ${layer.shimmerReverbMode === 'mono' ? 'active' : ''}`} onClick={() => onPatch({ shimmerReverbMode: 'mono' })} title="Loop centralizado — artefato de pitch mais evidente, som mais 'cru'">MONO</button>
+              <button type="button" className={`rack-toggle-btn ${layer.shimmerReverbMode === 'stereo' ? 'active' : ''}`} onClick={() => onPatch({ shimmerReverbMode: 'stereo' })} title="Soma um 2º canal decorrelacionado — cauda mais larga e suave">STEREO</button>
+            </div>
+            <div className="rack-toggle-label">Pitch mode</div>
+            <div className="rack-toggle-row" style={{ '--toggle-accent': '#d64fb0' } as CSSProperties}>
+              <button type="button" className={`rack-toggle-btn ${layer.shimmerPitchMode === 'single' ? 'active' : ''}`} onClick={() => onPatch({ shimmerPitchMode: 'single' })} title="Desloca só na direção de Shift — clássico Eno/Lanois">SINGLE</button>
+              <button type="button" className={`rack-toggle-btn ${layer.shimmerPitchMode === 'dual' ? 'active' : ''}`} onClick={() => onPatch({ shimmerPitchMode: 'dual' })} title="Desloca pra cima E pra baixo ao mesmo tempo — mais denso/sinfônico">DUAL</button>
+            </div>
+            <div className="rack-toggle-label">Color</div>
+            <div className="rack-toggle-row" style={{ '--toggle-accent': '#d64fb0' } as CSSProperties}>
+              <button
+                type="button"
+                className={`rack-toggle-btn ${layer.shimmerColor === 'dark' ? 'active' : ''}`}
+                onClick={() => onPatch({ shimmerColor: 'dark', shimmerLowCutHz: 350, shimmerToneHz: 3200 })}
+                title="Atalho: corta mais grave e mais agudo da cauda — simula absorção de ar de espaços grandes"
+              >
+                DARK
+              </button>
+              <button
+                type="button"
+                className={`rack-toggle-btn ${layer.shimmerColor === 'bright' ? 'active' : ''}`}
+                onClick={() => onPatch({ shimmerColor: 'bright', shimmerLowCutHz: 120, shimmerToneHz: 9500 })}
+                title="Atalho: largura de banda cheia na cauda"
+              >
+                BRIGHT
+              </button>
+            </div>
           </RackFxModule>
 
           {/* delay (eco) */}
@@ -1989,14 +2132,36 @@ function MasterColumn({
   reverb,
   reverbRoom,
   reverbDecaySec,
-  reverbTone,
+  reverbDampingHz,
+  reverbBassMult,
+  reverbPredelayMs,
+  reverbSize,
+  reverbAttack,
+  reverbDiffusionEarly,
+  reverbDiffusionLate,
+  reverbModRateHz,
+  reverbModDepth,
+  reverbEqLowCutHz,
+  reverbEqHighCutHz,
+  reverbColor,
   bpm,
   transpose,
   onMasterVolumeChange,
   onReverbChange,
   onReverbRoomChange,
   onReverbDecayChange,
-  onReverbToneChange,
+  onReverbDampingChange,
+  onReverbBassMultChange,
+  onReverbPredelayChange,
+  onReverbSizeChange,
+  onReverbAttackChange,
+  onReverbDiffusionEarlyChange,
+  onReverbDiffusionLateChange,
+  onReverbModRateChange,
+  onReverbModDepthChange,
+  onReverbEqLowCutChange,
+  onReverbEqHighCutChange,
+  onReverbColorChange,
   onBpmChange,
   onTransposeChange,
   onPanic,
@@ -2009,14 +2174,36 @@ function MasterColumn({
   reverb: number;
   reverbRoom: RackReverbRoom;
   reverbDecaySec: number;
-  reverbTone: number;
+  reverbDampingHz: number;
+  reverbBassMult: number;
+  reverbPredelayMs: number;
+  reverbSize: number;
+  reverbAttack: number;
+  reverbDiffusionEarly: number;
+  reverbDiffusionLate: number;
+  reverbModRateHz: number;
+  reverbModDepth: number;
+  reverbEqLowCutHz: number;
+  reverbEqHighCutHz: number;
+  reverbColor: RackReverbColor;
   bpm: number;
   transpose: number;
   onMasterVolumeChange: (v: number) => void;
   onReverbChange: (v: number) => void;
   onReverbRoomChange: (v: RackReverbRoom) => void;
   onReverbDecayChange: (v: number) => void;
-  onReverbToneChange: (v: number) => void;
+  onReverbDampingChange: (v: number) => void;
+  onReverbBassMultChange: (v: number) => void;
+  onReverbPredelayChange: (v: number) => void;
+  onReverbSizeChange: (v: number) => void;
+  onReverbAttackChange: (v: number) => void;
+  onReverbDiffusionEarlyChange: (v: number) => void;
+  onReverbDiffusionLateChange: (v: number) => void;
+  onReverbModRateChange: (v: number) => void;
+  onReverbModDepthChange: (v: number) => void;
+  onReverbEqLowCutChange: (v: number) => void;
+  onReverbEqHighCutChange: (v: number) => void;
+  onReverbColorChange: (v: RackReverbColor) => void;
   onBpmChange: (v: number) => void;
   onTransposeChange: (v: number) => void;
   onPanic: () => void;
@@ -2026,10 +2213,12 @@ function MasterColumn({
   onDeleteScene: (id: string) => void;
 }) {
   const [pendingRoom, setPendingRoom] = useState<RackReverbRoom>(reverbRoom);
+  const [fxOpen, setFxOpen] = useState(false);
   useEffect(() => {
     setPendingRoom(reverbRoom);
   }, [reverbRoom]);
   return (
+    <>
     <div className="rack-master-col">
       <div className="rack-master-title">MASTER</div>
 
@@ -2054,80 +2243,23 @@ function MasterColumn({
       <div className="rack-volume-value">{masterVolume.toFixed(2)}</div>
       <div className="rack-volume-label">Saída</div>
 
-      <div style={{ width: '100%' }}>
-      <RackFxModule title="Reverb" accent="#4fae5e" hint={'Bus único do rack — o envio de cada camada é o "Amount" do Reverb dela. Shimmer é outro efeito, por camada.'}>
-        <div className="rack-reverb-room-list">
-          {REVERB_ROOM_OPTIONS.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              className={`rack-reverb-room-item ${pendingRoom === o.value ? 'active' : ''}`}
-              onClick={() => setPendingRoom(o.value)}
-              title={o.hint}
-            >
-              <span className="rack-reverb-room-dot" />
-              {o.label}
-            </button>
-          ))}
-          <button
-            type="button"
-            className="rack-reverb-select-btn"
-            disabled={pendingRoom === reverbRoom}
-            onClick={() => onReverbRoomChange(pendingRoom)}
-            title="Aplica a sala selecionada na lista acima ao reverb compartilhado"
-          >
-            SELECT
-          </button>
-        </div>
-        <div className="rack-fx-knob-row">
-          <RackKnob label="Amount" value={reverb} min={0} max={1} step={0.01} defaultValue={0} format={(v) => `${Math.round(v * 100)}%`} onChange={onReverbChange} accent="#4fae5e" />
-          <RackKnob label="Decay" value={reverbDecaySec} min={0.2} max={8} step={0.1} defaultValue={1.8} unit="s" onChange={onReverbDecayChange} accent="#4fae5e" />
-        </div>
-        <div className="rack-reverb-tone-row">
-          <button
-            type="button"
-            className={`rack-reverb-tone-btn ${reverbTone < 0.5 ? 'active' : ''}`}
-            onClick={() => onReverbToneChange(0.2)}
-            title="Tom escuro/abafado — corta mais agudo da cauda do reverb"
-          >
-            ESCURO
-          </button>
-          <button
-            type="button"
-            className={`rack-reverb-tone-btn ${reverbTone >= 0.5 ? 'active' : ''}`}
-            onClick={() => onReverbToneChange(0.9)}
-            title="Tom claro/aberto — deixa a cauda do reverb mais brilhante"
-          >
-            CLARO
-          </button>
-        </div>
-      </RackFxModule>
-      </div>
+      <RackKnob
+        label="Transpose"
+        value={transpose}
+        min={-12}
+        max={12}
+        step={1}
+        defaultValue={0}
+        bipolar
+        format={(v) => `${v >= 0 ? '+' : ''}${Math.round(v)}`}
+        onChange={(v) => onTransposeChange(Math.round(v))}
+        accent="#f2a93b"
+      />
+      <div className="rack-edit-hint" style={{ textAlign: 'center' }}>Transposição global (semitons)</div>
 
-      <div className="rack-field" style={{ width: '100%' }}>
-        <label>BPM (pra delay sincronizado) {bpm.toFixed(1)}</label>
-        <input
-          type="range"
-          min={40}
-          max={240}
-          step={0.5}
-          value={bpm}
-          onChange={(e) => onBpmChange(Number(e.target.value))}
-        />
-      </div>
-
-      <div className="rack-field" style={{ marginTop: 10, width: '100%' }}>
-        <label>Transposição global ({transpose >= 0 ? '+' : ''}{transpose} semitons)</label>
-        <input
-          type="range"
-          min={-24}
-          max={24}
-          step={1}
-          value={transpose}
-          onChange={(e) => onTransposeChange(Number(e.target.value))}
-        />
-        <div className="rack-edit-hint">Mesmo controle das configurações de MIDI do teclado — afeta toda nota antes de chegar nas camadas.</div>
-      </div>
+      <button className="btn rack-edit-btn" style={{ width: '100%' }} onClick={() => setFxOpen(true)}>
+        FX
+      </button>
 
       <button className="rack-panic-btn" onClick={onPanic}>
         PARAR NOTAS
@@ -2155,5 +2287,112 @@ function MasterColumn({
 
       <div className="rack-master-legend">M: MUDO · S: SOLO</div>
     </div>
+
+    {fxOpen && (
+      <div className="rack-edit-overlay" onClick={() => setFxOpen(false)}>
+        <div className="rack-edit-panel card" onClick={(e) => e.stopPropagation()}>
+          <div className="rack-edit-panel-header">
+            <span>MASTER / FX</span>
+            <button className="rack-edit-close" onClick={() => setFxOpen(false)} title="Fechar">
+              <XIcon size={16} />
+            </button>
+          </div>
+
+          <div className="rack-field" style={{ width: '100%', marginBottom: 14 }}>
+            <label>BPM (pra delay sincronizado) {bpm.toFixed(1)}</label>
+            <input
+              type="range"
+              min={40}
+              max={240}
+              step={0.5}
+              value={bpm}
+              onChange={(e) => onBpmChange(Number(e.target.value))}
+            />
+          </div>
+
+          <RackFxModule
+            title="Reverb"
+            accent="#4fae5e"
+            hint={'Bus único do rack (plate algorítmico estilo Dattorro) — o envio de cada camada é o "Amount" do Reverb dela. Shimmer é outro efeito, por camada.'}
+          >
+            <div className="rack-toggle-label">Mode</div>
+            <div className="rack-reverb-room-list">
+              {REVERB_ROOM_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  className={`rack-reverb-room-item ${pendingRoom === o.value ? 'active' : ''}`}
+                  onClick={() => setPendingRoom(o.value)}
+                  title={o.hint}
+                >
+                  <span className="rack-reverb-room-dot" />
+                  {o.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="rack-reverb-select-btn"
+                disabled={pendingRoom === reverbRoom}
+                onClick={() => onReverbRoomChange(pendingRoom)}
+                title="Aplica o Mode selecionado acima (Size/Diffusion/Damping/Mod) — Decay/Mix/Predelay/EQ/Bass Mult/Color continuam como estão"
+              >
+                SELECT
+              </button>
+            </div>
+            <div className="rack-fx-knob-row">
+              <RackKnob label="Mix" value={reverb} min={0} max={1} step={0.01} defaultValue={0} format={(v) => `${Math.round(v * 100)}%`} onChange={onReverbChange} accent="#4fae5e" />
+              <RackKnob label="Predelay" value={reverbPredelayMs} min={0} max={200} step={1} defaultValue={20} unit="ms" onChange={onReverbPredelayChange} accent="#4fae5e" />
+              <RackKnob label="Decay" value={reverbDecaySec} min={0.2} max={8} step={0.1} defaultValue={1.8} unit="s" onChange={onReverbDecayChange} accent="#4fae5e" />
+            </div>
+            <div className="rack-toggle-label">Shape</div>
+            <div className="rack-fx-knob-row">
+              <RackKnob label="Size" value={reverbSize} min={0.4} max={1.8} step={0.01} defaultValue={1} format={(v) => `${v.toFixed(2)}x`} onChange={onReverbSizeChange} accent="#4fae5e" />
+              <RackKnob label="Attack" value={reverbAttack} min={0} max={1} step={0.01} defaultValue={0.3} format={(v) => `${Math.round(v * 100)}%`} onChange={onReverbAttackChange} accent="#4fae5e" />
+            </div>
+            <div className="rack-toggle-label">Diffusion</div>
+            <div className="rack-fx-knob-row">
+              <RackKnob label="Early" value={reverbDiffusionEarly} min={0} max={0.95} step={0.01} defaultValue={0.65} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onReverbDiffusionEarlyChange(v)} accent="#4fae5e" />
+              <RackKnob label="Late" value={reverbDiffusionLate} min={0} max={0.95} step={0.01} defaultValue={0.5} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onReverbDiffusionLateChange(v)} accent="#4fae5e" />
+            </div>
+            <div className="rack-toggle-label">Damping</div>
+            <div className="rack-fx-knob-row">
+              <RackKnob label="HighFreq" value={reverbDampingHz} min={200} max={16000} step={50} defaultValue={6000} format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}Hz`)} onChange={onReverbDampingChange} accent="#4fae5e" />
+              <RackKnob label="BassMult" value={reverbBassMult} min={0.4} max={3} step={0.01} defaultValue={1} format={(v) => `${v.toFixed(2)}x`} onChange={onReverbBassMultChange} accent="#4fae5e" />
+            </div>
+            <div className="rack-toggle-label">Mod</div>
+            <div className="rack-fx-knob-row">
+              <RackKnob label="Rate" value={reverbModRateHz} min={0.05} max={2} step={0.01} defaultValue={0.3} unit="Hz" onChange={(v) => onReverbModRateChange(v)} accent="#4fae5e" />
+              <RackKnob label="Depth" value={reverbModDepth} min={0} max={1} step={0.01} defaultValue={0.4} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onReverbModDepthChange(v)} accent="#4fae5e" />
+            </div>
+            <div className="rack-toggle-label">EQ</div>
+            <div className="rack-fx-knob-row">
+              <RackKnob label="LowCut" value={reverbEqLowCutHz} min={10} max={500} step={5} defaultValue={20} unit="Hz" onChange={(v) => onReverbEqLowCutChange(v)} accent="#4fae5e" />
+              <RackKnob label="HighCut" value={reverbEqHighCutHz} min={1000} max={18000} step={100} defaultValue={16000} format={(v) => (v >= 1000 ? `${(v / 1000).toFixed(1)}k` : `${Math.round(v)}Hz`)} onChange={(v) => onReverbEqHighCutChange(v)} accent="#4fae5e" />
+            </div>
+            <div className="rack-toggle-label">Color</div>
+            <div className="rack-toggle-row" style={{ '--toggle-accent': '#4fae5e' } as CSSProperties}>
+              <button
+                type="button"
+                className={`rack-toggle-btn ${reverbColor === 'vintage' ? 'active' : ''}`}
+                onClick={() => onReverbColorChange('vintage')}
+                title="Acrescenta uma saturação sutil dentro do tanque — 'warmth' de reverb de hardware/plate antigo"
+              >
+                1970s
+              </button>
+              <button
+                type="button"
+                className={`rack-toggle-btn ${reverbColor === 'modern' ? 'active' : ''}`}
+                onClick={() => onReverbColorChange('modern')}
+                title="Loop limpo/linear, sem saturação"
+              >
+                MODERN
+              </button>
+            </div>
+          </RackFxModule>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
+

@@ -11,6 +11,10 @@ import type {
   RackPlayMode,
   RackPresetOption,
   RackReverbRoom,
+  RackReverbColor,
+  RackShimmerReverbMode,
+  RackShimmerPitchMode,
+  RackShimmerColor,
 } from '../../../shared/types';
 import { RACK_ARP_DIVISION_BEATS, RACK_DELAY_DIVISION_BEATS, RACK_EQ_BAND_ROLES, RACK_LAYER_COUNT, defaultRackEqBands } from '../../../shared/types';
 import { Sf2LayerVoice } from './Sf2LayerVoice';
@@ -207,6 +211,18 @@ export interface LayerShimmerSettings {
   /** 0..0.92 */
   feedback: number;
   toneHz: number;
+  /** semitons, -12..+12 */
+  shiftSemitones: number;
+  /** 0..1 */
+  diffusion: number;
+  /** 0.3..2 */
+  size: number;
+  lowCutHz: number;
+  modRateHz: number;
+  modDepth: number;
+  reverbMode: RackShimmerReverbMode;
+  pitchMode: RackShimmerPitchMode;
+  color: RackShimmerColor;
 }
 
 export interface LayerArpSettings {
@@ -393,17 +409,32 @@ interface LayerRuntime {
   /** estado do "sample and hold" da redução de taxa — ver setBitcrusher/bitcrusherProcessor.onaudioprocess. */
   bitcrusherHoldState: { phase: number; held: Float32Array };
 
-  // shimmer (deslocamento de oitava + realimentação etérea) — ver setShimmer().
+  // shimmer (pitch shifter dentro de um loop de realimentação difuso, estilo
+  // Valhalla Shimmer — ver setShimmer()).
   shimmerInput: GainNode;
-  shimmerDelayA: DelayNode;
-  shimmerDelayB: DelayNode;
-  shimmerLfoA: OscillatorNode;
-  shimmerLfoB: OscillatorNode;
-  shimmerEnvA: GainNode;
-  shimmerEnvB: GainNode;
+  /** par "pra cima" (Shift direto) — único ativo no Pitch Mode "single". */
+  shimmerUpPair: ReturnType<typeof createGranularPitchShiftPair>;
+  /** par "pra baixo" (Shift invertido) — só somado quando Pitch Mode = "dual". */
+  shimmerDownPair: ReturnType<typeof createGranularPitchShiftPair>;
+  shimmerDownMixGain: GainNode;
   shimmerSum: GainNode;
+  /** passa-alta dentro do loop — "Low Cut". */
+  shimmerLowCut: BiquadFilterNode;
+  /** passa-baixa dentro do loop — "High Cut" (campo shimmerToneHz). */
   shimmerTone: BiquadFilterNode;
+  /** par de allpasses difusores dentro do loop — "Diffusion". */
+  shimmerDiffuser1: ReturnType<typeof createAllpassNode>;
+  shimmerDiffuser2: ReturnType<typeof createAllpassNode>;
+  /** delay extra modulado dentro do loop — "Size" + "Mod Rate/Depth". */
+  shimmerSizeDelay: DelayNode;
+  shimmerModLfo: OscillatorNode;
+  shimmerModDepthGain: GainNode;
   shimmerFeedbackGain: GainNode;
+  /** 2º canal decorrelacionado — só audível no Reverb Mode "stereo". */
+  shimmerStereoDelay: DelayNode;
+  shimmerStereoGain: GainNode;
+  shimmerPannerL: StereoPannerNode;
+  shimmerPannerR: StereoPannerNode;
   shimmerWet: GainNode;
   shimmer: LayerShimmerSettings;
 }
@@ -443,64 +474,39 @@ function applyCharacter(filter: BiquadFilterNode, character: RackCharacter) {
  * o "boing" característico de springs de amplificador de guitarra).
  */
 /**
- * Converte o parâmetro de Tom (0 = Escuro, 1 = Claro) na frequência de corte
- * (Hz) do passa-baixa colocado na cauda do reverb compartilhado — escala
- * exponencial (como a maioria dos knobs de frequência de verdade) entre uma
- * "sala abafada" (~900 Hz) e uma "sala bem aberta" (~16 kHz, quase sem corte).
+ * "Mode" do reverb MASTER (equivalente ao dropdown Mode dos plugins de
+ * referência, ex. "Concert Hall") — cada opção aplica um conjunto de
+ * parâmetros (Size/Diffusion/Damping/Mod) típico daquele tipo de espaço na
+ * rede algorítmica estilo plate (ver buildReverbNetwork). Decay/Mix/
+ * Predelay/EQ/BassMult/Color continuam ajustáveis livremente por cima,
+ * igual nos plugins reais — é só um "ponto de partida", não trava nada.
  */
-function reverbToneToHz(tone: number): number {
-  const t = Math.max(0, Math.min(1, tone));
-  const minHz = 900;
-  const maxHz = 16000;
-  return minHz * Math.pow(maxHz / minHz, t);
-}
-
-function createReverbImpulse(ctx: AudioContext, room: RackReverbRoom, decaySec: number): AudioBuffer {
-  const rate = ctx.sampleRate;
-  const base = Math.max(0.2, Math.min(8, decaySec));
-  let durationSec = base;
-  let decayExponent = 2.4;
-  let flutterHz = 0;
+export function reverbModePreset(room: RackReverbRoom): {
+  size: number;
+  diffusionEarly: number;
+  diffusionLate: number;
+  dampingHz: number;
+  modRateHz: number;
+  modDepth: number;
+} {
   switch (room) {
     case 'room':
-      durationSec = base;
-      decayExponent = 3.2;
-      break;
+      return { size: 0.75, diffusionEarly: 0.6, diffusionLate: 0.45, dampingHz: 7000, modRateHz: 0.25, modDepth: 0.3 };
     case 'hall':
-      durationSec = base * 1.6;
-      decayExponent = 1.6;
-      break;
+      // cauda longa e suave, bem difusa — a "Concert Hall" clássica dos plugins de referência.
+      return { size: 1.5, diffusionEarly: 0.7, diffusionLate: 0.6, dampingHz: 5500, modRateHz: 0.2, modDepth: 0.45 };
     case 'plate':
-      durationSec = base * 1.15;
-      decayExponent = 2.0;
-      break;
+      // densa e brilhante, tanque menor que o hall porém mais difuso (pouco "eco" perceptível).
+      return { size: 0.95, diffusionEarly: 0.75, diffusionLate: 0.68, dampingHz: 9000, modRateHz: 0.4, modDepth: 0.35 };
     case 'spring':
-      durationSec = base * 0.9;
-      decayExponent = 2.6;
-      flutterHz = 7;
-      break;
+      // ondulação periódica mais audível (mod rate mais alto) e pouca difusão, lembra o "boing" de spring de amplificador.
+      return { size: 0.7, diffusionEarly: 0.4, diffusionLate: 0.35, dampingHz: 6500, modRateHz: 1.1, modDepth: 0.6 };
     case 'stage':
-      // palco de médio/grande porte: mais aberto que "room", mais contido que "hall".
-      durationSec = base * 1.3;
-      decayExponent = 2.0;
-      break;
+      return { size: 1.15, diffusionEarly: 0.65, diffusionLate: 0.52, dampingHz: 6200, modRateHz: 0.25, modDepth: 0.35 };
     case 'booth':
-      // cabine vocal/isolada: bem curta e seca, decaimento rápido.
-      durationSec = base * 0.5;
-      decayExponent = 4.2;
-      break;
+      // cabine seca e curta — tanque pequeno, bem amortecido.
+      return { size: 0.5, diffusionEarly: 0.55, diffusionLate: 0.4, dampingHz: 4000, modRateHz: 0.2, modDepth: 0.2 };
   }
-  const length = Math.max(1, Math.floor(rate * durationSec));
-  const impulse = ctx.createBuffer(2, length, rate);
-  for (let ch = 0; ch < 2; ch++) {
-    const data = impulse.getChannelData(ch);
-    for (let i = 0; i < length; i++) {
-      let env = Math.pow(1 - i / length, decayExponent);
-      if (flutterHz > 0) env *= 1 + 0.15 * Math.sin((2 * Math.PI * flutterHz * i) / rate);
-      data[i] = (Math.random() * 2 - 1) * env;
-    }
-  }
-  return impulse;
 }
 
 /** Curva de distorção pro WaveShaperNode de "Drive" por camada. */
@@ -552,6 +558,115 @@ function createTriangleEnvelopeCurve(): Float32Array {
   return curve;
 }
 
+/**
+ * Par de "grãos" de pitch shift construído com duas linhas de delay
+ * moduladas por LFOs dente-de-serra defasados 180° (técnica clássica de
+ * pitch-shift por modulação de delay, sem AudioWorklet) — base do Shimmer
+ * por camada (ver createLayerRuntime). `setShift(semitonesAlvo)` recalcula
+ * a taxa de variação do delay (rate = 1 - 2^(semitons/12)) que dá o
+ * deslocamento de afinação desejado; valores negativos desviam pra baixo.
+ * A randomização de fase entre instâncias (ver `phaseOffsetSec`) é o que a
+ * pesquisa da Valhalla cita como truque pra evitar comb-filtering quando
+ * duas instâncias tocam junto (modo Dual/estéreo).
+ */
+function createGranularPitchShiftPair(ctx: AudioContext, grainSec: number, phaseOffsetSec: number) {
+  const inputSum = ctx.createGain();
+  inputSum.gain.value = 1;
+  const delayA = ctx.createDelay(0.2);
+  const delayB = ctx.createDelay(0.2);
+  inputSum.connect(delayA);
+  inputSum.connect(delayB);
+  const lfoA = ctx.createOscillator();
+  lfoA.type = 'sawtooth';
+  lfoA.frequency.value = 1 / grainSec;
+  const lfoB = ctx.createOscillator();
+  lfoB.type = 'sawtooth';
+  lfoB.frequency.value = 1 / grainSec;
+  const scaleA = ctx.createGain();
+  const scaleB = ctx.createGain();
+  const offsetA = ctx.createConstantSource();
+  offsetA.offset.value = grainSec / 2;
+  const offsetB = ctx.createConstantSource();
+  offsetB.offset.value = grainSec / 2;
+  lfoA.connect(scaleA);
+  scaleA.connect(delayA.delayTime);
+  offsetA.connect(delayA.delayTime);
+  lfoB.connect(scaleB);
+  scaleB.connect(delayB.delayTime);
+  offsetB.connect(delayB.delayTime);
+  const envShaperA = ctx.createWaveShaper();
+  envShaperA.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
+  const envShaperB = ctx.createWaveShaper();
+  envShaperB.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
+  const envA = ctx.createGain();
+  envA.gain.value = 1;
+  const envB = ctx.createGain();
+  envB.gain.value = 1;
+  lfoA.connect(envShaperA);
+  envShaperA.connect(envA.gain);
+  lfoB.connect(envShaperB);
+  envShaperB.connect(envB.gain);
+  lfoA.start(ctx.currentTime + phaseOffsetSec);
+  lfoB.start(ctx.currentTime + grainSec / 2 + phaseOffsetSec);
+  offsetA.start();
+  offsetB.start();
+  const sum = ctx.createGain();
+  sum.gain.value = 1;
+  delayA.connect(envA);
+  delayB.connect(envB);
+  envA.connect(sum);
+  envB.connect(sum);
+  function setShift(semitones: number) {
+    const ratio = Math.pow(2, semitones / 12);
+    const rate = 1 - ratio;
+    const scale = (rate * grainSec) / 2;
+    scaleA.gain.value = scale;
+    scaleB.gain.value = scale;
+  }
+  setShift(12);
+  return { input: inputSum as AudioNode, output: sum as AudioNode, setShift };
+}
+
+/**
+ * Allpass de Schroeder construído com nós nativos do Web Audio (sem
+ * AudioWorklet) — base tanto da difusão do Shimmer por camada quanto do
+ * tanque do novo reverb MASTER (ver RackEngine.buildReverbNetwork), técnica
+ * descrita em todas as implementações de referência pesquisadas (Dattorro/
+ * Spin Semiconductor/Elementary): y[n] = -g·w[n] + atraso(w)[n], onde
+ * w[n] = x[n] + g·atraso(w)[n-1] — ou seja, a MESMA linha de atraso serve
+ * pro feedforward (-g) e pro feedback (+g) do coeficiente de difusão `g`.
+ * `input`/`output` são os pontos de conexão externos; `delay` fica exposto
+ * pra quem precisa modular o delayTime (allpass modulado, ver Mod Rate/Depth).
+ */
+function createAllpassNode(ctx: AudioContext, maxDelaySec: number, delaySec: number, coeff: number) {
+  const sumToDelay = ctx.createGain(); // w[n] = x[n] + g*delay_out — também serve de "input" do allpass
+  sumToDelay.gain.value = 1;
+  const delay = ctx.createDelay(Math.max(0.001, maxDelaySec));
+  delay.delayTime.value = Math.max(0, delaySec);
+  const fbGain = ctx.createGain(); // +g, realimenta a saída atual do delay de volta pro somador
+  fbGain.gain.value = coeff;
+  const ffGain = ctx.createGain(); // -g, soma w[n] direto (invertido) na saída
+  ffGain.gain.value = -coeff;
+  const outSum = ctx.createGain(); // y[n] = -g*w[n] + delay_out
+  outSum.gain.value = 1;
+  sumToDelay.connect(delay);
+  delay.connect(fbGain);
+  fbGain.connect(sumToDelay);
+  sumToDelay.connect(ffGain);
+  ffGain.connect(outSum);
+  delay.connect(outSum);
+  return {
+    input: sumToDelay as AudioNode,
+    output: outSum as AudioNode,
+    delay,
+    setCoeff(g: number) {
+      const c = Math.max(-0.95, Math.min(0.95, g));
+      fbGain.gain.value = c;
+      ffGain.gain.value = -c;
+    },
+  };
+}
+
 /** Curva de quantização de bits pro WaveShaperNode do Bitcrusher/Lo-Fi por camada — "achata" o sinal em degraus de 2^bits níveis. */
 function createBitcrusherCurve(bits: number): Float32Array {
   const n = 4096;
@@ -583,6 +698,23 @@ function createTapeSaturationCurve(): Float32Array {
 }
 
 /**
+ * Curva de saturação BEM sutil pro WaveShaperNode do "Color" (vintage) do
+ * reverb MASTER — soft-clip bem mais suave que o ANALOG do Delay (drive
+ * baixo), o bastante só pra dar uma leve "cor"/compressão harmônica na cauda
+ * (como plates/springs de hardware antigos), sem soar como distorção.
+ */
+function createReverbWarmthCurve(): Float32Array {
+  const n = 1024;
+  const curve = new Float32Array(n);
+  const drive = 1.15;
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x * drive) / Math.tanh(drive);
+  }
+  return curve;
+}
+
+/**
  * Motor do Rack de instrumentos ao vivo: até 4 camadas tocando simultaneamente
  * (SoundFont real via FluidSynth/WASM, banco DX7 real via núcleo MSFA, ou
  * amostra de áudio do usuário), cada uma com sua própria cadeia de efeitos
@@ -602,20 +734,58 @@ function createTapeSaturationCurve(): Float32Array {
  */
 export const RACK_BUFFER_OPTIONS = [0, 128, 256, 512, 1024, 2048] as const;
 
+/**
+ * Metade do "tanque" do reverb algorítmico tipo plate (ver
+ * RackEngine.buildReverbNetwork) — a dupla A/B cruzada entre si é o que dá
+ * a cauda estéreo natural a partir de uma entrada mono, técnica clássica de
+ * Dattorro. `modAllpass` é o único allpass modulado (Mod Rate/Depth); os
+ * outros nós formam o resto do loop: delay -> damping (Damping:HighFreq) ->
+ * decayGain (Decay) -> bassShelf (Damping:BassMult) -> colorShaper (Color)
+ * -> allpass2 (Diffusion:Late) -> delay2 (cruza pro outro lado).
+ */
+interface ReverbTankBranch {
+  modAllpass: ReturnType<typeof createAllpassNode>;
+  modLfo: OscillatorNode;
+  modDepthGain: GainNode;
+  delay1: DelayNode;
+  damping: BiquadFilterNode;
+  decayGain: GainNode;
+  bassShelf: BiquadFilterNode;
+  colorShaper: WaveShaperNode;
+  allpass2: ReturnType<typeof createAllpassNode>;
+  delay2: DelayNode;
+  tapPost: GainNode;
+}
+
 export class RackEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private reverbBus: GainNode | null = null;
   private reverbWetGain: GainNode | null = null;
-  private convolver: ConvolverNode | null = null;
-  /** passa-baixa na cauda do reverb compartilhado — dá o controle de Tom (Escuro/Claro), ver setReverbTone(). */
-  private reverbToneFilter: BiquadFilterNode | null = null;
   private layers: LayerRuntime[] = [];
   private reverbAmount = 0;
   private reverbRoom: RackReverbRoom = 'room';
   private reverbDecaySec = 1.8;
-  /** 0 (Escuro/abafado) .. 1 (Claro/aberto) — ver setReverbTone(). */
-  private reverbTone = 0.6;
+  private reverbDampingHz = 6000;
+  private reverbBassMult = 1;
+  private reverbPredelayMs = 20;
+  private reverbSize = 1;
+  private reverbAttack = 0.3;
+  private reverbDiffusionEarly = 0.65;
+  private reverbDiffusionLate = 0.5;
+  private reverbModRateHz = 0.3;
+  private reverbModDepth = 0.4;
+  private reverbEqLowCutHz = 20;
+  private reverbEqHighCutHz = 16000;
+  private reverbColor: RackReverbColor = 'modern';
+  // --- nós do reverb MASTER (algoritmo tipo plate estilo Dattorro — ver buildReverbNetwork) ---
+  private reverbPredelayNode: DelayNode | null = null;
+  private reverbInputDiffusers: ReturnType<typeof createAllpassNode>[] = [];
+  private reverbTankA: ReverbTankBranch | null = null;
+  private reverbTankB: ReverbTankBranch | null = null;
+  private reverbAttackGain: GainNode | null = null;
+  private reverbEqHighCutNode: BiquadFilterNode | null = null;
+  private reverbEqLowCutNode: BiquadFilterNode | null = null;
   private masterVolume = 0.8;
   /** BPM de referência do rack, usado pelos delays sincronizados por camada (ver setDelay/RackLayer.delaySync). */
   private bpm = 120;
@@ -656,30 +826,219 @@ export class RackEngine {
     masterGain.connect(ctx.destination);
     this.masterGain = masterGain;
 
-    const convolver = ctx.createConvolver();
-    convolver.buffer = createReverbImpulse(ctx, this.reverbRoom, this.reverbDecaySec);
-    const reverbBus = ctx.createGain();
-    reverbBus.gain.value = 1;
-    const reverbToneFilter = ctx.createBiquadFilter();
-    reverbToneFilter.type = 'lowpass';
-    reverbToneFilter.Q.value = 0.6;
-    reverbToneFilter.frequency.value = reverbToneToHz(this.reverbTone);
-    const reverbWetGain = ctx.createGain();
-    reverbWetGain.gain.value = this.reverbAmount;
-    reverbBus.connect(convolver);
-    convolver.connect(reverbToneFilter);
-    reverbToneFilter.connect(reverbWetGain);
-    reverbWetGain.connect(masterGain);
-    this.convolver = convolver;
-    this.reverbBus = reverbBus;
-    this.reverbToneFilter = reverbToneFilter;
-    this.reverbWetGain = reverbWetGain;
+    const reverbBus = this.buildReverbNetwork(ctx, masterGain);
 
     this.layers = [];
     for (let i = 0; i < RACK_LAYER_COUNT; i++) {
       this.layers.push(this.createLayerRuntime(ctx, masterGain, reverbBus));
     }
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  }
+
+  /**
+   * Constrói a rede algorítmica do reverb MASTER compartilhado — um plate
+   * reverb no estilo Dattorro (ver pesquisa: predelay -> passa-baixa de
+   * "bandwidth" -> 4 allpasses difusores de entrada -> tanque com duas
+   * metades cruzadas entre si, cada uma = allpass modulado -> delay ->
+   * amortecimento (damping) -> ganho de decaimento -> grave (bass mult) ->
+   * cor -> allpass2 -> delay -> cruza pro outro lado), com múltiplas saídas
+   * somadas em L/R pra dar largura estéreo natural a partir de uma entrada
+   * mono — é o mesmo motivo de dois canais cruzados do algoritmo original.
+   * Retorna o `reverbBus` (ponto de entrada compartilhado onde cada camada
+   * conecta seu envio/"Amount" de reverb).
+   */
+  private buildReverbNetwork(ctx: AudioContext, masterGain: GainNode): GainNode {
+    const reverbBus = ctx.createGain();
+    reverbBus.gain.value = 1;
+
+    // Predelay — "Predelay" da UI, separa o ataque seco do início da cauda.
+    const predelay = ctx.createDelay(1);
+    predelay.delayTime.value = this.reverbPredelayMs / 1000;
+    this.reverbPredelayNode = predelay;
+
+    // Bandwidth — passa-baixa fixo logo na entrada do tanque (não exposto
+    // como knob próprio, é o "bandwidth" do paper original do Dattorro).
+    const bandwidth = ctx.createBiquadFilter();
+    bandwidth.type = 'lowpass';
+    bandwidth.frequency.value = 12000;
+    bandwidth.Q.value = 0.5;
+
+    // 4 allpasses difusores de entrada — "Diffusion: Early". Pares de
+    // coeficiente diferente (1º par mais forte que o 2º), igual ao Dattorro
+    // original (0.75/0.625), pra evitar colorações metálicas regulares.
+    const diffuserBaseDelays = [0.0048, 0.0036, 0.0127, 0.0093];
+    const diffusers = diffuserBaseDelays.map((d, i) => {
+      const coeff = i < 2 ? this.reverbDiffusionEarly : this.reverbDiffusionEarly * 0.83;
+      return createAllpassNode(ctx, 0.05, d, coeff);
+    });
+    this.reverbInputDiffusers = diffusers;
+
+    predelay.connect(bandwidth);
+    bandwidth.connect(diffusers[0].input);
+    for (let i = 0; i < diffusers.length - 1; i++) diffusers[i].output.connect(diffusers[i + 1].input);
+    const earlyTap = diffusers[diffusers.length - 1].output;
+
+    const makeTankBranch = (
+      modDelayBase: number,
+      delay1Base: number,
+      allpass2Base: number,
+      delay2Base: number,
+      lfoRateMult: number,
+      lfoPhaseOffsetSec: number
+    ): ReverbTankBranch => {
+      const modAllpass = createAllpassNode(ctx, modDelayBase * 3, modDelayBase * this.reverbSize, this.reverbDiffusionLate);
+      const modLfo = ctx.createOscillator();
+      modLfo.type = 'sine';
+      modLfo.frequency.value = this.reverbModRateHz * lfoRateMult;
+      const modDepthGain = ctx.createGain();
+      modDepthGain.gain.value = this.reverbModDepth * 0.0025; // até ~2.5ms de excursão no máximo
+      modLfo.connect(modDepthGain);
+      modDepthGain.connect(modAllpass.delay.delayTime);
+      modLfo.start(ctx.currentTime + lfoPhaseOffsetSec);
+
+      const delay1 = ctx.createDelay(delay1Base * 3);
+      delay1.delayTime.value = delay1Base * this.reverbSize;
+
+      const damping = ctx.createBiquadFilter();
+      damping.type = 'lowpass';
+      damping.Q.value = 0.5;
+      damping.frequency.value = this.reverbDampingHz;
+
+      const decayGain = ctx.createGain();
+      decayGain.gain.value = 0.5;
+
+      const bassShelf = ctx.createBiquadFilter();
+      bassShelf.type = 'lowshelf';
+      bassShelf.frequency.value = 250;
+      bassShelf.gain.value = 20 * Math.log10(Math.max(0.05, this.reverbBassMult));
+
+      const colorShaper = ctx.createWaveShaper();
+      colorShaper.curve = this.reverbColor === 'vintage' ? (createReverbWarmthCurve() as Float32Array<ArrayBuffer>) : null;
+
+      const allpass2 = createAllpassNode(ctx, allpass2Base * 3, allpass2Base * this.reverbSize, this.reverbDiffusionLate * 0.7);
+      const delay2 = ctx.createDelay(delay2Base * 3);
+      delay2.delayTime.value = delay2Base * this.reverbSize;
+
+      const tapPost = ctx.createGain();
+      tapPost.gain.value = 1;
+
+      modAllpass.output.connect(delay1);
+      delay1.connect(damping);
+      damping.connect(decayGain);
+      decayGain.connect(bassShelf);
+      bassShelf.connect(colorShaper);
+      colorShaper.connect(allpass2.input);
+      allpass2.output.connect(delay2);
+      decayGain.connect(tapPost); // tap "cedo" do loop (pós-decay, pré-allpass2) — ver saídas somadas abaixo
+
+      return { modAllpass, modLfo, modDepthGain, delay1, damping, decayGain, bassShelf, colorShaper, allpass2, delay2, tapPost };
+    };
+
+    // Duas metades do tanque com comprimentos de linha de atraso diferentes
+    // e não-múltiplos entre si (evita ressonâncias/colorações regulares) —
+    // valores de referência adaptados do paper do Dattorro, escalados por
+    // "Size". B usa taxa de LFO levemente destonada (ver pesquisa) pra não
+    // sincronizar com A.
+    const tankA = makeTankBranch(0.0225, 0.1499, 0.0605, 0.125, 1, 0);
+    const tankB = makeTankBranch(0.0306, 0.1417, 0.0893, 0.1063, 1.37, 0.05);
+    this.reverbTankA = tankA;
+    this.reverbTankB = tankB;
+
+    // injeção única (clássico Dattorro: entra só num dos lados) + cruzamento contínuo A<->B.
+    earlyTap.connect(tankA.modAllpass.input);
+    tankA.delay2.connect(tankB.modAllpass.input);
+    tankB.delay2.connect(tankA.modAllpass.input);
+
+    // Saídas somadas em L/R — cada canal dominado por uma metade do tanque,
+    // com uma pequena contribuição (com sinal invertido, como no Dattorro
+    // original) da outra metade pra dar largura sem feder a correlação.
+    const outL = ctx.createGain();
+    outL.gain.value = 1;
+    const outR = ctx.createGain();
+    outR.gain.value = 1;
+    const tapA1 = ctx.createGain();
+    tapA1.gain.value = 0.55;
+    const tapA2L = ctx.createGain();
+    tapA2L.gain.value = 0.45;
+    const tapA2R = ctx.createGain();
+    tapA2R.gain.value = -0.3;
+    const tapB1 = ctx.createGain();
+    tapB1.gain.value = 0.55;
+    const tapB2R = ctx.createGain();
+    tapB2R.gain.value = 0.45;
+    const tapB2L = ctx.createGain();
+    tapB2L.gain.value = -0.3;
+    tankA.tapPost.connect(tapA1);
+    tapA1.connect(outL);
+    tankA.delay2.connect(tapA2L);
+    tapA2L.connect(outL);
+    tankA.delay2.connect(tapA2R);
+    tapA2R.connect(outR);
+    tankB.tapPost.connect(tapB1);
+    tapB1.connect(outR);
+    tankB.delay2.connect(tapB2R);
+    tapB2R.connect(outR);
+    tankB.delay2.connect(tapB2L);
+    tapB2L.connect(outL);
+
+    // "Shape: Attack" — soma uma cópia mono (centralizada) do tap logo após
+    // a difusão de entrada, antes do tanque; mais Attack = ataque mais
+    // rápido/denso percebido (o tanque sozinho sempre tem um "swell" suave).
+    const attackGain = ctx.createGain();
+    attackGain.gain.value = this.reverbAttack * 0.6;
+    earlyTap.connect(attackGain);
+    attackGain.connect(outL);
+    attackGain.connect(outR);
+    this.reverbAttackGain = attackGain;
+
+    const merger = ctx.createChannelMerger(2);
+    outL.connect(merger, 0, 0);
+    outR.connect(merger, 0, 1);
+
+    // "EQ: HighCut/LowCut" — tom final do retorno, separado do Damping
+    // interno do tanque (que afeta só a velocidade de decaimento dos agudos).
+    const eqHighCut = ctx.createBiquadFilter();
+    eqHighCut.type = 'lowpass';
+    eqHighCut.Q.value = 0.5;
+    eqHighCut.frequency.value = this.reverbEqHighCutHz;
+    const eqLowCut = ctx.createBiquadFilter();
+    eqLowCut.type = 'highpass';
+    eqLowCut.Q.value = 0.5;
+    eqLowCut.frequency.value = this.reverbEqLowCutHz;
+    this.reverbEqHighCutNode = eqHighCut;
+    this.reverbEqLowCutNode = eqLowCut;
+
+    const reverbWetGain = ctx.createGain();
+    reverbWetGain.gain.value = this.reverbAmount;
+    this.reverbWetGain = reverbWetGain;
+
+    reverbBus.connect(predelay);
+    merger.connect(eqHighCut);
+    eqHighCut.connect(eqLowCut);
+    eqLowCut.connect(reverbWetGain);
+    reverbWetGain.connect(masterGain);
+
+    this.applyReverbDecayGain();
+    this.reverbBus = reverbBus;
+    return reverbBus;
+  }
+
+  /**
+   * Recalcula o ganho de decaimento por laço do tanque (Decay/Size mudam o
+   * "tempo de ida e volta" do loop, então o ganho precisa ser recalculado
+   * pra manter o RT60 — tempo até cair ~60dB — correto quando qualquer um
+   * dos dois muda). Fórmula clássica de feedback exponencial: g = 10^(-3·T/RT60).
+   */
+  private applyReverbDecayGain() {
+    if (!this.ctx || !this.reverbTankA || !this.reverbTankB) return;
+    const size = this.reverbSize;
+    const loopSec =
+      (0.0225 + 0.1499 + 0.0605 + 0.125 + 0.0306 + 0.1417 + 0.0893 + 0.1063) * size;
+    const rt60 = Math.max(0.2, Math.min(8, this.reverbDecaySec));
+    const g = Math.max(0, Math.min(0.97, Math.pow(10, (-3 * loopSec) / rt60)));
+    const now = this.ctx.currentTime;
+    this.reverbTankA.decayGain.gain.setTargetAtTime(g, now, 0.02);
+    this.reverbTankB.decayGain.gain.setTargetAtTime(g, now, 0.02);
   }
 
   /**
@@ -701,8 +1060,13 @@ export class RackEngine {
     this.masterGain = null;
     this.reverbBus = null;
     this.reverbWetGain = null;
-    this.convolver = null;
-    this.reverbToneFilter = null;
+    this.reverbPredelayNode = null;
+    this.reverbInputDiffusers = [];
+    this.reverbTankA = null;
+    this.reverbTankB = null;
+    this.reverbAttackGain = null;
+    this.reverbEqHighCutNode = null;
+    this.reverbEqLowCutNode = null;
     this.layers = [];
     try {
       await oldCtx.close();
@@ -1024,66 +1388,60 @@ export class RackEngine {
     const reverbSendGain = ctx.createGain();
     reverbSendGain.gain.value = 1;
 
-    // Shimmer por camada — rede própria de deslocamento de oitava (duas
-    // linhas de delay com LFOs em dente-de-serra defasados 180°, técnica
-    // clássica de "pitch shift por modulação de delay", sem precisar de
-    // AudioWorklet) + realimentação com filtro de brilho, formando uma cauda
-    // etérea que vai subindo de oitava a cada repetição — ver setShimmer().
+    // Shimmer por camada — redesenhado no estilo Valhalla Shimmer (ver
+    // pesquisa): o pitch shifter (par granular, ver createGranularPitchShiftPair)
+    // fica DENTRO do loop de realimentação de uma rede de difusão/delay, não
+    // num caminho separado — é isso que dá a cauda etérea clássica. Pitch
+    // Mode "dual" soma um 2º par deslocando na direção OPOSTA dentro do
+    // mesmo loop; Diffusion/Size/Low Cut/High Cut/Mod Rate/Mod Depth moldam
+    // o loop; Reverb Mode "stereo" decorrelaciona um 2º canal pra dar largura.
     const shimmerInput = ctx.createGain();
     shimmerInput.gain.value = 1;
     const shimmerGrainSec = 0.08;
-    const shimmerDelayA = ctx.createDelay(0.2);
-    const shimmerDelayB = ctx.createDelay(0.2);
-    const shimmerLfoA = ctx.createOscillator();
-    shimmerLfoA.type = 'sawtooth';
-    shimmerLfoA.frequency.value = 1 / shimmerGrainSec;
-    const shimmerLfoB = ctx.createOscillator();
-    shimmerLfoB.type = 'sawtooth';
-    shimmerLfoB.frequency.value = 1 / shimmerGrainSec;
-    const shimmerDelayScaleA = ctx.createGain();
-    shimmerDelayScaleA.gain.value = -shimmerGrainSec / 2;
-    const shimmerDelayOffsetA = ctx.createConstantSource();
-    shimmerDelayOffsetA.offset.value = shimmerGrainSec / 2;
-    const shimmerDelayScaleB = ctx.createGain();
-    shimmerDelayScaleB.gain.value = -shimmerGrainSec / 2;
-    const shimmerDelayOffsetB = ctx.createConstantSource();
-    shimmerDelayOffsetB.offset.value = shimmerGrainSec / 2;
-    shimmerLfoA.connect(shimmerDelayScaleA);
-    shimmerDelayScaleA.connect(shimmerDelayA.delayTime);
-    shimmerDelayOffsetA.connect(shimmerDelayA.delayTime);
-    shimmerLfoB.connect(shimmerDelayScaleB);
-    shimmerDelayScaleB.connect(shimmerDelayB.delayTime);
-    shimmerDelayOffsetB.connect(shimmerDelayB.delayTime);
-    // envelopes triangulares (derivados dos mesmos LFOs via retificação em
-    // onda quadrada aproximada) que cruzam suavemente entre os dois "grãos",
-    // evitando o clique do salto do dente-de-serra.
-    const shimmerEnvShaperA = ctx.createWaveShaper();
-    shimmerEnvShaperA.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
-    const shimmerEnvShaperB = ctx.createWaveShaper();
-    shimmerEnvShaperB.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
-    const shimmerEnvA = ctx.createGain();
-    shimmerEnvA.gain.value = 1;
-    const shimmerEnvB = ctx.createGain();
-    shimmerEnvB.gain.value = 1;
-    shimmerLfoA.connect(shimmerEnvShaperA);
-    shimmerEnvShaperA.connect(shimmerEnvA.gain);
-    shimmerLfoB.connect(shimmerEnvShaperB);
-    shimmerEnvShaperB.connect(shimmerEnvB.gain);
-    // shimmerLfoB começa meio período depois de shimmerLfoA (defasagem de
-    // 180°) — é isso que faz os dois "grãos" se alternarem suavemente em vez
-    // de pularem juntos (ver createTriangleEnvelopeCurve acima).
-    shimmerLfoA.start();
-    shimmerLfoB.start(ctx.currentTime + shimmerGrainSec / 2);
-    shimmerDelayOffsetA.start();
-    shimmerDelayOffsetB.start();
+    const shimmerUpPair = createGranularPitchShiftPair(ctx, shimmerGrainSec, 0);
+    const shimmerDownPair = createGranularPitchShiftPair(ctx, shimmerGrainSec, shimmerGrainSec * 0.37);
+    shimmerDownPair.setShift(-12);
+    const shimmerDownMixGain = ctx.createGain();
+    shimmerDownMixGain.gain.value = 0; // só > 0 no Pitch Mode "dual" — ver setShimmer()
     const shimmerSum = ctx.createGain();
     shimmerSum.gain.value = 1;
+    const shimmerLowCut = ctx.createBiquadFilter();
+    shimmerLowCut.type = 'highpass';
+    shimmerLowCut.frequency.value = 200;
+    shimmerLowCut.Q.value = 0.5;
     const shimmerTone = ctx.createBiquadFilter();
     shimmerTone.type = 'lowpass';
     shimmerTone.frequency.value = 6000;
     shimmerTone.Q.value = 0.5;
+    // "Diffusion" — par de allpasses difusores dentro do loop (evita o som de
+    // "eco repetindo" quando Diffusion é baixo, vira cauda suave quando alto).
+    const shimmerDiffuser1 = createAllpassNode(ctx, 0.03, 0.011, 0.6);
+    const shimmerDiffuser2 = createAllpassNode(ctx, 0.03, 0.0077, 0.48);
+    // "Size" (delay extra dentro do loop, dá sensação de tamanho de sala
+    // independente do Feedback) + "Mod Rate/Depth" (LFO sutil modulando esse
+    // mesmo delay, dá movimento/vida à cauda).
+    const shimmerSizeDelay = ctx.createDelay(0.1);
+    shimmerSizeDelay.delayTime.value = 0.015;
+    const shimmerModLfo = ctx.createOscillator();
+    shimmerModLfo.type = 'sine';
+    shimmerModLfo.frequency.value = 0.6;
+    const shimmerModDepthGain = ctx.createGain();
+    shimmerModDepthGain.gain.value = 0.0006;
+    shimmerModLfo.connect(shimmerModDepthGain);
+    shimmerModDepthGain.connect(shimmerSizeDelay.delayTime);
+    shimmerModLfo.start();
     const shimmerFeedbackGain = ctx.createGain();
     shimmerFeedbackGain.gain.value = 0;
+    // "Reverb Mode" — mono toca só o canal direto (centralizado); stereo soma
+    // um 2º canal com um delay curto fixo pra decorrelacionar e dar largura.
+    const shimmerStereoDelay = ctx.createDelay(0.03);
+    shimmerStereoDelay.delayTime.value = 0.009;
+    const shimmerStereoGain = ctx.createGain();
+    shimmerStereoGain.gain.value = 0;
+    const shimmerPannerL = ctx.createStereoPanner();
+    shimmerPannerL.pan.value = 0;
+    const shimmerPannerR = ctx.createStereoPanner();
+    shimmerPannerR.pan.value = 0;
     const shimmerWet = ctx.createGain();
     shimmerWet.gain.value = 0;
 
@@ -1172,19 +1530,29 @@ export class RackEngine {
       delayOutMix.connect(reverbSendGain);
       reverbSendGain.connect(reverbBus);
       // Shimmer — tocado em paralelo (parte do mesmo ponto do envio de reverb),
-      // autocontido (não usa o barramento de reverb compartilhado).
+      // autocontido (não usa o barramento de reverb compartilhado). Pitch
+      // shifter DENTRO do loop de realimentação (ver pesquisa Valhalla),
+      // seguido de difusão/size/tom, fechando de volta no próprio loop.
       delayOutMix.connect(shimmerInput);
-      shimmerInput.connect(shimmerDelayA);
-      shimmerInput.connect(shimmerDelayB);
-      shimmerFeedbackGain.connect(shimmerDelayA);
-      shimmerFeedbackGain.connect(shimmerDelayB);
-      shimmerDelayA.connect(shimmerEnvA);
-      shimmerDelayB.connect(shimmerEnvB);
-      shimmerEnvA.connect(shimmerSum);
-      shimmerEnvB.connect(shimmerSum);
-      shimmerSum.connect(shimmerTone);
-      shimmerTone.connect(shimmerFeedbackGain);
-      shimmerTone.connect(shimmerWet);
+      shimmerInput.connect(shimmerUpPair.input);
+      shimmerInput.connect(shimmerDownPair.input);
+      shimmerFeedbackGain.connect(shimmerUpPair.input);
+      shimmerFeedbackGain.connect(shimmerDownPair.input);
+      shimmerUpPair.output.connect(shimmerSum);
+      shimmerDownPair.output.connect(shimmerDownMixGain);
+      shimmerDownMixGain.connect(shimmerSum);
+      shimmerSum.connect(shimmerLowCut);
+      shimmerLowCut.connect(shimmerTone);
+      shimmerTone.connect(shimmerDiffuser1.input);
+      shimmerDiffuser1.output.connect(shimmerDiffuser2.input);
+      shimmerDiffuser2.output.connect(shimmerSizeDelay);
+      shimmerSizeDelay.connect(shimmerFeedbackGain);
+      shimmerSizeDelay.connect(shimmerPannerL);
+      shimmerSizeDelay.connect(shimmerStereoDelay);
+      shimmerStereoDelay.connect(shimmerStereoGain);
+      shimmerStereoGain.connect(shimmerPannerR);
+      shimmerPannerL.connect(shimmerWet);
+      shimmerPannerR.connect(shimmerWet);
       shimmerWet.connect(masterGain);
       postCharacterOutput = delayOutMix;
     } catch (err) {
@@ -1307,17 +1675,38 @@ export class RackEngine {
       bitcrusher: { enabled: false, bits: 12, rateHz: 44100, mix: 1 },
       bitcrusherHoldState,
       shimmerInput,
-      shimmerDelayA,
-      shimmerDelayB,
-      shimmerLfoA,
-      shimmerLfoB,
-      shimmerEnvA,
-      shimmerEnvB,
+      shimmerUpPair,
+      shimmerDownPair,
+      shimmerDownMixGain,
       shimmerSum,
+      shimmerLowCut,
       shimmerTone,
+      shimmerDiffuser1,
+      shimmerDiffuser2,
+      shimmerSizeDelay,
+      shimmerModLfo,
+      shimmerModDepthGain,
       shimmerFeedbackGain,
+      shimmerStereoDelay,
+      shimmerStereoGain,
+      shimmerPannerL,
+      shimmerPannerR,
       shimmerWet,
-      shimmer: { enabled: false, mix: 0.35, feedback: 0.55, toneHz: 6000 },
+      shimmer: {
+        enabled: false,
+        mix: 0.35,
+        feedback: 0.55,
+        toneHz: 6000,
+        shiftSemitones: 12,
+        diffusion: 0.6,
+        size: 1,
+        lowCutHz: 200,
+        modRateHz: 0.6,
+        modDepth: 0.25,
+        reverbMode: 'mono',
+        pitchMode: 'single',
+        color: 'bright',
+      },
       arp: { enabled: false, pattern: 'up', sync: true, rateHz: 6, division: '1/16', octaves: 1, gate: 0.7, swing: 0, latch: false },
       arpHeld: new Map(),
       arpLatched: new Map(),
@@ -1837,28 +2226,121 @@ export class RackEngine {
     if (this.reverbWetGain && this.ctx) this.reverbWetGain.gain.setTargetAtTime(amount, this.ctx.currentTime, 0.02);
   }
 
-  /** Troca o algoritmo/"sala" do reverb compartilhado (ver createReverbImpulse) — regenera a resposta impulsiva na hora. */
+  /**
+   * Guarda o "Mode" selecionado do reverb MASTER — só identificação/estado
+   * (persistência/UI). A aplicação de fato dos parâmetros do preset
+   * (Size/Diffusion/Damping/Mod, ver reverbModePreset) acontece no chamador
+   * (InstrumentRack.tsx, botão SELECT), que atualiza o RackState inteiro de
+   * uma vez — assim o estado em React e o que está tocando nunca ficam
+   * dessincronizados (os knobs continuam refletindo o valor real).
+   */
   setReverbRoom(room: RackReverbRoom) {
     this.reverbRoom = room;
-    this.regenerateReverbImpulse();
   }
 
-  /** Duração da cauda do reverb compartilhado, em segundos (0.2..8). */
+  /** Tempo de decaimento (RT60 aproximado) do reverb MASTER, em segundos (0.2..8). */
   setReverbDecay(decaySec: number) {
     this.reverbDecaySec = Math.max(0.2, Math.min(8, decaySec));
-    this.regenerateReverbImpulse();
+    this.applyReverbDecayGain();
   }
 
-  /** Tom da cauda do reverb compartilhado: 0 (Escuro/abafado) .. 1 (Claro/aberto) — ajusta na hora, sem precisar regenerar a resposta impulsiva. */
-  setReverbTone(tone: number) {
-    this.reverbTone = Math.max(0, Math.min(1, tone));
-    if (this.reverbToneFilter && this.ctx) {
-      this.reverbToneFilter.frequency.setTargetAtTime(reverbToneToHz(this.reverbTone), this.ctx.currentTime, 0.02);
+  /** Hz, 200..16000 — "Damping: HighFreq", passa-baixa dentro do tanque (afeta só a velocidade de decaimento dos agudos). */
+  setReverbDamping(hz: number) {
+    this.reverbDampingHz = Math.max(200, Math.min(16000, hz));
+    if (!this.ctx || !this.reverbTankA || !this.reverbTankB) return;
+    const now = this.ctx.currentTime;
+    this.reverbTankA.damping.frequency.setTargetAtTime(this.reverbDampingHz, now, 0.02);
+    this.reverbTankB.damping.frequency.setTargetAtTime(this.reverbDampingHz, now, 0.02);
+  }
+
+  /** 0.4..3 — "Damping: BassMult", multiplicador do tempo de decaimento dos graves (shelf abaixo de ~250Hz) em relação ao Decay geral. */
+  setReverbBassMult(mult: number) {
+    this.reverbBassMult = Math.max(0.4, Math.min(3, mult));
+    if (!this.ctx || !this.reverbTankA || !this.reverbTankB) return;
+    const dB = 20 * Math.log10(this.reverbBassMult);
+    const now = this.ctx.currentTime;
+    this.reverbTankA.bassShelf.gain.setTargetAtTime(dB, now, 0.02);
+    this.reverbTankB.bassShelf.gain.setTargetAtTime(dB, now, 0.02);
+  }
+
+  /** ms, 0..200 — "Predelay", atraso antes do sinal entrar no tanque. */
+  setReverbPredelay(ms: number) {
+    this.reverbPredelayMs = Math.max(0, Math.min(200, ms));
+    if (this.reverbPredelayNode && this.ctx) {
+      this.reverbPredelayNode.delayTime.setTargetAtTime(this.reverbPredelayMs / 1000, this.ctx.currentTime, 0.01);
     }
   }
 
-  private regenerateReverbImpulse() {
-    if (this.convolver && this.ctx) this.convolver.buffer = createReverbImpulse(this.ctx, this.reverbRoom, this.reverbDecaySec);
+  /** 0.4..1.8 — "Shape: Size", escala o comprimento das linhas de atraso do tanque (sala maior/menor) e recalcula o ganho de decaimento. */
+  setReverbSize(size: number) {
+    this.reverbSize = Math.max(0.4, Math.min(1.8, size));
+    if (!this.ctx || !this.reverbTankA || !this.reverbTankB) return;
+    const now = this.ctx.currentTime;
+    const s = this.reverbSize;
+    const set = (branch: ReverbTankBranch, modBase: number, d1Base: number, ap2Base: number, d2Base: number) => {
+      branch.modAllpass.delay.delayTime.setTargetAtTime(modBase * s, now, 0.03);
+      branch.delay1.delayTime.setTargetAtTime(d1Base * s, now, 0.03);
+      branch.allpass2.delay.delayTime.setTargetAtTime(ap2Base * s, now, 0.03);
+      branch.delay2.delayTime.setTargetAtTime(d2Base * s, now, 0.03);
+    };
+    set(this.reverbTankA, 0.0225, 0.1499, 0.0605, 0.125);
+    set(this.reverbTankB, 0.0306, 0.1417, 0.0893, 0.1063);
+    this.applyReverbDecayGain();
+  }
+
+  /** 0..1 cada — "Shape: Attack", mistura o tap logo após a difusão de entrada (ataque mais rápido/denso) com a cauda do tanque. */
+  setReverbAttack(attack: number) {
+    this.reverbAttack = Math.max(0, Math.min(1, attack));
+    if (this.reverbAttackGain && this.ctx) {
+      this.reverbAttackGain.gain.setTargetAtTime(this.reverbAttack * 0.6, this.ctx.currentTime, 0.02);
+    }
+  }
+
+  /** 0..0.95 cada — "Diffusion: Early" (allpasses de entrada) e "Diffusion: Late" (allpasses do tanque). */
+  setReverbDiffusion(early: number, late: number) {
+    this.reverbDiffusionEarly = Math.max(0, Math.min(0.95, early));
+    this.reverbDiffusionLate = Math.max(0, Math.min(0.95, late));
+    this.reverbInputDiffusers.forEach((d, i) => {
+      d.setCoeff(i < 2 ? this.reverbDiffusionEarly : this.reverbDiffusionEarly * 0.83);
+    });
+    if (this.reverbTankA && this.reverbTankB) {
+      this.reverbTankA.modAllpass.setCoeff(this.reverbDiffusionLate);
+      this.reverbTankA.allpass2.setCoeff(this.reverbDiffusionLate * 0.7);
+      this.reverbTankB.modAllpass.setCoeff(this.reverbDiffusionLate);
+      this.reverbTankB.allpass2.setCoeff(this.reverbDiffusionLate * 0.7);
+    }
+  }
+
+  /** Hz (0.05..2) e 0..1 — "Mod: Rate/Depth", LFO que modula os allpasses do tanque. */
+  setReverbMod(rateHz: number, depth: number) {
+    this.reverbModRateHz = Math.max(0.05, Math.min(2, rateHz));
+    this.reverbModDepth = Math.max(0, Math.min(1, depth));
+    if (!this.ctx || !this.reverbTankA || !this.reverbTankB) return;
+    const now = this.ctx.currentTime;
+    this.reverbTankA.modLfo.frequency.setTargetAtTime(this.reverbModRateHz, now, 0.05);
+    this.reverbTankB.modLfo.frequency.setTargetAtTime(this.reverbModRateHz * 1.37, now, 0.05);
+    const depthGain = this.reverbModDepth * 0.0025;
+    this.reverbTankA.modDepthGain.gain.setTargetAtTime(depthGain, now, 0.05);
+    this.reverbTankB.modDepthGain.gain.setTargetAtTime(depthGain, now, 0.05);
+  }
+
+  /** Hz (10..500) e Hz (1000..18000) — "EQ: LowCut/HighCut" no retorno final do reverb MASTER. */
+  setReverbEq(lowCutHz: number, highCutHz: number) {
+    this.reverbEqLowCutHz = Math.max(10, Math.min(500, lowCutHz));
+    this.reverbEqHighCutHz = Math.max(1000, Math.min(18000, highCutHz));
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    this.reverbEqLowCutNode?.frequency.setTargetAtTime(this.reverbEqLowCutHz, now, 0.02);
+    this.reverbEqHighCutNode?.frequency.setTargetAtTime(this.reverbEqHighCutHz, now, 0.02);
+  }
+
+  /** "Color" do reverb MASTER — 'vintage' acrescenta uma saturação sutil dentro do loop do tanque; 'modern' deixa limpo. */
+  setReverbColor(color: RackReverbColor) {
+    this.reverbColor = color;
+    if (!this.reverbTankA || !this.reverbTankB) return;
+    const curve = color === 'vintage' ? (createReverbWarmthCurve() as Float32Array<ArrayBuffer>) : null;
+    this.reverbTankA.colorShaper.curve = curve;
+    this.reverbTankB.colorShaper.curve = curve;
   }
 
   /** BPM de referência do rack — recalcula na hora o tempo de todo delay por camada que estiver com "Sync" ligado. */
@@ -2150,6 +2632,24 @@ export class RackEngine {
     const feedback = settings.enabled ? Math.min(0.92, Math.max(0, settings.feedback)) : 0;
     layer.shimmerFeedbackGain.gain.setTargetAtTime(feedback, now, 0.01);
     layer.shimmerTone.frequency.setTargetAtTime(Math.max(300, Math.min(16000, settings.toneHz)), now, 0.02);
+    const shift = Math.max(-12, Math.min(12, settings.shiftSemitones));
+    layer.shimmerUpPair.setShift(shift);
+    layer.shimmerDownPair.setShift(-shift);
+    // Pitch Mode "single" = só o par na direção de Shift; "dual" = soma o par invertido também (um pouco mais baixo pra não dobrar o volume percebido).
+    layer.shimmerDownMixGain.gain.setTargetAtTime(settings.pitchMode === 'dual' ? 0.85 : 0, now, 0.01);
+    const diffusion = Math.max(0, Math.min(0.9, settings.diffusion));
+    layer.shimmerDiffuser1.setCoeff(diffusion);
+    layer.shimmerDiffuser2.setCoeff(diffusion * 0.8);
+    const size = Math.max(0.3, Math.min(2, settings.size));
+    layer.shimmerSizeDelay.delayTime.setTargetAtTime(0.015 * size, now, 0.02);
+    layer.shimmerLowCut.frequency.setTargetAtTime(Math.max(20, Math.min(2000, settings.lowCutHz)), now, 0.02);
+    layer.shimmerModLfo.frequency.setTargetAtTime(Math.max(0.05, Math.min(5, settings.modRateHz)), now, 0.05);
+    layer.shimmerModDepthGain.gain.setTargetAtTime(Math.max(0, Math.min(1, settings.modDepth)) * 0.0025, now, 0.05);
+    // Reverb Mode "stereo" liga o 2º canal decorrelacionado e abre o painer; "mono" centraliza tudo.
+    const stereo = settings.reverbMode === 'stereo';
+    layer.shimmerStereoGain.gain.setTargetAtTime(stereo ? 1 : 0, now, 0.02);
+    layer.shimmerPannerL.pan.setTargetAtTime(stereo ? -0.7 : 0, now, 0.02);
+    layer.shimmerPannerR.pan.setTargetAtTime(stereo ? 0.7 : 0, now, 0.02);
   }
 
   /**

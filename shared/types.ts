@@ -622,12 +622,30 @@ export interface RackLayer {
    * de deslocamento de afinação por camada.
    */
   shimmerEnabled: boolean;
-  /** 0..1 — quanto do sinal "brilhante" (uma oitava acima, com cauda) é somado à saída. */
+  /** 0..1 — quanto do sinal "brilhante" (deslocado em afinação, com cauda) é somado à saída. */
   shimmerMix: number;
   /** 0..0.92 — realimentação da cauda etérea; mais alto = cauda mais longa (pode acumular várias oitavas). */
   shimmerFeedback: number;
-  /** Hz, 500..14000 — filtro passa-baixa dentro do loop de realimentação, controla o "brilho"/abafamento da cauda. */
+  /** Hz, 500..14000 — filtro passa-baixa dentro do loop de realimentação ("High Cut"), controla o brilho/abafamento da cauda. */
   shimmerToneHz: number;
+  /** semitons, -12..+12 — quanto o pitch shifter interno do loop desloca o sinal (padrão clássico "shimmer" = +12). */
+  shimmerShiftSemitones: number;
+  /** 0..1 — coeficiente dos allpasses difusores dentro do loop do Shimmer; mais alto = cauda mais densa/suave, menos "eco" perceptível. */
+  shimmerDiffusion: number;
+  /** 0.3..2 — escala um delay extra dentro do loop de realimentação, dando sensação de "tamanho de sala" independente do Feedback. */
+  shimmerSize: number;
+  /** Hz, 20..2000 — filtro passa-alta dentro do loop de realimentação, tira grave/lama da cauda etérea. */
+  shimmerLowCutHz: number;
+  /** Hz, 0.05..5 — taxa do LFO de modulação sutil (chorus) dentro do loop, dá movimento/vida à cauda. */
+  shimmerModRateHz: number;
+  /** 0..1 — profundidade do LFO de modulação sutil dentro do loop. */
+  shimmerModDepth: number;
+  /** 'mono' = loop centralizado (mais "cru", artefato de pitch mais evidente); 'stereo' = duas difusões levemente diferentes por canal, cauda mais larga e suave. */
+  shimmerReverbMode: RackShimmerReverbMode;
+  /** 'single' = desloca só pra cima (ou só pra baixo, se Shift negativo) — som clássico Eno/Lanois; 'dual' = desloca pra cima E pra baixo ao mesmo tempo, dentro do mesmo loop — mais denso/sinfônico. */
+  shimmerPitchMode: RackShimmerPitchMode;
+  /** Atalho de tom (como Escuro/Claro do reverb MASTER): ajusta Low Cut/High Cut juntos pra uma cauda mais escura ou mais brilhante. */
+  shimmerColor: RackShimmerColor;
 
   /**
    * Arpejador por camada — em vez de tocar normalmente, as notas seguradas
@@ -704,23 +722,64 @@ export interface InstrumentRackState {
   scenes: RackScene[];
   /** mostra (ou não) a pílula de acorde detectado ao lado de "Áudio OK", quando a aba Rack está aberta */
   chordDisplayEnabled: boolean;
-  /** Algoritmo/"sala" do reverb compartilhado do rack — afeta o timbre do retorno (ver MasterColumn). */
+  /**
+   * "Mode" do reverb compartilhado do rack (algoritmo tipo plate do
+   * Dattorro, ver RackEngine) — ao apertar SELECT na UI aplica um conjunto
+   * de parâmetros (Size/Diffusion/Damping/Mod) típico daquele espaço, mas
+   * Decay/Mix/Predelay/EQ/Bass Mult/Color continuam ajustáveis livremente
+   * depois (igual Mode nos plugins de referência).
+   */
   reverbRoom: RackReverbRoom;
-  /** segundos, 0.2..8 — duração da cauda do reverb compartilhado. */
+  /** segundos, 0.2..8 — tempo de decaimento (RT60 aproximado) do reverb compartilhado. */
   reverbDecaySec: number;
   /**
-   * Tom/brilho da cauda do reverb compartilhado, 0..1 (0 = Escuro/abafado,
-   * 1 = Claro/aberto) — controla um filtro passa-baixa na cauda (ver
-   * RackEngine.setReverbTone/regenerateReverbImpulse). Dois botões na UI
-   * (Escuro/Claro) escolhem valores nas pontas; o parâmetro em si é contínuo.
+   * Hz, 200..16000 — frequência de corte do passa-baixa de amortecimento
+   * (damping) dentro do tanque do reverb ("Damping: HighFreq"); mais baixo =
+   * cauda mais escura/abafada. Os botões ESCURO/CLARO da UI pulam pros
+   * extremos; o parâmetro em si é contínuo.
    */
-  reverbTone: number;
+  reverbDampingHz: number;
+  /** 0.4..3 — multiplicador do tempo de decaimento dos graves (abaixo de ~250Hz) em relação ao Decay geral ("Damping: BassMult"); >1 = graves duram mais, <1 = graves somem mais rápido que o resto. */
+  reverbBassMult: number;
+  /** ms, 0..200 — atraso antes do sinal entrar no tanque de reverb ("Predelay"); separa o ataque seco da cauda. */
+  reverbPredelayMs: number;
+  /** 0.4..1.8 — escala o comprimento de todas as linhas de delay internas do tanque ("Shape: Size"); maior = sala/espaço percebido maior. */
+  reverbSize: number;
+  /** 0..1 — mistura entre a cauda cheia (ataque suave, "swell") e um tap mais cedo/direto da difusão de entrada (ataque mais rápido/denso) — "Shape: Attack". */
+  reverbAttack: number;
+  /** 0..0.95 — coeficiente dos allpasses de difusão de ENTRADA (antes do tanque) — "Diffusion: Early". Mais alto = transiente de entrada mais borrado/suave. */
+  reverbDiffusionEarly: number;
+  /** 0..0.95 — coeficiente dos allpasses de difusão dentro do TANQUE (a cauda em si) — "Diffusion: Late". Mais alto = cauda mais densa e menos "eco"/metálica. */
+  reverbDiffusionLate: number;
+  /** Hz, 0.05..2 — taxa do LFO que modula os allpasses do tanque ("Mod: Rate"), evita colorações metálicas e dá vida à cauda. */
+  reverbModRateHz: number;
+  /** 0..1 — profundidade da modulação dos allpasses do tanque ("Mod: Depth"). */
+  reverbModDepth: number;
+  /** Hz, 10..500 — passa-alta no retorno final do reverb (depois do tanque) — "EQ: LowCut", tira lama/zumbido grave da cauda. */
+  reverbEqLowCutHz: number;
+  /** Hz, 1000..18000 — passa-baixa no retorno final do reverb — "EQ: HighCut", controla o brilho geral sem afetar o Damping interno do tanque. */
+  reverbEqHighCutHz: number;
+  /**
+   * "Color" do reverb compartilhado — 'vintage' acrescenta uma saturação bem
+   * sutil (WaveShaper) dentro do loop do tanque, simulando o leve "warmth"
+   * de reverbs de hardware/plates antigos (ex. "1970s" das referências);
+   * 'modern' deixa o loop limpo/linear.
+   */
+  reverbColor: RackReverbColor;
   /** BPM de referência do rack, usado pelos delays por camada quando "Sync" está ligado (ver RackLayer.delaySync). */
   bpm: number;
 }
 
 /** Tipo de sala/algoritmo do reverb compartilhado do Rack — ver InstrumentRackState.reverbRoom. */
 export type RackReverbRoom = 'room' | 'hall' | 'plate' | 'spring' | 'stage' | 'booth';
+/** Ver InstrumentRackState.reverbColor. */
+export type RackReverbColor = 'vintage' | 'modern';
+/** Ver RackLayer.shimmerReverbMode. */
+export type RackShimmerReverbMode = 'mono' | 'stereo';
+/** Ver RackLayer.shimmerPitchMode. */
+export type RackShimmerPitchMode = 'single' | 'dual';
+/** Ver RackLayer.shimmerColor. */
+export type RackShimmerColor = 'dark' | 'bright';
 
 export interface AppSettings {
   outputDeviceId: string | null;
@@ -845,6 +904,15 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     shimmerMix: 0.35,
     shimmerFeedback: 0.55,
     shimmerToneHz: 6000,
+    shimmerShiftSemitones: 12,
+    shimmerDiffusion: 0.6,
+    shimmerSize: 1,
+    shimmerLowCutHz: 200,
+    shimmerModRateHz: 0.6,
+    shimmerModDepth: 0.25,
+    shimmerReverbMode: 'mono',
+    shimmerPitchMode: 'single',
+    shimmerColor: 'bright',
     arpEnabled: false,
     arpPattern: 'up',
     arpSync: true,
@@ -881,7 +949,18 @@ export const DEFAULT_RACK_STATE: InstrumentRackState = {
   chordDisplayEnabled: true,
   reverbRoom: 'room',
   reverbDecaySec: 1.8,
-  reverbTone: 0.6,
+  reverbDampingHz: 6000,
+  reverbBassMult: 1,
+  reverbPredelayMs: 20,
+  reverbSize: 1,
+  reverbAttack: 0.3,
+  reverbDiffusionEarly: 0.65,
+  reverbDiffusionLate: 0.5,
+  reverbModRateHz: 0.3,
+  reverbModDepth: 0.4,
+  reverbEqLowCutHz: 20,
+  reverbEqHighCutHz: 16000,
+  reverbColor: 'modern',
   bpm: 120,
 };
 

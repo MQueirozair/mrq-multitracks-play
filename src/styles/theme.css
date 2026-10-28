@@ -840,6 +840,19 @@ input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-moz-ra
   background: var(--bg-3); border: 1px solid var(--border); color: var(--text-2);
 }
 .rack-reverb-tone-btn.active { background: linear-gradient(180deg, #5a4f24, #2e2912); border-color: #c9a62f; color: #f2d98a; }
+/* ---------- grupo genérico de botões "modo" (Reverb Mode/Pitch Mode/Color do Shimmer, Mode/Color do Reverb MASTER etc.) ---------- */
+.rack-toggle-label { font-size: 9px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: var(--text-3); margin: 6px 0 -2px; width: 100%; }
+.rack-toggle-row { display: flex; gap: 4px; width: 100%; margin-top: 6px; }
+.rack-toggle-btn {
+  flex: 1; padding: 6px 4px; border-radius: 6px; font-size: 9.5px; font-weight: 800; letter-spacing: .05em; text-align: center;
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--text-2);
+}
+.rack-toggle-btn:hover { color: var(--text-1); }
+.rack-toggle-btn.active {
+  background: color-mix(in srgb, var(--toggle-accent, #4fae5e) 30%, var(--bg-3));
+  border-color: var(--toggle-accent, #4fae5e); color: #fff;
+}
+
 .rack-panic-btn {
   width: 100%; padding: 10px 4px; background: #5c2626; border: 1px solid #7a3030; color: #fff; font-weight: 800;
   font-size: 11.5px; letter-spacing: .04em; border-radius: var(--radius-md);
