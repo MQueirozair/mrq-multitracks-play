@@ -339,6 +339,30 @@ export const RACK_DELAY_DIVISION_BEATS: Record<RackDelayDivision, number> = {
 };
 
 /**
+ * Padrão de sequência do arpejador por camada (ver RackLayer.arpPattern):
+ * - 'up': sobe pela sequência de notas seguradas (+ oitavas extras).
+ * - 'down': desce.
+ * - 'updown'/'downup': sobe-desce / desce-sobe, sem repetir a nota do topo/base.
+ * - 'order': ordem em que as teclas foram pressionadas (não reordena por altura).
+ * - 'random': sorteia uma nota do conjunto a cada passo.
+ * - 'chord': toca todas as notas seguradas (+ oitavas) juntas a cada passo, como uma batida.
+ */
+export type RackArpPattern = 'up' | 'down' | 'updown' | 'downup' | 'order' | 'random' | 'chord';
+
+/** Divisão de compasso usada pelo arpejador quando RackLayer.arpSync=true. */
+export type RackArpDivision = '1/4' | '1/8' | '1/8t' | '1/16' | '1/16t' | '1/32';
+
+/** Duração de cada divisão em "tempos" (1 tempo = 1 semínima), mesmo princípio de RACK_DELAY_DIVISION_BEATS. */
+export const RACK_ARP_DIVISION_BEATS: Record<RackArpDivision, number> = {
+  '1/4': 1,
+  '1/8': 0.5,
+  '1/8t': 1 / 3,
+  '1/16': 0.25,
+  '1/16t': 1 / 6,
+  '1/32': 0.125,
+};
+
+/**
  * As 6 bandas fixas do equalizador paramétrico por camada (ver
  * RackLayer.eqBands) — sempre nessa ordem e com essa função; o usuário não
  * adiciona/remove bandas, só ajusta frequência/ganho/Q e liga/desliga cada
@@ -584,6 +608,35 @@ export interface RackLayer {
   shimmerFeedback: number;
   /** Hz, 500..14000 — filtro passa-baixa dentro do loop de realimentação, controla o "brilho"/abafamento da cauda. */
   shimmerToneHz: number;
+
+  /**
+   * Arpejador por camada — em vez de tocar normalmente, as notas seguradas
+   * nesta camada alimentam um sequenciador que as dispara uma de cada vez
+   * (ou em acorde, no modo 'chord') num ritmo fixo. Quando ligado, o modo de
+   * voz (Poly/Mono/Legato) e o oitavador desta camada não se aplicam — o
+   * arpejador assume o controle de quais notas soam e quando (ver
+   * RackEngine.noteOn/noteOff e tickArpStep).
+   */
+  arpEnabled: boolean;
+  arpPattern: RackArpPattern;
+  /** quando true, o ritmo do arpejador segue o BPM do rack (ver InstrumentRackState.bpm) usando arpDivision; quando false, usa arpRateHz livre. */
+  arpSync: boolean;
+  /** Hz, 0.5..20 — usado só quando arpSync=false. */
+  arpRateHz: number;
+  /** fração/divisão de compasso usada quando arpSync=true. */
+  arpDivision: RackArpDivision;
+  /** 1..4 — quantas oitavas acima das notas seguradas o arpejador percorre. */
+  arpOctaves: number;
+  /** 0..1 — fração de cada passo em que a nota soa antes do note-off; 1 = liga (quase) sem respiro até o próximo passo. */
+  arpGate: number;
+  /** 0..0.75 — alterna passos mais longos/curtos pra dar um balanço (feel) às subdivisões, sem mudar o andamento médio. */
+  arpSwing: number;
+  /**
+   * Modo "hold": quando ligado, o acorde continua arpejando mesmo depois de
+   * soltar as teclas físicas, até você tocar um conjunto de notas novo
+   * (que substitui o anterior) ou desligar o modo.
+   */
+  arpLatch: boolean;
 }
 
 /** Curva de resposta de velocidade aplicada à entrada MIDI física inteira do rack. */
@@ -762,11 +815,20 @@ export function emptyRackLayer(id: string, color: string): RackLayer {
     shimmerMix: 0.35,
     shimmerFeedback: 0.55,
     shimmerToneHz: 6000,
+    arpEnabled: false,
+    arpPattern: 'up',
+    arpSync: true,
+    arpRateHz: 6,
+    arpDivision: '1/16',
+    arpOctaves: 1,
+    arpGate: 0.7,
+    arpSwing: 0,
+    arpLatch: false,
   };
 }
 
 /** Quantidade de camadas do Rack de instrumentos — única fonte da verdade, usada tanto pro estado inicial quanto pelo motor de áudio (RackEngine). */
-export const RACK_LAYER_COUNT = 6;
+export const RACK_LAYER_COUNT = 7;
 
 export const DEFAULT_RACK_STATE: InstrumentRackState = {
   layers: [
@@ -776,6 +838,7 @@ export const DEFAULT_RACK_STATE: InstrumentRackState = {
     emptyRackLayer('camada-4', '#d6b23c'),
     emptyRackLayer('camada-5', '#4fae5e'),
     emptyRackLayer('camada-6', '#d6782e'),
+    emptyRackLayer('camada-7', '#4a7fd6'),
   ],
   masterVolume: 0.8,
   reverb: 0,

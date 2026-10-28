@@ -587,17 +587,17 @@ export default function HelpPanel() {
 
         {/* ---------------- RACK ---------------- */}
         <section className="help-section" id="rack">
-          <SectionHead icon={Layers} title="Rack de instrumentos" purpose="Até 6 instrumentos virtuais tocáveis ao vivo por um teclado MIDI físico, por cima da multitrack" />
+          <SectionHead icon={Layers} title="Rack de instrumentos" purpose="Até 7 instrumentos virtuais tocáveis ao vivo por um teclado MIDI físico, por cima da multitrack" />
           <p>
             O Rack transforma o MRQ num instrumento ao vivo de verdade: conecte um teclado MIDI físico ao computador e
-            toque até <b>6 camadas (instrumentos) simultâneas</b> por cima da música que está rodando — útil pra quem
+            toque até <b>7 camadas (instrumentos) simultâneas</b> por cima da música que está rodando — útil pra quem
             reforça o teclado/sintetizador da banda, cobre um naipe de cordas, ou simplesmente quer soar mais cheio
             sem contratar mais músicos.
           </p>
           <Figure
             src="help-rack-formats.png"
-            alt="Rack com 6 camadas, cinco delas com instrumentos carregados de formatos diferentes"
-            caption="As 6 camadas do Rack — cada uma pode carregar um formato de instrumento diferente, mais a coluna MASTER à direita."
+            alt="Rack com 7 camadas, cinco delas com instrumentos carregados de formatos diferentes"
+            caption="As 7 camadas do Rack — cada uma pode carregar um formato de instrumento diferente, mais a coluna MASTER à direita."
           />
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Formatos de timbre aceitos por camada</h3>
@@ -769,7 +769,7 @@ export default function HelpPanel() {
             <b>Reverb por camada</b> agora chama o controle de envio de <b>"Amount"</b> (mesmo campo de sempre, só com
             nome igual ao de plugins conhecidos) — a <b>"sala"</b> (Room: Room/Hall/Plate/Spring) e a duração da cauda
             (<b>Decay</b>, em segundos) do reverb ficam na coluna <b>MASTER</b>, junto com o novo campo <b>BPM</b>{' '}
-            (usado pelos delays com Sync ligado) — já que o reverb é um retorno compartilhado por todas as 6 camadas,
+            (usado pelos delays com Sync ligado) — já que o reverb é um retorno compartilhado por todas as 7 camadas,
             não dá pra ter uma "sala" diferente em cada uma ao mesmo tempo sem pesar demais no processador.
           </p>
 
@@ -912,6 +912,44 @@ export default function HelpPanel() {
             numa e deixar as outras de fora.
           </p>
 
+          <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Arpejador por camada</h3>
+          <p>
+            O Rack agora tem <b>7 camadas</b> (antes eram 6) — a camada 7 vem com as mesmas opções de todas as
+            outras, incluindo o módulo <b>Arpejador</b>, o último do painel "Editar" (depois do Oitavador). Esse
+            módulo liga um sequenciador: em vez de cada nota segurada soar normalmente, elas alimentam um "pool" que
+            o arpejador dispara uma a uma (ou todas juntas, no modo Acorde) num ritmo fixo. Enquanto ele estiver{' '}
+            <b>ligado</b>, o modo de voz da camada (Poly/Mono/Legato) e o Oitavador por camada não têm efeito — é o
+            arpejador quem decide quais notas soam e quando.
+          </p>
+          <ul>
+            <li>
+              <b>Padrão</b> (select no topo do módulo): <b>Subindo</b>/<b>Descendo</b> percorrem as notas seguradas
+              (+ oitavas extras) da mais grave pra mais aguda ou o contrário; <b>Sobe-desce</b>/<b>Desce-sobe</b> vão
+              e voltam sem repetir a nota do topo/base; <b>Ordem tocada</b> segue a ordem em que você pressionou as
+              teclas (não reordena por altura); <b>Aleatório</b> sorteia uma nota do conjunto a cada passo;{' '}
+              <b>Acorde</b> toca todas as notas seguradas juntas a cada passo, como uma batida rítmica.
+            </li>
+            <li>
+              <b>Sync</b> (botão com LED): quando ligado, a velocidade segue o <b>BPM</b> do Rack na divisão de
+              compasso escolhida ao lado (1/4 até 1/32, com variantes em tercina); quando desligado, aparece um knob{' '}
+              <b>Rate</b> (Hz) pra ajustar a velocidade livremente, sem depender do BPM.
+            </li>
+            <li>
+              <b>Hold</b> (botão com LED, modo "latch"): quando ligado, o arpejador continua tocando o acorde mesmo
+              depois de você soltar as teclas — toque um conjunto de notas novo pra substituir o anterior, ou
+              desligue o Hold pra voltar ao normal (precisa segurar as teclas pra ouvir).
+            </li>
+            <li><b>Oitavas</b>: quantas oitavas acima das notas seguradas o arpejador percorre (1 a 4).</li>
+            <li>
+              <b>Gate</b>: por quanto tempo de cada passo a nota soa antes de ser cortada — baixo soa mais
+              "picotado"/staccato, no máximo (100%) a nota quase não solta até o próximo passo.
+            </li>
+            <li>
+              <b>Swing</b>: alterna passos mais longos/curtos pra dar um balanço (feel) às subdivisões, sem mudar a
+              velocidade média geral.
+            </li>
+          </ul>
+
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Transposição global no MASTER</h3>
           <p>
             A coluna MASTER também tem um controle de <b>transposição global</b> (±24 semitons) — o mesmo das
@@ -930,7 +968,7 @@ export default function HelpPanel() {
 
           <h3 style={{ fontSize: 13.5, marginTop: 18 }}>Cenas do Rack (snapshots por Program Change)</h3>
           <p>
-            Salve a configuração completa das 6 camadas (instrumentos, volumes, master, reverb) como uma{' '}
+            Salve a configuração completa das 7 camadas (instrumentos, volumes, master, reverb) como uma{' '}
             <b>Cena do Rack</b> em <b>"Salvar cena atual"</b>. Cada cena salva fica associada a um número de{' '}
             <b>Program Change</b> do teclado físico — ou seja, dá pra trocar o "patch" inteiro do Rack ao vivo
             apertando um botão de PC no teclado, sem tocar no mouse.

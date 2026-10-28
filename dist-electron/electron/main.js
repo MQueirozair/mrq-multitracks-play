@@ -380,16 +380,47 @@ electron_1.ipcMain.handle('fs:chooseSongFolder', async () => {
         return null;
     return result.filePaths[0];
 });
-electron_1.ipcMain.handle('fs:scanFolderTracks', async (_e, folderPath) => {
-    const entries = await node_fs_1.default.promises.readdir(folderPath, { withFileTypes: true });
-    const tracks = entries
+async function scanDirAudioFiles(dir) {
+    const entries = await node_fs_1.default.promises.readdir(dir, { withFileTypes: true });
+    return entries
         .filter((e) => e.isFile() && AUDIO_EXTENSIONS.has(node_path_1.default.extname(e.name).toLowerCase()))
         .map((e) => ({
         name: node_path_1.default.basename(e.name, node_path_1.default.extname(e.name)),
-        filePath: node_path_1.default.join(folderPath, e.name),
-    }))
-        .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-    return tracks;
+        filePath: node_path_1.default.join(dir, e.name),
+    }));
+}
+async function listSubdirs(dir) {
+    const entries = await node_fs_1.default.promises.readdir(dir, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => node_path_1.default.join(dir, e.name));
+}
+function sortTracks(tracks) {
+    return [...tracks].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+}
+electron_1.ipcMain.handle('fs:scanFolderTracks', async (_e, folderPath) => {
+    const direct = await scanDirAudioFiles(folderPath);
+    if (direct.length > 0)
+        return sortTracks(direct);
+    // Pasta escolhida sem áudio direto nela — comum quando o pacote de
+    // multitracks vem com os arquivos dentro de uma subpasta ("WAV", "Tracks",
+    // "Audio" etc). Procura até 2 níveis abaixo, mas só quando a pasta tem
+    // poucas subpastas (pasta de UMA música, não uma biblioteca inteira).
+    const subdirs = await listSubdirs(folderPath);
+    if (subdirs.length === 0 || subdirs.length > 8)
+        return [];
+    const found = [];
+    for (const sub of subdirs) {
+        const here = await scanDirAudioFiles(sub);
+        if (here.length === 0) {
+            const innerDirs = await listSubdirs(sub).catch(() => []);
+            for (const inner of innerDirs) {
+                found.push(...(await scanDirAudioFiles(inner)));
+            }
+        }
+        else {
+            found.push(...here);
+        }
+    }
+    return sortTracks(found);
 });
 electron_1.ipcMain.handle('fs:toFileUrl', (_e, filePath) => {
     return 'mrqfile://local-file/' + encodeURIComponent(filePath);
@@ -416,7 +447,7 @@ electron_1.ipcMain.handle('fs:chooseInstrumentFile', async () => {
         properties: ['openFile'],
         title: 'Escolha o arquivo do instrumento',
         filters: [
-            { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno', 'nsmp', 'nsmp3', 'nsmp4', 'nki', 'sfz'] },
+            { name: 'Todos os instrumentos suportados', extensions: ['sf2', 'sf3', 'syx', 'wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3', 'npno', 'nsmp', 'nsmp3', 'nsmp4', 'nki', 'sfz', 'mrqi'] },
             { name: 'SoundFont (.sf2, .sf3)', extensions: ['sf2', 'sf3'] },
             { name: 'Banco DX7 (.syx)', extensions: ['syx'] },
             { name: 'Amostra de áudio (.wav, .aiff, .flac, .ogg, .mp3)', extensions: ['wav', 'wave', 'aiff', 'aif', 'flac', 'ogg', 'mp3'] },
@@ -424,6 +455,7 @@ electron_1.ipcMain.handle('fs:chooseInstrumentFile', async () => {
             { name: 'Nord Sample Library (.nsmp, .nsmp3, .nsmp4)', extensions: ['nsmp', 'nsmp3', 'nsmp4'] },
             { name: 'Kontakt 1-4 (.nki, sem criptografia)', extensions: ['nki'] },
             { name: 'SFZ (.sfz) — inclui exportações do Kontakt 5-8', extensions: ['sfz'] },
+            { name: 'MRQ Instrument — formato leve do Rack (.mrqi)', extensions: ['mrqi'] },
             { name: 'Todos os arquivos', extensions: ['*'] },
         ],
     });
@@ -432,6 +464,19 @@ electron_1.ipcMain.handle('fs:chooseInstrumentFile', async () => {
     return result.filePaths[0];
 });
 electron_1.ipcMain.handle('fs:openExternal', (_e, url) => electron_1.shell.openExternal(url));
+/** Equivalente Electron de save_binary_file (src-tauri/src/fsops.rs) — usado
+ *  hoje pela exportação de camadas do Rack para `.mrqi` (ver mrqiExport.ts). */
+electron_1.ipcMain.handle('fs:saveBinaryFile', async (_e, defaultName, data) => {
+    const result = await electron_1.dialog.showSaveDialog(mainWindow, {
+        title: 'Salvar instrumento .mrqi',
+        defaultPath: defaultName,
+        filters: [{ name: 'MRQ Instrument (.mrqi)', extensions: ['mrqi'] }],
+    });
+    if (result.canceled || !result.filePath)
+        return null;
+    await node_fs_1.default.promises.writeFile(result.filePath, Buffer.from(data));
+    return result.filePath;
+});
 // ---------- IPC: log de diagnóstico ----------
 electron_1.ipcMain.handle('log:append', (_e, line) => {
     appendLog(String(line));

@@ -1,7 +1,8 @@
 "use strict";
 // Tipos compartilhados entre o processo principal (Electron/Node) e a interface (renderer).
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NOTE_NAMES = exports.PART_COLORS = exports.DEFAULT_SETTINGS = exports.DEFAULT_RACK_STATE = exports.RACK_LAYER_COUNT = exports.RACK_CC_TRIGGER_ACTIONS = exports.RACK_CC_FADER_ACTIONS = void 0;
+exports.NOTE_NAMES = exports.PART_COLORS = exports.DEFAULT_SETTINGS = exports.DEFAULT_RACK_STATE = exports.RACK_LAYER_COUNT = exports.RACK_EQ_BAND_LABELS = exports.RACK_EQ_BAND_ROLES = exports.RACK_ARP_DIVISION_BEATS = exports.RACK_DELAY_DIVISION_BEATS = exports.RACK_CC_TRIGGER_ACTIONS = exports.RACK_CC_FADER_ACTIONS = void 0;
+exports.defaultRackEqBands = defaultRackEqBands;
 exports.emptyRackLayer = emptyRackLayer;
 exports.migrateRackLayers = migrateRackLayers;
 exports.semitoneDistance = semitoneDistance;
@@ -24,6 +25,51 @@ exports.RACK_CC_TRIGGER_ACTIONS = [
     'rack:layer:octaver',
     'rack:master:panic',
 ];
+/** Duração de cada divisão em "tempos" (1 tempo = 1 nota semínima/quarter note), pra converter BPM em milissegundos: ms = (60000/bpm) * tempos. */
+exports.RACK_DELAY_DIVISION_BEATS = {
+    '1/16': 0.25,
+    '1/8t': 1 / 3,
+    '1/8': 0.5,
+    '1/8d': 0.75,
+    '1/4': 1,
+    '1/4d': 1.5,
+    '1/2': 2,
+};
+/** Duração de cada divisão em "tempos" (1 tempo = 1 semínima), mesmo princípio de RACK_DELAY_DIVISION_BEATS. */
+exports.RACK_ARP_DIVISION_BEATS = {
+    '1/4': 1,
+    '1/8': 0.5,
+    '1/8t': 1 / 3,
+    '1/16': 0.25,
+    '1/16t': 1 / 6,
+    '1/32': 0.125,
+};
+/**
+ * As 6 bandas fixas do equalizador paramétrico por camada (ver
+ * RackLayer.eqBands) — sempre nessa ordem e com essa função; o usuário não
+ * adiciona/remove bandas, só ajusta frequência/ganho/Q e liga/desliga cada
+ * uma, igual ao equalizador de referência (print "SLOT FX").
+ */
+exports.RACK_EQ_BAND_ROLES = ['lowcut', 'lowshelf', 'bell1', 'bell2', 'highshelf', 'highcut'];
+exports.RACK_EQ_BAND_LABELS = {
+    lowcut: 'Corte grave',
+    lowshelf: 'Prateleira grave',
+    bell1: 'Sino 1',
+    bell2: 'Sino 2',
+    highshelf: 'Prateleira aguda',
+    highcut: 'Corte agudo',
+};
+/** Valores padrão das 6 bandas, na ordem de RACK_EQ_BAND_ROLES. */
+function defaultRackEqBands() {
+    return [
+        { enabled: true, freqHz: 70, gainDb: 0, q: 0.71 }, // lowcut
+        { enabled: true, freqHz: 150, gainDb: 0, q: 0.71 }, // lowshelf
+        { enabled: true, freqHz: 280, gainDb: 0, q: 1.2 }, // bell1
+        { enabled: true, freqHz: 2500, gainDb: 0, q: 0.9 }, // bell2
+        { enabled: true, freqHz: 6000, gainDb: 0, q: 0.71 }, // highshelf
+        { enabled: true, freqHz: 12000, gainDb: 0, q: 0.71 }, // highcut
+    ];
+}
 function emptyRackLayer(id, color) {
     return {
         id,
@@ -47,7 +93,11 @@ function emptyRackLayer(id, color) {
         midiChannel: 0,
         envelopeEnabled: false,
         attackMs: 5,
+        decayMs: 0,
         releaseMs: 350,
+        playMode: 'poly',
+        legato: false,
+        glideMs: 80,
         filterEnabled: false,
         cutoffHz: 20000,
         eqEnabled: false,
@@ -55,6 +105,7 @@ function emptyRackLayer(id, color) {
         eqMidDb: 0,
         eqTrebleDb: 0,
         eqMidFreqHz: 1000,
+        eqBands: defaultRackEqBands(),
         driveEnabled: false,
         driveType: 'warm',
         driveDb: 0,
@@ -64,6 +115,9 @@ function emptyRackLayer(id, color) {
         reverbEnabled: true,
         reverbSend: 1,
         compressorEnabled: false,
+        compressorAmount: 0.4,
+        compressorAttackMs: 8,
+        compressorReleaseMs: 140,
         compressorThresholdDb: -24,
         compressorRatio: 4,
         compressorMakeupDb: 0,
@@ -71,13 +125,52 @@ function emptyRackLayer(id, color) {
         delayTimeMs: 300,
         delayFeedback: 0.3,
         delayMix: 0.35,
+        delaySync: false,
+        delayDivision: '1/8',
+        delayPingPong: false,
+        chorusEnabled: false,
+        chorusMix: 0.25,
+        tremoloEnabled: false,
+        tremoloRateHz: 4,
+        tremoloDepth: 0.5,
+        tremoloStereo: 0,
         octaverEnabled: false,
         octaverMode: 'down',
         octaverMix: 0.7,
+        gateEnabled: false,
+        gateThresholdDb: -40,
+        gateAttackMs: 5,
+        gateReleaseMs: 120,
+        phaserEnabled: false,
+        phaserRateHz: 0.5,
+        phaserDepth: 0.6,
+        phaserMix: 0.5,
+        flangerEnabled: false,
+        flangerRateHz: 0.25,
+        flangerDepth: 0.5,
+        flangerFeedback: 0.4,
+        flangerMix: 0.5,
+        bitcrusherEnabled: false,
+        bitcrusherBits: 12,
+        bitcrusherRateHz: 44100,
+        bitcrusherMix: 1,
+        shimmerEnabled: false,
+        shimmerMix: 0.35,
+        shimmerFeedback: 0.55,
+        shimmerToneHz: 6000,
+        arpEnabled: false,
+        arpPattern: 'up',
+        arpSync: true,
+        arpRateHz: 6,
+        arpDivision: '1/16',
+        arpOctaves: 1,
+        arpGate: 0.7,
+        arpSwing: 0,
+        arpLatch: false,
     };
 }
 /** Quantidade de camadas do Rack de instrumentos — única fonte da verdade, usada tanto pro estado inicial quanto pelo motor de áudio (RackEngine). */
-exports.RACK_LAYER_COUNT = 6;
+exports.RACK_LAYER_COUNT = 7;
 exports.DEFAULT_RACK_STATE = {
     layers: [
         emptyRackLayer('camada-1', '#d6455d'),
@@ -86,6 +179,7 @@ exports.DEFAULT_RACK_STATE = {
         emptyRackLayer('camada-4', '#d6b23c'),
         emptyRackLayer('camada-5', '#4fae5e'),
         emptyRackLayer('camada-6', '#d6782e'),
+        emptyRackLayer('camada-7', '#4a7fd6'),
     ],
     masterVolume: 0.8,
     reverb: 0,
@@ -96,6 +190,9 @@ exports.DEFAULT_RACK_STATE = {
     bufferFrames: 0,
     scenes: [],
     chordDisplayEnabled: true,
+    reverbRoom: 'room',
+    reverbDecaySec: 1.8,
+    bpm: 120,
 };
 /**
  * Migra o array de camadas do Rack salvo de uma sessão anterior pra sempre
@@ -146,6 +243,17 @@ exports.DEFAULT_SETTINGS = {
         port: 8787,
         pin: '0000',
     },
+    osc: {
+        enabled: false,
+        listenPort: 9000,
+        sendHost: '127.0.0.1',
+        sendPort: 9001,
+    },
+    sync: {
+        enabled: false,
+        role: 'leader',
+        port: 8788,
+    },
     midiBindings: [],
     guideVoice: {
         track: null,
@@ -153,6 +261,9 @@ exports.DEFAULT_SETTINGS = {
     },
     stageMode: false,
     rack: exports.DEFAULT_RACK_STATE,
+    speech: {
+        enabled: false,
+    },
 };
 exports.PART_COLORS = {
     Intro: '#2f6f6a',

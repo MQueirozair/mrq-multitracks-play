@@ -78,6 +78,17 @@ export function applyLayerParamsToEngine(index: number, layer: RackLayer) {
     feedback: layer.shimmerFeedback,
     toneHz: layer.shimmerToneHz,
   });
+  rackEngine.setArp(index, {
+    enabled: layer.arpEnabled,
+    pattern: layer.arpPattern,
+    sync: layer.arpSync,
+    rateHz: layer.arpRateHz,
+    division: layer.arpDivision,
+    octaves: layer.arpOctaves,
+    gate: layer.arpGate,
+    swing: layer.arpSwing,
+    latch: layer.arpLatch,
+  });
 }
 
 

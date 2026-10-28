@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { useStore } from '../state/useStore';
 import type {
+  RackArpDivision,
+  RackArpPattern,
   RackCharacter,
   RackDelayDivision,
   RackDriveType,
@@ -94,7 +96,35 @@ const DEFAULT_LAYER_FX: Partial<RackLayer> = {
   shimmerMix: 0.35,
   shimmerFeedback: 0.55,
   shimmerToneHz: 6000,
+  arpEnabled: false,
+  arpPattern: 'up',
+  arpSync: true,
+  arpRateHz: 6,
+  arpDivision: '1/16',
+  arpOctaves: 1,
+  arpGate: 0.7,
+  arpSwing: 0,
+  arpLatch: false,
 };
+
+const ARP_DIVISION_OPTIONS: { value: RackArpDivision; label: string }[] = [
+  { value: '1/4', label: '1/4' },
+  { value: '1/8', label: '1/8' },
+  { value: '1/8t', label: '1/8 triplet' },
+  { value: '1/16', label: '1/16' },
+  { value: '1/16t', label: '1/16 triplet' },
+  { value: '1/32', label: '1/32' },
+];
+
+const ARP_PATTERN_OPTIONS: { value: RackArpPattern; label: string }[] = [
+  { value: 'up', label: 'Subindo' },
+  { value: 'down', label: 'Descendo' },
+  { value: 'updown', label: 'Sobe-desce' },
+  { value: 'downup', label: 'Desce-sobe' },
+  { value: 'order', label: 'Ordem tocada' },
+  { value: 'random', label: 'Aleatório' },
+  { value: 'chord', label: 'Acorde' },
+];
 
 const DELAY_DIVISION_OPTIONS: { value: RackDelayDivision; label: string }[] = [
   { value: '1/16', label: '1/16' },
@@ -395,6 +425,29 @@ export default function InstrumentRack() {
     }
     if ('octaverEnabled' in patch || 'octaverMode' in patch || 'octaverMix' in patch) {
       rackEngine.setLayerOctaver(index, { enabled: layer.octaverEnabled, mode: layer.octaverMode, mix: layer.octaverMix });
+    }
+    if (
+      'arpEnabled' in patch ||
+      'arpPattern' in patch ||
+      'arpSync' in patch ||
+      'arpRateHz' in patch ||
+      'arpDivision' in patch ||
+      'arpOctaves' in patch ||
+      'arpGate' in patch ||
+      'arpSwing' in patch ||
+      'arpLatch' in patch
+    ) {
+      rackEngine.setArp(index, {
+        enabled: layer.arpEnabled,
+        pattern: layer.arpPattern,
+        sync: layer.arpSync,
+        rateHz: layer.arpRateHz,
+        division: layer.arpDivision,
+        octaves: layer.arpOctaves,
+        gate: layer.arpGate,
+        swing: layer.arpSwing,
+        latch: layer.arpLatch,
+      });
     }
     if ('gateEnabled' in patch || 'gateThresholdDb' in patch || 'gateAttackMs' in patch || 'gateReleaseMs' in patch) {
       rackEngine.setGate(index, {
@@ -1779,6 +1832,57 @@ function LayerEditPanel({
             }
           >
             <RackKnob label="Mix" value={layer.octaverMix} min={0} max={1} step={0.01} defaultValue={0.7} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ octaverMix: v })} accent="#8a5fd6" />
+          </RackFxModule>
+
+          {/* arpejador (por camada) */}
+          <RackFxModule
+            title="Arpejador"
+            enabled={layer.arpEnabled}
+            onToggle={(v) => onPatch({ arpEnabled: v })}
+            accent="#4a7fd6"
+            wide
+            hint="Com o arpejador ligado, o modo de voz (Poly/Mono/Legato) e o oitavador desta camada não se aplicam — segure um acorde e o arpejador decide quando/quais notas soam."
+            extra={
+              <div className="rack-field-label-row">
+                <select value={layer.arpPattern} onChange={(e) => onPatch({ arpPattern: e.target.value as RackArpPattern })}>
+                  {ARP_PATTERN_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className={`rack-fx-led-btn ${layer.arpSync ? 'on' : ''}`}
+                  onClick={() => onPatch({ arpSync: !layer.arpSync })}
+                  title={`Sync: ${layer.arpSync ? 'ligado' : 'desligado'}${layer.arpSync ? ` (${bpm.toFixed(1)} BPM)` : ''}`}
+                >
+                  <span className="rack-fx-led" style={layer.arpSync ? { background: '#4a7fd6', boxShadow: '0 0 6px #4a7fd6' } : undefined} />
+                  Sync
+                </button>
+                {layer.arpSync ? (
+                  <select value={layer.arpDivision} onChange={(e) => onPatch({ arpDivision: e.target.value as RackArpDivision })}>
+                    {ARP_DIVISION_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                ) : null}
+                <button
+                  type="button"
+                  className={`rack-fx-led-btn ${layer.arpLatch ? 'on' : ''}`}
+                  onClick={() => onPatch({ arpLatch: !layer.arpLatch })}
+                  title={`Hold/Latch: ${layer.arpLatch ? 'ligado' : 'desligado'} — continua arpejando depois de soltar as teclas`}
+                >
+                  <span className="rack-fx-led" style={layer.arpLatch ? { background: '#4a7fd6', boxShadow: '0 0 6px #4a7fd6' } : undefined} />
+                  Hold
+                </button>
+              </div>
+            }
+          >
+            {!layer.arpSync && (
+              <RackKnob label="Rate" value={layer.arpRateHz} min={0.5} max={20} step={0.1} defaultValue={6} format={(v) => `${v.toFixed(1)}Hz`} onChange={(v) => onPatch({ arpRateHz: v })} accent="#4a7fd6" />
+            )}
+            <RackKnob label="Oitavas" value={layer.arpOctaves} min={1} max={4} step={1} defaultValue={1} format={(v) => `${Math.round(v)}`} onChange={(v) => onPatch({ arpOctaves: Math.round(v) })} accent="#4a7fd6" />
+            <RackKnob label="Gate" value={layer.arpGate} min={0.05} max={1} step={0.01} defaultValue={0.7} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ arpGate: v })} accent="#4a7fd6" />
+            <RackKnob label="Swing" value={layer.arpSwing} min={0} max={0.75} step={0.01} defaultValue={0} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => onPatch({ arpSwing: v })} accent="#4a7fd6" />
           </RackFxModule>
         </div>
       </div>

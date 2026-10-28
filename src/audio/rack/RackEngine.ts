@@ -1,4 +1,6 @@
 import type {
+  RackArpDivision,
+  RackArpPattern,
   RackCharacter,
   RackDelayDivision,
   RackDriveType,
@@ -9,7 +11,7 @@ import type {
   RackPresetOption,
   RackReverbRoom,
 } from '../../../shared/types';
-import { RACK_DELAY_DIVISION_BEATS, RACK_EQ_BAND_ROLES, RACK_LAYER_COUNT, defaultRackEqBands } from '../../../shared/types';
+import { RACK_ARP_DIVISION_BEATS, RACK_DELAY_DIVISION_BEATS, RACK_EQ_BAND_ROLES, RACK_LAYER_COUNT, defaultRackEqBands } from '../../../shared/types';
 import { Sf2LayerVoice } from './Sf2LayerVoice';
 import { Dx7LayerVoice } from './Dx7LayerVoice';
 import { SamplerLayerVoice } from './SamplerLayerVoice';
@@ -200,6 +202,22 @@ export interface LayerShimmerSettings {
   toneHz: number;
 }
 
+export interface LayerArpSettings {
+  enabled: boolean;
+  pattern: RackArpPattern;
+  sync: boolean;
+  /** Hz, usado só quando sync=false */
+  rateHz: number;
+  division: RackArpDivision;
+  /** 1..4 */
+  octaves: number;
+  /** 0..1 */
+  gate: number;
+  /** 0..0.75 */
+  swing: number;
+  latch: boolean;
+}
+
 interface LayerRuntime {
   format: RackLayerFormat | null;
   voice: AnyLayerVoice | null;
@@ -228,6 +246,29 @@ interface LayerRuntime {
   monoVoiceTargetNote: number | null;
   /** timer do glide em andamento, pra poder cancelar se uma nota nova chegar no meio do deslizamento. */
   glideTimer: ReturnType<typeof setInterval> | null;
+
+  // --- arpejador por camada (ver setArp/arpNoteOn/arpNoteOff/tickArpStep) ---
+  arp: LayerArpSettings;
+  /** notas físicas seguradas agora (nota original -> velocity), na ordem em que foram pressionadas. */
+  arpHeld: Map<number, number>;
+  /** cópia "travada" do conjunto de notas, usada quando arp.latch=true — sobrevive ao soltar as teclas. */
+  arpLatched: Map<number, number>;
+  /** true logo depois que todas as teclas físicas foram soltas com latch ligado — a próxima tecla pressionada começa um acorde novo (substitui arpLatched) em vez de somar a ele. */
+  arpAwaitingNewChord: boolean;
+  /** sequência de notas (sem oitava de camada) já expandida por oitavas/ordenada pelo padrão atual — recalculada em rebuildArpSequence. */
+  arpSequence: number[];
+  /** índice do último passo disparado dentro de arpSequence (padrões sequenciais); -1 = ainda não começou. */
+  arpStepIndex: number;
+  /** notas (já com oitava da camada aplicada) soando agora por causa do arpejador, pra soltar no próximo passo/ao parar. */
+  arpActiveNotes: number[];
+  /** ctx.currentTime do próximo passo agendado; null = arpejador parado nesta camada. */
+  arpNextStepTime: number | null;
+  /** ctx.currentTime em que a nota do passo atual deve ser solta (gate < 100%); null = deixa soar até o próximo passo. */
+  arpOffTime: number | null;
+  /** alterna a cada passo, usado só pelo swing (passos "pares" ficam mais longos, "ímpares" mais curtos, ou vice-versa). */
+  arpStepParity: boolean;
+  /** timer periódico (ver createLayerRuntime) que checa se é hora do próximo passo do arpejador desta camada. */
+  arpTimer: ReturnType<typeof setInterval> | null;
 
   // cadeia de áudio (ver connectChain): voice -> envelopeGain -> cutoffFilter ->
   // eqBandNodes[0..5] (6 bandas paramétricas) -> drivePreGain -> (dry + wet via shaper) -> driveSum
@@ -699,6 +740,16 @@ export class RackEngine {
       layer.gateOpenAmount = target;
     }, 10);
 
+    // Arpejador — checa a cada ~15ms se é hora do próximo passo (ver
+    // tickArpStep); identifica "sua" camada pelo mesmo truque do gateTimer
+    // acima (busca por um nó único criado aqui, já que LayerRuntime ainda
+    // não existe neste ponto da construção do grafo).
+    const arpTimer = setInterval(() => {
+      const layer = this.layers.find((l) => l.gateAnalyser === gateAnalyser);
+      if (!layer) return;
+      this.tickArpStep(layer);
+    }, 15);
+
     const drivePreGain = ctx.createGain();
     drivePreGain.gain.value = 1;
     const driveShaper = ctx.createWaveShaper();
@@ -1146,6 +1197,17 @@ export class RackEngine {
       shimmerFeedbackGain,
       shimmerWet,
       shimmer: { enabled: false, mix: 0.35, feedback: 0.55, toneHz: 6000 },
+      arp: { enabled: false, pattern: 'up', sync: true, rateHz: 6, division: '1/16', octaves: 1, gate: 0.7, swing: 0, latch: false },
+      arpHeld: new Map(),
+      arpLatched: new Map(),
+      arpAwaitingNewChord: false,
+      arpSequence: [],
+      arpStepIndex: -1,
+      arpActiveNotes: [],
+      arpNextStepTime: null,
+      arpOffTime: null,
+      arpStepParity: false,
+      arpTimer,
     };
   }
 
@@ -1663,6 +1725,191 @@ export class RackEngine {
     layer.octaver = { ...settings, mix: Math.min(1, Math.max(0, settings.mix)) };
   }
 
+  // --- arpejador (por camada) ---
+
+  /**
+   * Liga/ajusta o arpejador desta camada. Desligar interrompe imediatamente
+   * qualquer nota que o arpejador esteja segurando (ver stopArp) e esquece
+   * as notas seguradas/travadas, pra não deixar nada "preso" soando. Trocar
+   * padrão/oitavas enquanto já há notas seguradas recalcula a sequência na
+   * hora (ver rebuildArpSequence), sem esperar a próxima tecla.
+   */
+  setArp(index: number, settings: LayerArpSettings) {
+    const layer = this.layers[index];
+    if (!layer) return;
+    const wasEnabled = layer.arp.enabled;
+    layer.arp = settings;
+    if (!settings.enabled) {
+      if (wasEnabled) this.stopArp(layer);
+      layer.arpHeld.clear();
+      layer.arpLatched.clear();
+      layer.arpAwaitingNewChord = false;
+      return;
+    }
+    if (this.arpPool(layer).size > 0) this.rebuildArpSequence(layer);
+  }
+
+  /** Pool de notas "em jogo" agora: o conjunto travado (latch), se houver, senão as fisicamente seguradas. */
+  private arpPool(layer: LayerRuntime): Map<number, number> {
+    return layer.arp.latch && layer.arpLatched.size > 0 ? layer.arpLatched : layer.arpHeld;
+  }
+
+  /**
+   * Reconstrói layer.arpSequence (notas sem oitava de camada, já expandidas
+   * pelas oitavas extras e ordenadas conforme layer.arp.pattern) a partir do
+   * pool atual de notas seguradas/travadas. Chamada sempre que o pool ou as
+   * configurações do arpejador mudam.
+   */
+  private rebuildArpSequence(layer: LayerRuntime) {
+    const pool = this.arpPool(layer);
+    const pressedOrder = Array.from(pool.keys());
+    const sortedAsc = [...pressedOrder].sort((a, b) => a - b);
+    const octaves = Math.max(1, Math.min(4, Math.round(layer.arp.octaves)));
+    const base = layer.arp.pattern === 'order' ? pressedOrder : sortedAsc;
+    const expanded: number[] = [];
+    for (let o = 0; o < octaves; o++) {
+      for (const n of base) expanded.push(n + o * 12);
+    }
+
+    let sequence: number[];
+    switch (layer.arp.pattern) {
+      case 'down':
+        sequence = [...expanded].sort((a, b) => b - a);
+        break;
+      case 'updown': {
+        const up = [...expanded].sort((a, b) => a - b);
+        const down = [...up].slice(1, -1).reverse();
+        sequence = [...up, ...down];
+        break;
+      }
+      case 'downup': {
+        const down = [...expanded].sort((a, b) => b - a);
+        const up = [...down].slice(1, -1).reverse();
+        sequence = [...down, ...up];
+        break;
+      }
+      case 'order':
+      case 'chord':
+        sequence = expanded;
+        break;
+      case 'random':
+        sequence = [...expanded].sort((a, b) => a - b);
+        break;
+      case 'up':
+      default:
+        sequence = [...expanded].sort((a, b) => a - b);
+    }
+
+    layer.arpSequence = sequence;
+    if (layer.arpStepIndex >= sequence.length) layer.arpStepIndex = -1;
+  }
+
+  /** Nota chega nesta camada com o arpejador ligado: só atualiza o pool de notas seguradas/travadas — quem de fato dispara o som é tickArpStep(). */
+  private arpNoteOn(layer: LayerRuntime, note: number, velocity: number) {
+    const wasEmpty = this.arpPool(layer).size === 0;
+    if (layer.arp.latch && layer.arpAwaitingNewChord) {
+      // depois de soltar tudo com latch ligado, a próxima tecla começa um acorde novo em vez de somar ao anterior
+      layer.arpLatched.clear();
+      layer.arpAwaitingNewChord = false;
+    }
+    layer.arpHeld.set(note, velocity);
+    if (layer.arp.latch) layer.arpLatched.set(note, velocity);
+    layer.activeNotes.set(note, Math.max(0, Math.min(127, note + layer.octave * 12))); // só pra o teclado visual mostrar a tecla física pressionada
+    this.rebuildArpSequence(layer);
+    if (wasEmpty) {
+      this.triggerEnvelopeAttackDecay(layer);
+      layer.arpStepIndex = -1;
+      layer.arpStepParity = false;
+      layer.arpNextStepTime = this.ctx ? this.ctx.currentTime : 0; // dispara já no próximo tick
+    }
+  }
+
+  /** Solta uma nota nesta camada com o arpejador ligado — ver arpNoteOn. */
+  private arpNoteOff(layer: LayerRuntime, note: number) {
+    layer.arpHeld.delete(note);
+    layer.activeNotes.delete(note);
+    if (layer.arp.latch) {
+      if (layer.arpHeld.size === 0) layer.arpAwaitingNewChord = true;
+      return; // com latch ligado, soltar a tecla não tira a nota do conjunto travado
+    }
+    this.rebuildArpSequence(layer);
+    if (this.arpPool(layer).size === 0) this.stopArp(layer);
+  }
+
+  /** Interrompe o arpejador desta camada: solta qualquer nota que ele esteja segurando e libera o envelope da camada (ver triggerEnvelopeRelease). */
+  private stopArp(layer: LayerRuntime) {
+    if (layer.arpActiveNotes.length && layer.voice) {
+      for (const n of layer.arpActiveNotes) layer.voice.noteOff(n);
+    }
+    layer.arpActiveNotes = [];
+    layer.arpNextStepTime = null;
+    layer.arpOffTime = null;
+    this.triggerEnvelopeRelease(layer);
+  }
+
+  /**
+   * Chamado a cada ~15ms (ver arpTimer em createLayerRuntime) pra cada
+   * camada. Decide se já é hora do próximo passo do arpejador (comparando
+   * contra o relógio do AudioContext, não contra o timer do JS, pra não
+   * acumular deriva) e, nesse caso, solta a(s) nota(s) do passo anterior e
+   * dispara a(s) do passo novo. Entre passos, só checa se já é hora de
+   * soltar a nota atual por causa do gate (quando gate < 100%).
+   */
+  private tickArpStep(layer: LayerRuntime) {
+    if (!this.ctx || !layer.voice || !layer.arp.enabled) return;
+    const pool = this.arpPool(layer);
+    if (pool.size === 0) {
+      if (layer.arpActiveNotes.length || layer.arpNextStepTime !== null) this.stopArp(layer);
+      return;
+    }
+    const now = this.ctx.currentTime;
+    if (layer.arpNextStepTime === null) layer.arpNextStepTime = now;
+
+    if (now < layer.arpNextStepTime) {
+      if (layer.arpOffTime !== null && now >= layer.arpOffTime && layer.arpActiveNotes.length) {
+        for (const n of layer.arpActiveNotes) layer.voice.noteOff(n);
+        layer.arpActiveNotes = [];
+        layer.arpOffTime = null;
+      }
+      return;
+    }
+
+    if (layer.arpActiveNotes.length) {
+      for (const n of layer.arpActiveNotes) layer.voice.noteOff(n);
+      layer.arpActiveNotes = [];
+    }
+
+    const stepSeconds = layer.arp.sync
+      ? (RACK_ARP_DIVISION_BEATS[layer.arp.division] * 60) / Math.max(20, this.bpm)
+      : 1 / Math.max(0.1, layer.arp.rateHz);
+    const avgVelocity = Math.max(1, Math.round(Array.from(pool.values()).reduce((a, b) => a + b, 0) / pool.size));
+
+    let notesToPlay: number[];
+    if (layer.arp.pattern === 'chord') {
+      notesToPlay = layer.arpSequence;
+    } else if (layer.arp.pattern === 'random') {
+      const idx = Math.floor(Math.random() * layer.arpSequence.length);
+      notesToPlay = layer.arpSequence.length ? [layer.arpSequence[idx]] : [];
+    } else {
+      layer.arpStepIndex = layer.arpSequence.length ? (layer.arpStepIndex + 1) % layer.arpSequence.length : -1;
+      notesToPlay = layer.arpStepIndex >= 0 ? [layer.arpSequence[layer.arpStepIndex]] : [];
+    }
+
+    if (notesToPlay.length) {
+      const shifted = notesToPlay.map((n) => Math.max(0, Math.min(127, n + layer.octave * 12)));
+      for (const sn of shifted) layer.voice.noteOn(sn, avgVelocity);
+      layer.arpActiveNotes = shifted;
+      const gateFrac = Math.max(0.05, Math.min(1, layer.arp.gate));
+      const gateSeconds = stepSeconds * gateFrac;
+      layer.arpOffTime = gateFrac >= 0.999 ? null : now + gateSeconds;
+    }
+
+    const swing = Math.max(0, Math.min(0.75, layer.arp.swing));
+    layer.arpStepParity = !layer.arpStepParity;
+    const swungStep = swing > 0 ? stepSeconds * (layer.arpStepParity ? 1 + swing : 1 - swing) : stepSeconds;
+    layer.arpNextStepTime = now + Math.max(0.03, swungStep);
+  }
+
   // --- gate (porta de ruído) ---
 
   /**
@@ -1779,6 +2026,16 @@ export class RackEngine {
       if (!layer.voice) continue;
       if (note < layer.noteRangeStart || note > layer.noteRangeEnd) continue;
       if (layer.midiChannel !== 0 && channel !== undefined && layer.midiChannel !== channel) continue;
+
+      // Arpejador ligado nesta camada: a nota só alimenta o pool de notas
+      // seguradas/travadas — quem decide quando/quais notas soam de fato é o
+      // tickArpStep() (relógio próprio). Substitui completamente o
+      // despacho poly/mono normal (e o oitavador) enquanto estiver ligado.
+      if (layer.arp.enabled) {
+        this.arpNoteOn(layer, note, velocity);
+        continue;
+      }
+
       const shifted = Math.max(0, Math.min(127, note + layer.octave * 12));
       const wasEmpty = layer.activeNotes.size === 0;
 
@@ -1838,6 +2095,11 @@ export class RackEngine {
     for (const layer of this.layers) {
       if (!layer.voice) continue;
       if (layer.midiChannel !== 0 && channel !== undefined && layer.midiChannel !== channel) continue;
+
+      if (layer.arp.enabled) {
+        this.arpNoteOff(layer, note);
+        continue;
+      }
 
       if (layer.voiceMode.playMode === 'mono') {
         const idx = layer.monoHeldStack.findIndex((h) => h.note === note);

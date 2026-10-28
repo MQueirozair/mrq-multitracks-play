@@ -19,6 +19,7 @@ const api = {
         toFileUrl: (filePath) => electron_1.ipcRenderer.invoke('fs:toFileUrl', filePath),
         openExternal: (url) => electron_1.ipcRenderer.invoke('fs:openExternal', url),
         chooseInstrumentFile: () => electron_1.ipcRenderer.invoke('fs:chooseInstrumentFile'),
+        saveBinaryFile: (opts) => electron_1.ipcRenderer.invoke('fs:saveBinaryFile', opts.defaultName, Array.from(opts.data)),
     },
     net: {
         localAddresses: () => electron_1.ipcRenderer.invoke('net:localAddresses'),
@@ -57,6 +58,44 @@ const api = {
                 electron_1.ipcRenderer.removeListener('remote:command', listener);
             };
         },
+    },
+    // OSC e MRQ Sync (ver src-tauri/src/osc.rs e sync.rs): só implementados de
+    // fato no lado Tauri (src/tauriBridge.ts) — mantidos aqui só pra MrqApi
+    // continuar com o mesmo formato nos dois lados, já que esta casca Electron
+    // é legada e não faz mais parte do build publicado (ver tauri.conf.json).
+    osc: {
+        send: (address, args) => electron_1.ipcRenderer.invoke('osc:send', address, args),
+        isEnabled: () => electron_1.ipcRenderer.invoke('osc:isEnabled'),
+        onMessage: (cb) => {
+            const listener = (_e, msg) => cb(msg);
+            electron_1.ipcRenderer.on('osc:message', listener);
+            return () => {
+                electron_1.ipcRenderer.removeListener('osc:message', listener);
+            };
+        },
+    },
+    sync: {
+        broadcastState: (state) => electron_1.ipcRenderer.send('sync:broadcastState', state),
+        onState: (cb) => {
+            const listener = (_e, state) => cb(state);
+            electron_1.ipcRenderer.on('sync:state', listener);
+            return () => {
+                electron_1.ipcRenderer.removeListener('sync:state', listener);
+            };
+        },
+    },
+    // Reconhecimento de partes por voz (whisper.cpp local, ver src-tauri/src/speech.rs):
+    // só implementado de fato no lado Tauri — mantido aqui só pra MrqApi
+    // continuar com o mesmo formato nos dois lados (casca Electron legada,
+    // fora do build publicado). `setPartsFromRecognition` em useStore.ts já
+    // cai de volta pro método por áudio (PartRecognition.ts) quando
+    // `modelReady()` nunca fica true.
+    speech: {
+        modelReady: () => Promise.resolve(false),
+        downloadModel: () => Promise.reject(new Error('reconhecimento por voz não disponível nesta casca')),
+        deleteModel: () => Promise.resolve(),
+        onDownloadProgress: (_cb) => () => { },
+        transcribeWav: (_wavBytes, _language) => Promise.reject(new Error('reconhecimento por voz não disponível nesta casca')),
     },
 };
 electron_1.contextBridge.exposeInMainWorld('api', api);
