@@ -935,9 +935,16 @@ input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-moz-ra
   display: flex; align-items: center; justify-content: center; color: var(--text-1);
 }
 .rack-edit-close:hover { background: #5c2626; color: #fff; }
+/* layout em "mosaico" (masonry via CSS multi-column) — cada card entra na coluna mais
+   curta disponível em vez de ficar preso a uma "linha" de grid cuja altura é ditada
+   pelo item mais alto dela (isso é o que causava espaço morto enorme embaixo de
+   módulos curtos sempre que um vizinho de linha, tipo o Shimmer, era bem mais alto
+   que os outros — nenhum grid comum resolve isso sem deixar buraco). */
 .rack-edit-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(216px, 1fr)); gap: 14px;
-  align-items: start;
+  column-width: 216px; column-gap: 14px; orphans: 1; widows: 1;
+}
+.rack-edit-cell, .rack-fx-module {
+  break-inside: avoid; -webkit-column-break-inside: avoid; margin: 0 0 14px;
 }
 .rack-edit-cell { display: flex; flex-direction: column; gap: 10px; padding-top: 2px; }
 .rack-toggle-header {
@@ -957,7 +964,7 @@ input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-moz-ra
 }
 .rack-photo-btn:hover { filter: brightness(1.15); }
 
-.rack-edit-cell-wide { grid-column: 1 / -1; }
+.rack-edit-cell-wide { column-span: all; width: 100%; }
 
 /* ---------- módulos de efeito estilo "unidade de rack/plugin de DAW" (RackFxModule.tsx) ---------- */
 .rack-fx-module {
@@ -968,7 +975,7 @@ input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-moz-ra
   box-shadow: 0 3px 10px #0006, inset 0 1px 0 #ffffff0d;
 }
 .rack-fx-module.is-on { border-color: color-mix(in srgb, var(--accent) 45%, #000a); }
-.rack-fx-module-wide { grid-column: 1 / -1; }
+.rack-fx-module-wide { column-span: all; width: 100%; }
 .rack-fx-screw {
   position: absolute; width: 5px; height: 5px; border-radius: 50%;
   background: radial-gradient(circle at 35% 35%, #8886, #0008);
@@ -1010,10 +1017,10 @@ input[type="range"]:not(.rack-fader):not(.mixer-fader):not(.rack-wheel)::-moz-ra
 .rack-fx-tap-btn:active { background: #1a3038; border-color: #4f8fae; }
 
 @media (max-width: 680px) {
-  .rack-edit-grid { grid-template-columns: 1fr 1fr; }
+  .rack-edit-grid { column-width: auto; column-count: 2; }
 }
 @media (max-width: 420px) {
-  .rack-edit-grid { grid-template-columns: 1fr; }
+  .rack-edit-grid { column-width: auto; column-count: 1; }
 }
 
 /* ---------- knob giratório (RackKnob.tsx) ---------- */
