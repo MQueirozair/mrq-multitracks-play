@@ -28,6 +28,99 @@ import { MrqiLayerVoice } from './MrqiLayerVoice';
 import { exportNkiToMrqi } from './mrqiExport';
 import { AudioContextCompat, createConstantSourceCompat } from '../audioContextCompat';
 
+/**
+ * Registra um erro do motor do rack tanto no console (DevTools) quanto no
+ * arquivo de log em disco (mrq-debug.log via window.api.log.append, mesmo
+ * mecanismo usado por main.tsx pra capturar erros fatais) — essencial pra
+ * conseguir diagnosticar problemas a partir do log que o próprio usuário
+ * manda, já que a maioria nunca abre o DevTools. Nunca deixa um erro de
+ * log (ex.: a própria ponte com o Tauri ainda não existir) virar uma
+ * exceção nova.
+ */
+function logRackEngineError(context: string, err: unknown) {
+  const detail = err instanceof Error ? `${err.name}: ${err.message}\n${err.stack ?? ''}` : String(err);
+  console.error(`[RackEngine] ${context}`, err);
+  try {
+    void (window as any).api?.log?.append?.(`[RackEngine] ${context}: ${detail}`);
+  } catch {
+    /* ignora — log é só conveniência de diagnóstico, nunca pode travar o motor de áudio */
+  }
+}
+
+/**
+ * Cria um nó de reposição "inerte" pra usar no lugar de um nó de áudio que
+ * falhou ao ser criado (ex.: algum WebKit velho/incompleto sem suporte a um
+ * tipo de nó específico) — GainNode é o tipo mais básico e universalmente
+ * suportado por QUALQUER implementação real de Web Audio, então serve de
+ * base segura pra qualquer outro tipo. É um GainNode de VERDADE (não um
+ * Proxy/wrapper), pra poder ser passado sem problema pra connect()/
+ * disconnect() de outros nós nativos — só ganha por cima, via
+ * defineProperty, as propriedades mais comuns que os outros tipos de nó têm
+ * (frequency/Q/pan/delayTime/etc., incluindo AudioParams de verdade
+ * "emprestados" de um GainNode auxiliar, pra suportar setTargetAtTime/
+ * linearRampToValueAtTime/etc.) — suficiente pra todo o resto do código
+ * continuar funcionando (em modo "bypass"/sem efeito) em vez de quebrar.
+ */
+function createInertAudioNode(ctx: AudioContext): AudioNode {
+  const node = ctx.createGain();
+  const borrowedParam = ctx.createGain().gain;
+  const paramNames = [
+    'frequency',
+    'Q',
+    'detune',
+    'pan',
+    'delayTime',
+    'threshold',
+    'knee',
+    'ratio',
+    'attack',
+    'release',
+  ];
+  for (const name of paramNames) {
+    Object.defineProperty(node, name, { value: borrowedParam, writable: true, configurable: true });
+  }
+  Object.defineProperties(node, {
+    type: { value: 'allpass', writable: true, configurable: true },
+    curve: { value: null, writable: true, configurable: true },
+    oversample: { value: 'none', writable: true, configurable: true },
+    reduction: { value: 0, writable: true, configurable: true },
+    bufferSize: { value: 1024, writable: true, configurable: true },
+    onaudioprocess: { value: null, writable: true, configurable: true },
+    fftSize: { value: 2048, writable: true, configurable: true },
+    frequencyBinCount: { value: 1024, writable: true, configurable: true },
+    smoothingTimeConstant: { value: 0, writable: true, configurable: true },
+    minDecibels: { value: -100, writable: true, configurable: true },
+    maxDecibels: { value: -30, writable: true, configurable: true },
+    start: { value: () => {}, writable: true, configurable: true },
+    stop: { value: () => {}, writable: true, configurable: true },
+    getFloatTimeDomainData: { value: () => {}, writable: true, configurable: true },
+    getByteTimeDomainData: { value: () => {}, writable: true, configurable: true },
+    getFloatFrequencyData: { value: () => {}, writable: true, configurable: true },
+    getByteFrequencyData: { value: () => {}, writable: true, configurable: true },
+  });
+  return node;
+}
+
+/**
+ * Executa `make()` tentando criar um nó de áudio de verdade; se falhar (ex.:
+ * tipo de nó não suportado nesse WebKit), registra o erro e devolve um
+ * substituto inerte (ver createInertAudioNode) em vez de deixar a exceção
+ * subir e travar `buildGraph()` inteiro — foi exatamente essa falta de
+ * proteção (um único nó de qualquer tipo, em qualquer camada, bastava) que
+ * deixava `this.layers` permanentemente vazio/incompleto depois de uma
+ * tentativa malsucedida, fazendo QUALQUER carregamento de instrumento
+ * subsequente quebrar com "undefined is not an object (evaluating
+ * 'layer.voice')" — ver loadLayer().
+ */
+function safeCreateNode<T extends AudioNode>(ctx: AudioContext, label: string, make: () => T): T {
+  try {
+    return make();
+  } catch (err) {
+    logRackEngineError(`criar nó "${label}" falhou — usando substituto inerte (efeito correspondente fica sem efeito, mas o resto da camada continua funcionando)`, err);
+    return createInertAudioNode(ctx) as unknown as T;
+  }
+}
+
 type AnyLayerVoice =
   | Sf2LayerVoice
   | Dx7LayerVoice
@@ -571,61 +664,72 @@ function createTriangleEnvelopeCurve(): Float32Array {
  * duas instâncias tocam junto (modo Dual/estéreo).
  */
 function createGranularPitchShiftPair(ctx: AudioContext, grainSec: number, phaseOffsetSec: number) {
-  const inputSum = ctx.createGain();
-  inputSum.gain.value = 1;
-  const delayA = ctx.createDelay(0.2);
-  const delayB = ctx.createDelay(0.2);
-  inputSum.connect(delayA);
-  inputSum.connect(delayB);
-  const lfoA = ctx.createOscillator();
-  lfoA.type = 'sawtooth';
-  lfoA.frequency.value = 1 / grainSec;
-  const lfoB = ctx.createOscillator();
-  lfoB.type = 'sawtooth';
-  lfoB.frequency.value = 1 / grainSec;
-  const scaleA = ctx.createGain();
-  const scaleB = ctx.createGain();
-  const offsetA = createConstantSourceCompat(ctx);
-  offsetA.offset.value = grainSec / 2;
-  const offsetB = createConstantSourceCompat(ctx);
-  offsetB.offset.value = grainSec / 2;
-  lfoA.connect(scaleA);
-  scaleA.connect(delayA.delayTime);
-  offsetA.connect(delayA.delayTime);
-  lfoB.connect(scaleB);
-  scaleB.connect(delayB.delayTime);
-  offsetB.connect(delayB.delayTime);
-  const envShaperA = ctx.createWaveShaper();
-  envShaperA.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
-  const envShaperB = ctx.createWaveShaper();
-  envShaperB.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
-  const envA = ctx.createGain();
-  envA.gain.value = 1;
-  const envB = ctx.createGain();
-  envB.gain.value = 1;
-  lfoA.connect(envShaperA);
-  envShaperA.connect(envA.gain);
-  lfoB.connect(envShaperB);
-  envShaperB.connect(envB.gain);
-  lfoA.start(ctx.currentTime + phaseOffsetSec);
-  lfoB.start(ctx.currentTime + grainSec / 2 + phaseOffsetSec);
-  offsetA.start();
-  offsetB.start();
-  const sum = ctx.createGain();
-  sum.gain.value = 1;
-  delayA.connect(envA);
-  delayB.connect(envB);
-  envA.connect(sum);
-  envB.connect(sum);
-  function setShift(semitones: number) {
-    const ratio = Math.pow(2, semitones / 12);
-    const rate = 1 - ratio;
-    const scale = (rate * grainSec) / 2;
-    scaleA.gain.value = scale;
-    scaleB.gain.value = scale;
+  try {
+    const inputSum = ctx.createGain();
+    inputSum.gain.value = 1;
+    const delayA = ctx.createDelay(0.2);
+    const delayB = ctx.createDelay(0.2);
+    inputSum.connect(delayA);
+    inputSum.connect(delayB);
+    const lfoA = ctx.createOscillator();
+    lfoA.type = 'sawtooth';
+    lfoA.frequency.value = 1 / grainSec;
+    const lfoB = ctx.createOscillator();
+    lfoB.type = 'sawtooth';
+    lfoB.frequency.value = 1 / grainSec;
+    const scaleA = ctx.createGain();
+    const scaleB = ctx.createGain();
+    const offsetA = createConstantSourceCompat(ctx);
+    offsetA.offset.value = grainSec / 2;
+    const offsetB = createConstantSourceCompat(ctx);
+    offsetB.offset.value = grainSec / 2;
+    lfoA.connect(scaleA);
+    scaleA.connect(delayA.delayTime);
+    offsetA.connect(delayA.delayTime);
+    lfoB.connect(scaleB);
+    scaleB.connect(delayB.delayTime);
+    offsetB.connect(delayB.delayTime);
+    const envShaperA = ctx.createWaveShaper();
+    envShaperA.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
+    const envShaperB = ctx.createWaveShaper();
+    envShaperB.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
+    const envA = ctx.createGain();
+    envA.gain.value = 1;
+    const envB = ctx.createGain();
+    envB.gain.value = 1;
+    lfoA.connect(envShaperA);
+    envShaperA.connect(envA.gain);
+    lfoB.connect(envShaperB);
+    envShaperB.connect(envB.gain);
+    lfoA.start(ctx.currentTime + phaseOffsetSec);
+    lfoB.start(ctx.currentTime + grainSec / 2 + phaseOffsetSec);
+    offsetA.start();
+    offsetB.start();
+    const sum = ctx.createGain();
+    sum.gain.value = 1;
+    delayA.connect(envA);
+    delayB.connect(envB);
+    envA.connect(sum);
+    envB.connect(sum);
+    function setShift(semitones: number) {
+      const ratio = Math.pow(2, semitones / 12);
+      const rate = 1 - ratio;
+      const scale = (rate * grainSec) / 2;
+      scaleA.gain.value = scale;
+      scaleB.gain.value = scale;
+    }
+    setShift(12);
+    return { input: inputSum as AudioNode, output: sum as AudioNode, setShift };
+  } catch (err) {
+    // Algum recurso usado no par granular (DelayNode/OscillatorNode/
+    // WaveShaperNode/ConstantSourceNode) falhou nesse WebKit — devolve um
+    // substituto inerte (passa o sinal direto, sem shift de pitch) com a
+    // mesma forma, em vez de deixar a exceção quebrar createLayerRuntime.
+    logRackEngineError('createGranularPitchShiftPair falhou — usando passagem direta sem shimmer', err);
+    const passthrough = ctx.createGain();
+    passthrough.gain.value = 1;
+    return { input: passthrough as AudioNode, output: passthrough as AudioNode, setShift(_semitones: number) {} };
   }
-  setShift(12);
-  return { input: inputSum as AudioNode, output: sum as AudioNode, setShift };
 }
 
 /**
@@ -640,32 +744,50 @@ function createGranularPitchShiftPair(ctx: AudioContext, grainSec: number, phase
  * pra quem precisa modular o delayTime (allpass modulado, ver Mod Rate/Depth).
  */
 function createAllpassNode(ctx: AudioContext, maxDelaySec: number, delaySec: number, coeff: number) {
-  const sumToDelay = ctx.createGain(); // w[n] = x[n] + g*delay_out — também serve de "input" do allpass
-  sumToDelay.gain.value = 1;
-  const delay = ctx.createDelay(Math.max(0.001, maxDelaySec));
-  delay.delayTime.value = Math.max(0, delaySec);
-  const fbGain = ctx.createGain(); // +g, realimenta a saída atual do delay de volta pro somador
-  fbGain.gain.value = coeff;
-  const ffGain = ctx.createGain(); // -g, soma w[n] direto (invertido) na saída
-  ffGain.gain.value = -coeff;
-  const outSum = ctx.createGain(); // y[n] = -g*w[n] + delay_out
-  outSum.gain.value = 1;
-  sumToDelay.connect(delay);
-  delay.connect(fbGain);
-  fbGain.connect(sumToDelay);
-  sumToDelay.connect(ffGain);
-  ffGain.connect(outSum);
-  delay.connect(outSum);
-  return {
-    input: sumToDelay as AudioNode,
-    output: outSum as AudioNode,
-    delay,
-    setCoeff(g: number) {
-      const c = Math.max(-0.95, Math.min(0.95, g));
-      fbGain.gain.value = c;
-      ffGain.gain.value = -c;
-    },
-  };
+  try {
+    const sumToDelay = ctx.createGain(); // w[n] = x[n] + g*delay_out — também serve de "input" do allpass
+    sumToDelay.gain.value = 1;
+    const delay = ctx.createDelay(Math.max(0.001, maxDelaySec));
+    delay.delayTime.value = Math.max(0, delaySec);
+    const fbGain = ctx.createGain(); // +g, realimenta a saída atual do delay de volta pro somador
+    fbGain.gain.value = coeff;
+    const ffGain = ctx.createGain(); // -g, soma w[n] direto (invertido) na saída
+    ffGain.gain.value = -coeff;
+    const outSum = ctx.createGain(); // y[n] = -g*w[n] + delay_out
+    outSum.gain.value = 1;
+    sumToDelay.connect(delay);
+    delay.connect(fbGain);
+    fbGain.connect(sumToDelay);
+    sumToDelay.connect(ffGain);
+    ffGain.connect(outSum);
+    delay.connect(outSum);
+    return {
+      input: sumToDelay as AudioNode,
+      output: outSum as AudioNode,
+      delay,
+      setCoeff(g: number) {
+        const c = Math.max(-0.95, Math.min(0.95, g));
+        fbGain.gain.value = c;
+        ffGain.gain.value = -c;
+      },
+    };
+  } catch (err) {
+    // DelayNode (ou algum outro recurso usado aqui) falhou nesse WebKit —
+    // devolve um "allpass" inerte (passa direto, sem difusão) com a mesma
+    // forma, em vez de deixar a exceção quebrar createLayerRuntime inteiro.
+    logRackEngineError('createAllpassNode falhou — usando passagem direta sem difusão', err);
+    const passthrough = ctx.createGain();
+    passthrough.gain.value = 1;
+    const fallbackDelay = createInertAudioNode(ctx) as unknown as DelayNode;
+    return {
+      input: passthrough as AudioNode,
+      output: passthrough as AudioNode,
+      delay: fallbackDelay,
+      setCoeff(_g: number) {
+        /* no-op — substituto inerte não implementa difusão de verdade */
+      },
+    };
+  }
 }
 
 /** Curva de quantização de bits pro WaveShaperNode do Bitcrusher/Lo-Fi por camada — "achata" o sinal em degraus de 2^bits níveis. */
@@ -796,7 +918,18 @@ export class RackEngine {
   /** Cria o AudioContext e o barramento na primeira vez que for preciso (gesto do usuário já ocorreu ao abrir a aba). */
   ensureStarted() {
     if (this.ctx) return;
-    this.buildGraph();
+    try {
+      this.buildGraph();
+    } catch (err) {
+      // this.ctx só é setado depois que `new AudioContextCompat(...)`
+      // retorna com sucesso (ver buildGraph), então se o erro vier de antes
+      // disso this.ctx continua null e a próxima chamada tenta de novo
+      // normalmente — mas registra sempre, pra aparecer no mrq-debug.log
+      // mesmo quando quem chamou (ex.: o getter `context`) só propaga a
+      // exceção adiante sem logar nada.
+      logRackEngineError('buildGraph() falhou ao (re)montar o grafo de áudio do rack', err);
+      throw err;
+    }
   }
 
   /**
@@ -831,7 +964,30 @@ export class RackEngine {
 
     this.layers = [];
     for (let i = 0; i < RACK_LAYER_COUNT; i++) {
-      this.layers.push(this.createLayerRuntime(ctx, masterGain, reverbBus));
+      try {
+        this.layers.push(this.createLayerRuntime(ctx, masterGain, reverbBus));
+      } catch (err) {
+        // Não deveria mais acontecer (cada nó de risco dentro de
+        // createLayerRuntime já tem seu próprio fallback via
+        // safeCreateNode/createAllpassNode/createGranularPitchShiftPair),
+        // mas se algo mesmo assim escapar por aqui, é crítico registrar e
+        // tentar de novo uma vez em vez de deixar this.layers mais curto que
+        // RACK_LAYER_COUNT — isso é o que causava "undefined is not an
+        // object (evaluating 'layer.voice')" em QUALQUER carregamento
+        // seguinte de instrumento (ver loadLayer()).
+        logRackEngineError(`createLayerRuntime falhou pra camada ${i} mesmo com os fallbacks internos — tentando de novo`, err);
+        try {
+          this.layers.push(this.createLayerRuntime(ctx, masterGain, reverbBus));
+        } catch (err2) {
+          // Mantém this.layers[i] definido mesmo no pior caso — um buraco no
+          // array aqui desalinharia o índice de TODAS as camadas seguintes e
+          // reproduziria exatamente o bug original ("undefined is not an
+          // object (evaluating 'layer.voice')") em qualquer carregamento
+          // posterior, mesmo em índices sem nenhum problema de verdade.
+          logRackEngineError(`createLayerRuntime falhou de novo pra camada ${i} — essa camada ficará indisponível nesta sessão (placeholder inerte)`, err2);
+          this.layers.push({ format: null, voice: null } as unknown as LayerRuntime);
+        }
+      }
     }
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
   }
@@ -854,8 +1010,8 @@ export class RackEngine {
     try {
       return this.buildReverbNetwork(ctx, masterGain);
     } catch (err) {
-      console.error(
-        '[RackEngine] falha ao montar a rede de reverb MASTER — seguindo sem reverb (ver audioContextCompat.ts para recursos de áudio com fallback conhecido).',
+      logRackEngineError(
+        'falha ao montar a rede de reverb MASTER — seguindo sem reverb (ver audioContextCompat.ts para recursos de áudio com fallback conhecido)',
         err
       );
       const bypass = ctx.createGain();
@@ -1136,7 +1292,7 @@ export class RackEngine {
     const envelopeGain = ctx.createGain();
     envelopeGain.gain.value = 1;
 
-    const cutoffFilter = ctx.createBiquadFilter();
+    const cutoffFilter = safeCreateNode(ctx, 'createBiquadFilter', () => ctx.createBiquadFilter());
     cutoffFilter.type = 'lowpass';
     cutoffFilter.frequency.value = 20000;
     cutoffFilter.Q.value = 0.707;
@@ -1147,7 +1303,7 @@ export class RackEngine {
     // viram highpass/lowpass de verdade só quando a banda está ligada).
     const defaultBands = defaultRackEqBands();
     const eqBandNodes = RACK_EQ_BAND_ROLES.map((role, i) => {
-      const node = ctx.createBiquadFilter();
+      const node = safeCreateNode(ctx, 'createBiquadFilter', () => ctx.createBiquadFilter());
       const band = defaultBands[i];
       node.frequency.value = band.freqHz;
       node.Q.value = band.q;
@@ -1172,14 +1328,14 @@ export class RackEngine {
       }
       return node;
     });
-    const eqAnalyser = ctx.createAnalyser();
+    const eqAnalyser = safeCreateNode(ctx, 'createAnalyser', () => ctx.createAnalyser());
     eqAnalyser.fftSize = 2048;
     eqAnalyser.smoothingTimeConstant = 0.75;
 
     // Gate (porta de ruído) — gateAnalyser mede o nível de entrada; um timer
     // periódico (ver setGate/startGateTimer) pilota gateGainNode (1 aberto, 0
     // fechado) com ataque/liberação suaves via setTargetAtTime.
-    const gateAnalyser = ctx.createAnalyser();
+    const gateAnalyser = safeCreateNode(ctx, 'createAnalyser', () => ctx.createAnalyser());
     gateAnalyser.fftSize = 512;
     gateAnalyser.smoothingTimeConstant = 0;
     const gateAnalyserBuf = new Float32Array(gateAnalyser.fftSize);
@@ -1218,7 +1374,7 @@ export class RackEngine {
 
     const drivePreGain = ctx.createGain();
     drivePreGain.gain.value = 1;
-    const driveShaper = ctx.createWaveShaper();
+    const driveShaper = safeCreateNode(ctx, 'createWaveShaper', () => ctx.createWaveShaper());
     driveShaper.curve = createDriveCurve('warm', 0) as Float32Array<ArrayBuffer>;
     driveShaper.oversample = '2x';
     const driveDry = ctx.createGain();
@@ -1228,15 +1384,15 @@ export class RackEngine {
 
     const volumeGain = ctx.createGain();
     volumeGain.gain.value = 0.7;
-    const panNode = ctx.createStereoPanner();
+    const panNode = safeCreateNode(ctx, 'createStereoPanner', () => ctx.createStereoPanner());
     panNode.pan.value = 0;
-    const characterFilter = ctx.createBiquadFilter();
+    const characterFilter = safeCreateNode(ctx, 'createBiquadFilter', () => ctx.createBiquadFilter());
     applyCharacter(characterFilter, 'original');
 
     // Compressor por camada — desligado por padrão é "transparente" (ratio
     // 1:1 não comprime nada), em vez de bypassar o nó, pra não precisar
     // reconectar o grafo toda vez que o usuário liga/desliga.
-    const compressorNode = ctx.createDynamicsCompressor();
+    const compressorNode = safeCreateNode(ctx, 'createDynamicsCompressor', () => ctx.createDynamicsCompressor());
     compressorNode.threshold.value = 0;
     compressorNode.knee.value = 18;
     compressorNode.ratio.value = 1;
@@ -1246,7 +1402,7 @@ export class RackEngine {
     compressorMakeupGain.gain.value = 1;
 
     // Tremolo por camada (LFO de amplitude + um pouco de auto-pan) — ver setTremolo().
-    const tremoloLfo = ctx.createOscillator();
+    const tremoloLfo = safeCreateNode(ctx, 'createOscillator', () => ctx.createOscillator());
     tremoloLfo.type = 'sine';
     tremoloLfo.frequency.value = 4;
     const tremoloDepthGain = ctx.createGain();
@@ -1265,13 +1421,13 @@ export class RackEngine {
     // pelo mesmo LFO) — ver setPhaser().
     const phaserStageCount = 4;
     const phaserStages = Array.from({ length: phaserStageCount }, () => {
-      const node = ctx.createBiquadFilter();
+      const node = safeCreateNode(ctx, 'createBiquadFilter', () => ctx.createBiquadFilter());
       node.type = 'allpass';
       node.frequency.value = 800;
       node.Q.value = 0.6;
       return node;
     });
-    const phaserLfo = ctx.createOscillator();
+    const phaserLfo = safeCreateNode(ctx, 'createOscillator', () => ctx.createOscillator());
     phaserLfo.type = 'sine';
     phaserLfo.frequency.value = 0.5;
     const phaserLfoDepth = phaserStages.map((_, i) => {
@@ -1291,9 +1447,9 @@ export class RackEngine {
     phaserOutMix.gain.value = 1;
 
     // Flanger por camada (delay bem curto modulado + realimentação) — ver setFlanger().
-    const flangerDelay = ctx.createDelay(0.03);
+    const flangerDelay = safeCreateNode(ctx, 'createDelay', () => ctx.createDelay(0.03));
     flangerDelay.delayTime.value = 0.004;
-    const flangerLfo = ctx.createOscillator();
+    const flangerLfo = safeCreateNode(ctx, 'createOscillator', () => ctx.createOscillator());
     flangerLfo.type = 'sine';
     flangerLfo.frequency.value = 0.25;
     const flangerLfoDepth = ctx.createGain();
@@ -1311,9 +1467,9 @@ export class RackEngine {
     flangerOutMix.gain.value = 1;
 
     // Chorus por camada (linha de delay curta modulada por um LFO lento, somada ao seco) — ver setChorus().
-    const chorusDelay = ctx.createDelay(0.1);
+    const chorusDelay = safeCreateNode(ctx, 'createDelay', () => ctx.createDelay(0.1));
     chorusDelay.delayTime.value = 0.02;
-    const chorusLfo = ctx.createOscillator();
+    const chorusLfo = safeCreateNode(ctx, 'createOscillator', () => ctx.createOscillator());
     chorusLfo.type = 'sine';
     chorusLfo.frequency.value = 0.9;
     const chorusLfoDepth = ctx.createGain();
@@ -1331,9 +1487,9 @@ export class RackEngine {
     // Bitcrusher/Lo-Fi por camada — WaveShaper quantiza os bits; o
     // ScriptProcessorNode faz "sample and hold" pra reduzir a taxa de
     // amostragem efetiva (ver setBitcrusher/onaudioprocess).
-    const bitcrusherShaper = ctx.createWaveShaper();
+    const bitcrusherShaper = safeCreateNode(ctx, 'createWaveShaper', () => ctx.createWaveShaper());
     bitcrusherShaper.curve = createBitcrusherCurve(16) as Float32Array<ArrayBuffer>;
-    const bitcrusherProcessor = ctx.createScriptProcessor(1024, 2, 2);
+    const bitcrusherProcessor = safeCreateNode(ctx, 'createScriptProcessor', () => ctx.createScriptProcessor(1024, 2, 2));
     const bitcrusherHoldState = { phase: 0, held: new Float32Array(2) };
     bitcrusherProcessor.onaudioprocess = (e: AudioProcessingEvent) => {
       const layer = this.layers.find((l) => l.bitcrusherProcessor === bitcrusherProcessor);
@@ -1360,33 +1516,33 @@ export class RackEngine {
     // poder ter mix 0 (totalmente limpo) sem desconectar nada. delayNodeR +
     // os dois panners só entram em uso quando "Ping-pong" está ligado (ver
     // setDelay/reconnectDelayRouting) — autofeedback simples (mono) por padrão.
-    const delayNode = ctx.createDelay(4);
+    const delayNode = safeCreateNode(ctx, 'createDelay', () => ctx.createDelay(4));
     delayNode.delayTime.value = 0.3;
-    const delayNodeR = ctx.createDelay(4);
+    const delayNodeR = safeCreateNode(ctx, 'createDelay', () => ctx.createDelay(4));
     delayNodeR.delayTime.value = 0.3;
     // "FILTER" (Off/Low/High/Band) — ver setDelay(); 'off' usa type='allpass'
     // (só muda fase, não amplitude) pra ficar acusticamente transparente sem
     // precisar desconectar o nó.
-    const delayToneFilter = ctx.createBiquadFilter();
+    const delayToneFilter = safeCreateNode(ctx, 'createBiquadFilter', () => ctx.createBiquadFilter());
     delayToneFilter.type = 'allpass';
     delayToneFilter.frequency.value = 1200;
-    const delayToneFilterR = ctx.createBiquadFilter();
+    const delayToneFilterR = safeCreateNode(ctx, 'createBiquadFilter', () => ctx.createBiquadFilter());
     delayToneFilterR.type = 'allpass';
     delayToneFilterR.frequency.value = 1200;
     // "ANALOG" (satura a cauda) — curve=null é transparente (identidade) até
     // setDelay() ligar; ver createTapeSaturationCurve().
-    const delayAnalogShaper = ctx.createWaveShaper();
-    const delayAnalogShaperR = ctx.createWaveShaper();
+    const delayAnalogShaper = safeCreateNode(ctx, 'createWaveShaper', () => ctx.createWaveShaper());
+    const delayAnalogShaperR = safeCreateNode(ctx, 'createWaveShaper', () => ctx.createWaveShaper());
     // "ANALOG" wow (lento, ~0.4Hz) + flutter (rápido, ~6Hz) somados direto no
     // delayTime dos dois canais — mesma técnica usada no Flanger/Chorus desta
     // classe (osc -> gain de profundidade -> AudioParam), profundidade parte
     // em 0 (desligado) e só sobe quando analog=true (ver setDelay).
-    const delayWowLfo = ctx.createOscillator();
+    const delayWowLfo = safeCreateNode(ctx, 'createOscillator', () => ctx.createOscillator());
     delayWowLfo.type = 'sine';
     delayWowLfo.frequency.value = 0.4;
     const delayWowDepth = ctx.createGain();
     delayWowDepth.gain.value = 0;
-    const delayFlutterLfo = ctx.createOscillator();
+    const delayFlutterLfo = safeCreateNode(ctx, 'createOscillator', () => ctx.createOscillator());
     delayFlutterLfo.type = 'sine';
     delayFlutterLfo.frequency.value = 6;
     const delayFlutterDepth = ctx.createGain();
@@ -1399,9 +1555,9 @@ export class RackEngine {
     delayFlutterDepth.connect(delayNodeR.delayTime);
     delayWowLfo.start();
     delayFlutterLfo.start();
-    const delayPannerL = ctx.createStereoPanner();
+    const delayPannerL = safeCreateNode(ctx, 'createStereoPanner', () => ctx.createStereoPanner());
     delayPannerL.pan.value = -1;
-    const delayPannerR = ctx.createStereoPanner();
+    const delayPannerR = safeCreateNode(ctx, 'createStereoPanner', () => ctx.createStereoPanner());
     delayPannerR.pan.value = 1;
     const delayFeedbackGain = ctx.createGain();
     delayFeedbackGain.gain.value = 0;
@@ -1437,11 +1593,11 @@ export class RackEngine {
     shimmerDownMixGain.gain.value = 0; // só > 0 no Pitch Mode "dual" — ver setShimmer()
     const shimmerSum = ctx.createGain();
     shimmerSum.gain.value = 1;
-    const shimmerLowCut = ctx.createBiquadFilter();
+    const shimmerLowCut = safeCreateNode(ctx, 'createBiquadFilter', () => ctx.createBiquadFilter());
     shimmerLowCut.type = 'highpass';
     shimmerLowCut.frequency.value = 200;
     shimmerLowCut.Q.value = 0.5;
-    const shimmerTone = ctx.createBiquadFilter();
+    const shimmerTone = safeCreateNode(ctx, 'createBiquadFilter', () => ctx.createBiquadFilter());
     shimmerTone.type = 'lowpass';
     shimmerTone.frequency.value = 6000;
     shimmerTone.Q.value = 0.5;
@@ -1452,9 +1608,9 @@ export class RackEngine {
     // "Size" (delay extra dentro do loop, dá sensação de tamanho de sala
     // independente do Feedback) + "Mod Rate/Depth" (LFO sutil modulando esse
     // mesmo delay, dá movimento/vida à cauda).
-    const shimmerSizeDelay = ctx.createDelay(0.1);
+    const shimmerSizeDelay = safeCreateNode(ctx, 'createDelay', () => ctx.createDelay(0.1));
     shimmerSizeDelay.delayTime.value = 0.015;
-    const shimmerModLfo = ctx.createOscillator();
+    const shimmerModLfo = safeCreateNode(ctx, 'createOscillator', () => ctx.createOscillator());
     shimmerModLfo.type = 'sine';
     shimmerModLfo.frequency.value = 0.6;
     const shimmerModDepthGain = ctx.createGain();
@@ -1466,13 +1622,13 @@ export class RackEngine {
     shimmerFeedbackGain.gain.value = 0;
     // "Reverb Mode" — mono toca só o canal direto (centralizado); stereo soma
     // um 2º canal com um delay curto fixo pra decorrelacionar e dar largura.
-    const shimmerStereoDelay = ctx.createDelay(0.03);
+    const shimmerStereoDelay = safeCreateNode(ctx, 'createDelay', () => ctx.createDelay(0.03));
     shimmerStereoDelay.delayTime.value = 0.009;
     const shimmerStereoGain = ctx.createGain();
     shimmerStereoGain.gain.value = 0;
-    const shimmerPannerL = ctx.createStereoPanner();
+    const shimmerPannerL = safeCreateNode(ctx, 'createStereoPanner', () => ctx.createStereoPanner());
     shimmerPannerL.pan.value = 0;
-    const shimmerPannerR = ctx.createStereoPanner();
+    const shimmerPannerR = safeCreateNode(ctx, 'createStereoPanner', () => ctx.createStereoPanner());
     shimmerPannerR.pan.value = 0;
     const shimmerWet = ctx.createGain();
     shimmerWet.gain.value = 0;
@@ -1601,7 +1757,7 @@ export class RackEngine {
 
     // Tap passivo (não precisa de .connect() pra frente) pro medidor de nível
     // de cada card — ver getLayerLevel().
-    const meterAnalyser = ctx.createAnalyser();
+    const meterAnalyser = safeCreateNode(ctx, 'createAnalyser', () => ctx.createAnalyser());
     meterAnalyser.fftSize = 256;
     meterAnalyser.smoothingTimeConstant = 0.6;
     postCharacterOutput.connect(meterAnalyser);
@@ -1785,6 +1941,17 @@ export class RackEngine {
   ): Promise<RackPresetOption[]> {
     const ctx = this.context;
     const layer = this.layers[index];
+    if (!layer) {
+      // Não deveria acontecer (ver buildGraph/createLayerRuntime — todo nó
+      // de risco agora tem fallback próprio), mas se this.layers[index] por
+      // algum motivo não existir, é melhor falhar com um erro claro e
+      // registrado do que com "undefined is not an object (evaluating
+      // 'layer.voice')" — essa checagem é a proteção direta contra esse
+      // crash específico, independente da causa.
+      const msg = `RackEngine.loadLayer: camada ${index} não está disponível (motor de áudio não terminou de montar essa camada — ver mrq-debug.log).`;
+      logRackEngineError(msg, new Error(msg));
+      throw new Error(msg);
+    }
     layer.voice?.dispose();
     layer.activeNotes.clear();
     layer.octaverNotes.clear();
@@ -1831,6 +1998,7 @@ export class RackEngine {
 
   clearLayer(index: number) {
     const layer = this.layers[index];
+    if (!layer) return;
     layer.voice?.dispose();
     layer.voice = null;
     layer.format = null;
