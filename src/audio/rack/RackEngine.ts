@@ -26,7 +26,7 @@ import { NkiLayerVoice } from './NkiLayerVoice';
 import { SfzLayerVoice } from './SfzLayerVoice';
 import { MrqiLayerVoice } from './MrqiLayerVoice';
 import { exportNkiToMrqi } from './mrqiExport';
-import { AudioContextCompat } from '../audioContextCompat';
+import { AudioContextCompat, createConstantSourceCompat } from '../audioContextCompat';
 
 type AnyLayerVoice =
   | Sf2LayerVoice
@@ -585,9 +585,9 @@ function createGranularPitchShiftPair(ctx: AudioContext, grainSec: number, phase
   lfoB.frequency.value = 1 / grainSec;
   const scaleA = ctx.createGain();
   const scaleB = ctx.createGain();
-  const offsetA = ctx.createConstantSource();
+  const offsetA = createConstantSourceCompat(ctx);
   offsetA.offset.value = grainSec / 2;
-  const offsetB = ctx.createConstantSource();
+  const offsetB = createConstantSourceCompat(ctx);
   offsetB.offset.value = grainSec / 2;
   lfoA.connect(scaleA);
   scaleA.connect(delayA.delayTime);
@@ -827,7 +827,7 @@ export class RackEngine {
     masterGain.connect(ctx.destination);
     this.masterGain = masterGain;
 
-    const reverbBus = this.buildReverbNetwork(ctx, masterGain);
+    const reverbBus = this.buildReverbNetworkSafe(ctx, masterGain);
 
     this.layers = [];
     for (let i = 0; i < RACK_LAYER_COUNT; i++) {
@@ -835,6 +835,37 @@ export class RackEngine {
     }
     if (ctx.state === 'suspended') ctx.resume().catch(() => {});
   }
+
+  /**
+   * Envolve `buildReverbNetwork` numa rede de segurança: o reverb MASTER usa
+   * nós/recursos de Web Audio relativamente modernos (ex.: ConstantSourceNode,
+   * já coberto por `createConstantSourceCompat`, mas sempre pode haver algum
+   * outro recurso que algum WebKit mais velho/incompleto não tenha), e uma
+   * falha aqui não pode travar a montagem do resto do grafo — sem isso,
+   * `this.ctx` já teria sido setado (então `ensureStarted()` nunca tentaria
+   * de novo) mas `this.layers` ficaria vazio pra sempre, e qualquer tentativa
+   * de carregar um instrumento quebraria com um erro "undefined is not an
+   * object" bem difícil de diagnosticar. Em caso de falha, cai pra um desvio
+   * simples (sinal passa direto pro master, sem reverb) — os knobs de reverb
+   * (setReverbRoom, setReverbDecay etc.) já verificam `this.reverbTankA`/`B`
+   * antes de mexer em qualquer coisa, então continuam de boa sem travar.
+   */
+  private buildReverbNetworkSafe(ctx: AudioContext, masterGain: GainNode): GainNode {
+    try {
+      return this.buildReverbNetwork(ctx, masterGain);
+    } catch (err) {
+      console.error(
+        '[RackEngine] falha ao montar a rede de reverb MASTER — seguindo sem reverb (ver audioContextCompat.ts para recursos de áudio com fallback conhecido).',
+        err
+      );
+      const bypass = ctx.createGain();
+      bypass.gain.value = 1;
+      bypass.connect(masterGain);
+      this.reverbBus = bypass;
+      return bypass;
+    }
+  }
+
 
   /**
    * Constrói a rede algorítmica do reverb MASTER compartilhado — um plate
