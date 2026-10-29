@@ -26,6 +26,7 @@ import { NkiLayerVoice } from './NkiLayerVoice';
 import { SfzLayerVoice } from './SfzLayerVoice';
 import { MrqiLayerVoice } from './MrqiLayerVoice';
 import { exportNkiToMrqi } from './mrqiExport';
+import { AudioContextCompat } from '../audioContextCompat';
 
 type AnyLayerVoice =
   | Sf2LayerVoice
@@ -819,7 +820,7 @@ export class RackEngine {
     // estabilidade (ou vice-versa) conforme a máquina dele.
     const latencyHint: AudioContextLatencyCategory | number =
       this.bufferFrames > 0 ? this.bufferFrames / (this.ctx?.sampleRate ?? 48000) : 'interactive';
-    const ctx = new AudioContext({ latencyHint });
+    const ctx = new AudioContextCompat({ latencyHint });
     this.ctx = ctx;
     const masterGain = ctx.createGain();
     masterGain.gain.value = this.masterVolume;

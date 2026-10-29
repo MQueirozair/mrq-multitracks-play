@@ -2,6 +2,7 @@ import type { PartType, SongPart } from '../../shared/types';
 import { PART_COLORS } from '../../shared/types';
 import { newId } from '../lib/id';
 import { mergeDuplicateNames } from './PartRecognition';
+import { OfflineAudioContextCompat } from './audioContextCompat';
 
 /**
  * Reconhecimento de partes por VOZ (opcional, desligado por padrão — ver
@@ -76,7 +77,7 @@ export async function resampleTo16kMono(buffer: AudioBuffer): Promise<Float32Arr
     return buffer.getChannelData(0).slice();
   }
   const targetLength = Math.max(1, Math.ceil(buffer.duration * WHISPER_SAMPLE_RATE));
-  const offlineCtx = new OfflineAudioContext(1, targetLength, WHISPER_SAMPLE_RATE);
+  const offlineCtx = new OfflineAudioContextCompat(1, targetLength, WHISPER_SAMPLE_RATE);
   const source = offlineCtx.createBufferSource();
   source.buffer = buffer;
   source.connect(offlineCtx.destination);

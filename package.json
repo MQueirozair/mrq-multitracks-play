@@ -2,7 +2,7 @@
   "name": "mrq-multitracks-play",
   "productName": "MRQ - Multitracks Play",
   "private": true,
-  "version": "0.2.28",
+  "version": "0.2.29",
   "description": "MRQ - Multitracks Play: tocador de multitracks ao vivo para banda/culto.",
   "author": "MRQ",
   "main": "dist-electron/electron/main.js",

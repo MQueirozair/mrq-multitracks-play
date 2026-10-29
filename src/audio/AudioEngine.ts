@@ -1,6 +1,7 @@
 import { PitchShifter } from 'soundtouchjs';
 import type { ClickSettings, Song, SongArrangement, SongPart, SongTrack } from '../../shared/types';
 import { semitoneDistance } from '../../shared/types';
+import { AudioContextCompat } from './audioContextCompat';
 
 export interface EngineTrackState {
   id: string;
@@ -112,7 +113,7 @@ export class AudioEngine {
   private clickGain: GainNode | null = null;
 
   constructor() {
-    this.ctx = new AudioContext();
+    this.ctx = new AudioContextCompat();
     this.buildMerger(2);
   }
 
