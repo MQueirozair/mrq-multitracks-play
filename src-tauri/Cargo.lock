@@ -2545,7 +2545,7 @@ dependencies = [
 
 [[package]]
 name = "mrq-multitracks-play"
-version = "0.2.26"
+version = "0.2.27"
 dependencies = [
  "axum",
  "futures-util",
