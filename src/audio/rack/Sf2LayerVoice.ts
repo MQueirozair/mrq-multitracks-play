@@ -14,6 +14,16 @@ const WORKLET_URL = './vendor/js-synthesizer/js-synthesizer.worklet.min.js';
 const workletReadyByContext = new WeakMap<AudioContext, Promise<void>>();
 
 function ensureWorkletReady(ctx: AudioContext): Promise<void> {
+  // Sem isso, num WebKit sem suporte a AudioWorklet (recurso chegou só no
+  // Safari 14.1/2021), `ctx.audioWorklet` é `undefined` e a linha abaixo
+  // lançaria um TypeError genérico e confuso ("undefined is not an object
+  // (evaluating 'ctx.audioWorklet.addModule')") — com essa checagem, o
+  // usuário vê uma mensagem clara explicando exatamente o que falta.
+  if (!ctx.audioWorklet) {
+    throw new Error(
+      'este navegador/WebView não tem suporte a AudioWorklet, necessário pra tocar SoundFonts (.sf2/.sf3). Tente um formato diferente (ex.: .npno) ou atualize o sistema.'
+    );
+  }
   let ready = workletReadyByContext.get(ctx);
   if (!ready) {
     ready = ctx.audioWorklet

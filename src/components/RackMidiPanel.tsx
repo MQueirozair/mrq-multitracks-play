@@ -103,8 +103,16 @@ export default function RackMidiPanel() {
     try {
       await rackEngine.setBufferFrames(frames);
       await reloadAllRackLayers(rackRef.current.layers, (index, err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        pushToast(`Não foi possível recarregar o instrumento da camada ${index + 1}: ${message}`, 'error');
+        const e = err instanceof Error ? err : new Error(String(err));
+        console.error(`[RackMidiPanel] falha ao recarregar instrumento da camada ${index + 1} após trocar o buffer:`, e);
+        try {
+          void window.api?.log?.append?.(
+            `[RackMidiPanel] falha ao recarregar instrumento da camada ${index + 1} após trocar o buffer: ${e.name}: ${e.message}\n${e.stack ?? ''}`
+          );
+        } catch {
+          /* noop */
+        }
+        pushToast(`Não foi possível recarregar o instrumento da camada ${index + 1}: ${e.message}`, 'error');
       });
       updateRack({ bufferFrames: frames });
       const info = rackEngine.getLatencyInfoMs();

@@ -37,6 +37,26 @@ import RackEqGraph from './RackEqGraph';
 import RackKnob from './RackKnob';
 import RackFxModule from './RackFxModule';
 
+/**
+ * Manda o erro completo (nome/mensagem/stack) pro log de diagnóstico em
+ * disco (mesmo mecanismo do ErrorBoundary — ver mrq-debug.log), além do
+ * toast resumido que o usuário já vê na tela. Sem isso, um erro ao carregar
+ * um instrumento (ex.: WebKit antigo sem algum recurso de áudio) só aparece
+ * resumido no toast — útil pro usuário, mas insuficiente pra diagnosticar à
+ * distância sem pedir pro usuário abrir o Inspetor Web (que nem sempre dá
+ * certo). Com isso, o próximo "mrq-debug.log" que o usuário mandar já traz o
+ * erro técnico completo de qualquer tentativa de carregar um instrumento.
+ */
+function logInstrumentError(context: string, err: unknown) {
+  const e = err instanceof Error ? err : new Error(String(err));
+  console.error(`[InstrumentRack] ${context}:`, e);
+  try {
+    void window.api?.log?.append?.(`[InstrumentRack] ${context}: ${e.name}: ${e.message}\n${e.stack ?? ''}`);
+  } catch {
+    /* noop — não deixar o próprio log quebrar o fluxo de erro */
+  }
+}
+
 const DEFAULT_LAYER_FX: Partial<RackLayer> = {
   envelopeEnabled: false,
   attackMs: 5,
@@ -358,6 +378,7 @@ export default function InstrumentRack() {
         selectedPreset: presetToUse,
       });
     } catch (err: any) {
+      logInstrumentError(`falha ao carregar "${fileName}" (formato=${detected}) na camada ${index + 1}`, err);
       pushToast(`Não foi possível carregar "${fileName}": ${err?.message ?? err}`, 'error');
     }
   }
@@ -586,6 +607,7 @@ export default function InstrumentRack() {
       try {
         await reloadLayerFromDisk(targetIndex, source.filePath, source.format, cloned);
       } catch (err: any) {
+        logInstrumentError(`falha ao duplicar instrumento da camada ${sourceIndex + 1} pra ${targetIndex + 1} (formato=${source.format})`, err);
         pushToast(`Não foi possível duplicar o instrumento: ${err?.message ?? err}`, 'error');
         return;
       }
@@ -627,6 +649,7 @@ export default function InstrumentRack() {
     rackEngine.setReverb(scene.reverb);
     await reloadAllRackLayers(layers, (index, err) => {
       const message = err instanceof Error ? err.message : String(err);
+      logInstrumentError(`falha ao recarregar instrumento da camada ${index + 1} ao carregar a cena "${scene.name}"`, err);
       pushToast(`Não foi possível recarregar o instrumento da camada ${index + 1} da cena: ${message}`, 'error');
     });
     pushToast(`Cena "${scene.name}" carregada.`);

@@ -14,6 +14,14 @@ const DX7_WORKLET_URL = './vendor/dx7-worklet/dx7-processor.js';
 const moduleReadyByContext = new WeakMap<AudioContext, Promise<void>>();
 
 function ensureWorkletModuleReady(ctx: AudioContext): Promise<void> {
+  // Ver o mesmo comentário em Sf2LayerVoice.ts — sem essa checagem, um
+  // WebKit sem AudioWorklet (recurso só chegou no Safari 14.1/2021) lançaria
+  // um TypeError genérico e confuso em vez de uma mensagem clara.
+  if (!ctx.audioWorklet) {
+    throw new Error(
+      'este navegador/WebView não tem suporte a AudioWorklet, necessário pra tocar bancos DX7 (.syx). Tente um formato diferente (ex.: .npno) ou atualize o sistema.'
+    );
+  }
   let ready = moduleReadyByContext.get(ctx);
   if (!ready) {
     ready = ctx.audioWorklet.addModule(DX7_WORKLET_URL);
