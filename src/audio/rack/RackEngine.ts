@@ -121,6 +121,33 @@ function safeCreateNode<T extends AudioNode>(ctx: AudioContext, label: string, m
   }
 }
 
+/**
+ * Atribui `WaveShaperNode.curve` protegido por try/catch — em pelo menos
+ * um WebKit antigo testado (macOS mais velho, Mac sem suporte a
+ * AudioWorklet/ConstantSourceNode etc.), atribuir uma Float32Array de
+ * verdade (criada no mesmo realm/contexto JS) a `.curve` ainda assim lança
+ * "TypeError: The WaveShaperNode.curve attribute must be an instance of
+ * Float32Array" — um bug/limitação da própria implementação nativa, não um
+ * erro no array em si. Sem essa proteção, isso quebra toda a montagem do
+ * grafo de áudio do rack (ou qualquer ajuste de Drive/Bitcrusher/Delay
+ * analógico/Reverb color em tempo real) com uma exceção não tratada. Como
+ * `curve = null` sempre é válido por spec (nó vira passagem direta, sem
+ * distorção), é um fallback seguro: o efeito correspondente fica inerte
+ * nesse WebKit específico, mas o resto do app continua funcionando.
+ */
+function safeSetCurve(node: WaveShaperNode, curve: Float32Array | null, label: string) {
+  try {
+    node.curve = curve as Float32Array<ArrayBuffer> | null;
+  } catch (err) {
+    logRackEngineError(`atribuir WaveShaperNode.curve ("${label}") falhou — esse efeito fica sem distorção/saturação nesse navegador`, err);
+    try {
+      node.curve = null;
+    } catch {
+      /* se nem null funcionar, não há mais nada seguro a fazer aqui — ignora */
+    }
+  }
+}
+
 type AnyLayerVoice =
   | Sf2LayerVoice
   | Dx7LayerVoice
@@ -690,9 +717,9 @@ function createGranularPitchShiftPair(ctx: AudioContext, grainSec: number, phase
     scaleB.connect(delayB.delayTime);
     offsetB.connect(delayB.delayTime);
     const envShaperA = ctx.createWaveShaper();
-    envShaperA.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
+    safeSetCurve(envShaperA, createTriangleEnvelopeCurve(), 'shimmer envelope A');
     const envShaperB = ctx.createWaveShaper();
-    envShaperB.curve = createTriangleEnvelopeCurve() as Float32Array<ArrayBuffer>;
+    safeSetCurve(envShaperB, createTriangleEnvelopeCurve(), 'shimmer envelope B');
     const envA = ctx.createGain();
     envA.gain.value = 1;
     const envB = ctx.createGain();
@@ -1101,7 +1128,7 @@ export class RackEngine {
       bassShelf.gain.value = 20 * Math.log10(Math.max(0.05, this.reverbBassMult));
 
       const colorShaper = ctx.createWaveShaper();
-      colorShaper.curve = this.reverbColor === 'vintage' ? (createReverbWarmthCurve() as Float32Array<ArrayBuffer>) : null;
+      safeSetCurve(colorShaper, this.reverbColor === 'vintage' ? createReverbWarmthCurve() : null, 'reverb color');
 
       const allpass2 = createAllpassNode(ctx, allpass2Base * 3, allpass2Base * this.reverbSize, this.reverbDiffusionLate * 0.7);
       const delay2 = ctx.createDelay(delay2Base * 3);
@@ -1375,7 +1402,7 @@ export class RackEngine {
     const drivePreGain = ctx.createGain();
     drivePreGain.gain.value = 1;
     const driveShaper = safeCreateNode(ctx, 'createWaveShaper', () => ctx.createWaveShaper());
-    driveShaper.curve = createDriveCurve('warm', 0) as Float32Array<ArrayBuffer>;
+    safeSetCurve(driveShaper, createDriveCurve('warm', 0), 'drive');
     driveShaper.oversample = '2x';
     const driveDry = ctx.createGain();
     driveDry.gain.value = 1;
@@ -1488,7 +1515,7 @@ export class RackEngine {
     // ScriptProcessorNode faz "sample and hold" pra reduzir a taxa de
     // amostragem efetiva (ver setBitcrusher/onaudioprocess).
     const bitcrusherShaper = safeCreateNode(ctx, 'createWaveShaper', () => ctx.createWaveShaper());
-    bitcrusherShaper.curve = createBitcrusherCurve(16) as Float32Array<ArrayBuffer>;
+    safeSetCurve(bitcrusherShaper, createBitcrusherCurve(16), 'bitcrusher');
     const bitcrusherProcessor = safeCreateNode(ctx, 'createScriptProcessor', () => ctx.createScriptProcessor(1024, 2, 2));
     const bitcrusherHoldState = { phase: 0, held: new Float32Array(2) };
     bitcrusherProcessor.onaudioprocess = (e: AudioProcessingEvent) => {
@@ -2221,7 +2248,7 @@ export class RackEngine {
     if (!layer || !this.ctx) return;
     layer.drive = settings;
     const now = this.ctx.currentTime;
-    layer.driveShaper.curve = createDriveCurve(settings.type, settings.driveDb / 24) as Float32Array<ArrayBuffer>;
+    safeSetCurve(layer.driveShaper, createDriveCurve(settings.type, settings.driveDb / 24), 'drive');
     const driveLinearGain = Math.pow(10, settings.driveDb / 20);
     layer.drivePreGain.gain.setTargetAtTime(driveLinearGain, now, 0.01);
     const wetAmount = settings.enabled ? settings.mix : 0;
@@ -2343,8 +2370,8 @@ export class RackEngine {
 
     // "ANALOG": satura a cauda (curve=null é transparente/identidade quando
     // desligado) + liga o wow (lento) / flutter (rápido) de afinação.
-    layer.delayAnalogShaper.curve = settings.analog ? (createTapeSaturationCurve() as Float32Array<ArrayBuffer>) : null;
-    layer.delayAnalogShaperR.curve = settings.analog ? (createTapeSaturationCurve() as Float32Array<ArrayBuffer>) : null;
+    safeSetCurve(layer.delayAnalogShaper, settings.analog ? createTapeSaturationCurve() : null, 'delay analog L');
+    safeSetCurve(layer.delayAnalogShaperR, settings.analog ? createTapeSaturationCurve() : null, 'delay analog R');
     layer.delayWowDepth.gain.setTargetAtTime(settings.analog ? 0.0015 : 0, now, 0.15);
     layer.delayFlutterDepth.gain.setTargetAtTime(settings.analog ? 0.0004 : 0, now, 0.08);
     if (pingPongChanged) this.reconnectDelayRouting(layer, settings.pingPong);
@@ -2539,8 +2566,8 @@ export class RackEngine {
     this.reverbColor = color;
     if (!this.reverbTankA || !this.reverbTankB) return;
     const curve = color === 'vintage' ? (createReverbWarmthCurve() as Float32Array<ArrayBuffer>) : null;
-    this.reverbTankA.colorShaper.curve = curve;
-    this.reverbTankB.colorShaper.curve = curve;
+    safeSetCurve(this.reverbTankA.colorShaper, curve, 'reverb color A');
+    safeSetCurve(this.reverbTankB.colorShaper, curve, 'reverb color B');
   }
 
   /** BPM de referência do rack — recalcula na hora o tempo de todo delay por camada que estiver com "Sync" ligado. */
@@ -2813,7 +2840,7 @@ export class RackEngine {
     const layer = this.layers[index];
     if (!layer || !this.ctx) return;
     layer.bitcrusher = settings;
-    layer.bitcrusherShaper.curve = createBitcrusherCurve(settings.bits) as Float32Array<ArrayBuffer>;
+    safeSetCurve(layer.bitcrusherShaper, createBitcrusherCurve(settings.bits), 'bitcrusher');
     const wet = settings.enabled ? Math.max(0, Math.min(1, settings.mix)) : 0;
     const now = this.ctx.currentTime;
     layer.bitcrusherWet.gain.setTargetAtTime(wet, now, 0.01);
