@@ -29,27 +29,27 @@ export class DecodedNsmp {
  * Decodifica os bytes brutos de um arquivo `.npno` (biblioteca de piano Nord).
  * Lança uma exceção JS (string) se o arquivo não for um `.npno` válido.
  */
-export function npno_decode(bytes: Uint8Array): DecodedNpno;
+export function npno_decode(bytes: Uint8Array | number[]): DecodedNpno;
 
 /**
  * Só confere a assinatura/estrutura do contêiner, sem decodificar áudio — usado para
  * validar rapidamente um arquivo antes do usuário confirmar o carregamento de uma
  * biblioteca grande.
  */
-export function npno_sniff(bytes: Uint8Array): string;
+export function npno_sniff(bytes: Uint8Array | number[]): string;
 
 /**
  * Decodifica os bytes brutos de um arquivo `.nsmp`/`.nsmp3`/`.nsmp4` (amostra
  * Nord Sample Library). Lança uma exceção JS (string) se o arquivo não for
  * uma amostra Nord válida.
  */
-export function nsmp_decode(bytes: Uint8Array): DecodedNsmp;
+export function nsmp_decode(bytes: Uint8Array | number[]): DecodedNsmp;
 
 /**
  * Só confere a assinatura/estrutura do contêiner, sem decodificar áudio —
  * mesma ideia de `npno_sniff`, mas para amostras `.nsmp`/`.nsmp3`/`.nsmp4`.
  */
-export function nsmp_sniff(bytes: Uint8Array): string;
+export function nsmp_sniff(bytes: Uint8Array | number[]): string;
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
@@ -57,19 +57,17 @@ export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_decodednpno_free: (a: number, b: number) => void;
     readonly __wbg_decodednsmp_free: (a: number, b: number) => void;
-    readonly decodednpno_metadata_json: (a: number) => [number, number];
-    readonly decodednpno_pcm: (a: number) => [number, number];
-    readonly decodednsmp_metadata_json: (a: number) => [number, number];
-    readonly decodednsmp_pcm: (a: number) => [number, number];
-    readonly npno_decode: (a: number, b: number) => [number, number, number];
-    readonly npno_sniff: (a: number, b: number) => [number, number, number, number];
-    readonly nsmp_decode: (a: number, b: number) => [number, number, number];
-    readonly nsmp_sniff: (a: number, b: number) => [number, number, number, number];
-    readonly __wbindgen_externrefs: WebAssembly.Table;
+    readonly decodednpno_metadata_json: (a: number, b: number) => void;
+    readonly decodednpno_pcm: (a: number, b: number) => void;
+    readonly decodednsmp_metadata_json: (a: number, b: number) => void;
+    readonly decodednsmp_pcm: (a: number, b: number) => void;
+    readonly npno_decode: (a: number, b: number, c: number) => void;
+    readonly npno_sniff: (a: number, b: number, c: number) => void;
+    readonly nsmp_decode: (a: number, b: number, c: number) => void;
+    readonly nsmp_sniff: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __externref_table_dealloc: (a: number) => void;
-    readonly __wbindgen_start: () => void;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;
