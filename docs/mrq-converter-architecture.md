@@ -235,6 +235,93 @@ por arquivo (preservado / aproximado / perdido, por campo); botão de
 pré-escuta (reconstrução rápida via `MrqiLayerVoice`-like, tocando direto do
 `.mrq` gerado).
 
+A tela se organiza em três grandes áreas:
+
+- **A. Importação/Fila** — arrastar-e-soltar, detecção automática, fila de
+  conversão com progresso/cancelamento (já descrito acima).
+- **B. Pré-visualização** — pré-escuta rápida do instrumento, selecionado da
+  fila ou já convertido.
+- **C. Inspetor de Instrumentos** — coluna direita, ativada quando um
+  instrumento está selecionado (seja um arquivo de origem ainda não
+  convertido, seja um `.mrq` já gerado). É aqui que mora o **MRQ Instrument
+  Analyzer**, descrito em detalhe na seção 7.1. O layout exato (proporção
+  das colunas, comportamento responsivo etc.) será fechado durante o
+  desenho efetivo da Fase 8 — o que fica decidido agora é o papel do
+  Analyzer dentro dessa coluna e o conjunto de abas que ele expõe.
+
+### 7.1 MRQ Instrument Analyzer — inspetor visual de instrumentos
+
+Acrescentado ao escopo por pedido explícito do usuário, como parte
+integrante da página do conversor (não é uma página separada). É o módulo
+que transforma o conversor numa ferramenta de inspeção profissional: permite
+olhar a estrutura interna de um instrumento **antes** de convertê-lo, e
+depois comparar o resultado real do `.mrq` gerado contra a origem — nunca
+simulando ou "preenchendo" dados que a análise não encontrou.
+
+Aparece como um painel de abas dentro do Inspetor de Instrumentos (item C
+acima), com sete abas de inspeção mais uma de comparação:
+
+1. **Overview** — resumo do instrumento: nome, formato de origem, contagem
+   de presets/grupos/zonas/amostras, extensão de notas utilizadas, faixa de
+   velocity, sample rate, profundidade de bits, número de canais. Cartões de
+   informação curtos + indicadores visuais, nada de texto longo.
+2. **Keyboard Mapping** — teclado MIDI visual de 88 teclas. Destaca, por
+   zona: nota inicial/final, Root Key, regiões sem amostra, sobreposição
+   entre zonas e divisões entre grupos. Selecionar uma zona realça a região
+   correspondente no teclado; selecionar uma nota mostra quais
+   zonas/amostras respondem a ela.
+3. **Velocity Layers** — gráfico das camadas de velocity reais do
+   instrumento analisado (os intervalos do pedido, ex. 1–40/41–80/81–127,
+   são só exemplo ilustrativo do formato do gráfico — os valores vêm sempre
+   do `MrqInstrumentModel` extraído). Evidencia sobreposições e lacunas.
+4. **Groups & Zones** — árvore hierárquica expansível
+   `Instrument → Preset → Group → Zone → Sample`. Selecionar qualquer nó
+   mostra os parâmetros que ele de fato tem (key range, velocity range, root
+   note, tune, volume, pan, config estéreo, envelope, filtro, modulação,
+   loop) — campo que o `MrqInstrumentModel` não preencheu (`undefined`)
+   simplesmente não aparece como se tivesse sido encontrado.
+5. **Samples** — lista das amostras usadas: nome, duração, sample rate, bit
+   depth, canais, tamanho, formato/codec, e quais grupos/zonas a referenciam.
+   Amostra selecionada ganha visualização de waveform e pré-escuta (quando o
+   ambiente suportar reprodução).
+6. **Loops** — quando o formato de origem fornecer loop, mostra loop start/
+   end, tipo (quando disponível) e uma representação visual do trecho em
+   loop sobre a waveform. Zona sem loop é marcada como tal explicitamente —
+   nunca inventa pontos de loop pra formato que não os tem.
+7. **Compatibility** — três categorias (Preserved / Approximated /
+   Unsupported), cada item com a justificativa de por que caiu ali. É
+   literalmente a materialização visual do "relatório preservado/convertido/
+   aproximado/perdido" que já é requisito de todo importador deste projeto
+   (nunca inventado para a ocasião — vem do mesmo relatório gerado pelo
+   importador).
+8. **Compare Original vs MRQ** — comparação lado a lado entre o
+   `MrqInstrumentModel` da origem e o metadado lido de volta do `.mrq`
+   gerado (via `mrq_read_metadata`/`mrq_read_sample_index`, Fase 2):
+   contagem de presets/grupos/zonas/amostras, mapeamento de teclas, camadas
+   de velocity, loops e parâmetros de instrumento, com as diferenças reais
+   destacadas. Essa aba só fica habilitada quando existem os dois lados de
+   verdade — um arquivo de origem já analisado **e** um `.mrq` já gerado a
+   partir dele; sem isso, fica desabilitada em vez de mostrar uma
+   comparação incompleta ou simulada.
+
+**Regras técnicas que valem pra todo o Analyzer** (consolidando o pedido):
+usa exclusivamente os metadados reais já extraídos pelos importadores/pelo
+backend `.mrq` — nunca gera dado fictício pra preencher gráfico; não altera
+os arquivos de origem nem o comportamento dos carregadores atuais do Rack;
+nenhuma decodificação pesada de áudio roda no WebView (waveform e análise
+estrutural usam os dados que o backend Rust já extraiu/decodificou, mesma
+regra arquitetural da seção 2 deste documento); compatível com o WKWebView
+antigo do macOS (sem exigir recursos novos de Vite/engine); a interface
+continua funcional mesmo quando parâmetros específicos não existem pra um
+dado formato.
+
+**Visual:** estética de editor de sampler profissional — fundo grafite,
+painéis escuros, azul elétrico/ciano pra seleção, cores discretas por
+grupo/camada, waveform detalhada, teclado interativo, árvores expansíveis.
+Abas e painéis colapsáveis pra evitar excesso de informação na tela
+simultaneamente. Isso é decisão de design já tomada agora; a implementação
+visual propriamente dita só começa na Fase 8, com autorização explícita.
+
 ## 8. Plano de fases (como pedido, uma por vez)
 
 | Fase | Entregável | Reaproveita | Trabalho novo |
@@ -246,10 +333,14 @@ pré-escuta (reconstrução rápida via `MrqiLayerVoice`-like, tocando direto do
 | 5 | Importador SYX + render opcional | `@audio/synth-dx7` | Pipeline de "renderizar N notas representativas pra sample", artefato esbuild separado (ver seção 2) |
 | 6 | Importador NKI | `NkiLayerVoice.ts` | Só adaptação de saída + relatório de limites (seção 6) |
 | 7 | Importador WAV/AIFF/FLAC/MP3/OGG avulso | — | `symphonia` no backend |
-| 8 | Interface do conversor | Padrões visuais existentes | Componente novo |
+| 8 | Interface do conversor, incluindo o **MRQ Instrument Analyzer** (seção 7.1) — integração progressiva aos metadados já disponíveis nas fases anteriores (SF2/SFZ/NPNO/SYX/NKI/áudio avulso, conforme cada importador for entregue) | Padrões visuais existentes | Componente novo + Analyzer (abas de inspeção, comparação Original vs MRQ) |
 | 9 | Integração com o Rack (tocar `.mrq` direto, ao lado do que já existe) | `MrqiLayerVoice.ts` como ponto de partida | Camada nova `MrqLayerVoice.ts` |
 | 10 | Testes Windows/macOS | — | Suite de testes descrita na seção 8 do pedido original |
 
 Por pedido explícito seu, vou implementar **uma fase por vez**, sem
 substituir nenhum carregador atual antes de validar o novo, mantendo o
-projeto sempre compilável.
+projeto sempre compilável. O escopo técnico já fechado e entregue da Fase 2
+(formato `.mrq` + backend Rust) não muda com esta atualização — este
+complemento só acrescenta o Analyzer ao planejamento da Fase 8, mais à
+frente, e não inicia nenhum desenvolvimento de interface agora.
+
