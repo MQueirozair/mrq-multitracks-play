@@ -1,6 +1,7 @@
 mod fsops;
 mod logging;
 mod migration;
+mod mrq;
 mod osc;
 mod protocol;
 mod remote;
@@ -158,6 +159,10 @@ pub fn run() {
             let sync_manager = sync::new_manager(app.handle().clone());
             app.manage(sync_manager);
 
+            // Estado do MRQ Instrument Converter (Fase 2: só o formato .mrq
+            // e o backend de empacotamento/leitura — ver docs/mrq-converter-architecture.md).
+            app.manage(mrq::writer::MrqBuilderState::default());
+
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Some(log) = app_handle.try_state::<Arc<LogState>>() {
@@ -194,6 +199,14 @@ pub fn run() {
             speech::speech_download_model,
             speech::speech_delete_model,
             speech::speech_transcribe_wav,
+            mrq::commands::mrq_builder_begin,
+            mrq::commands::mrq_builder_add_sample,
+            mrq::commands::mrq_builder_finish,
+            mrq::commands::mrq_builder_abort,
+            mrq::commands::mrq_read_metadata,
+            mrq::commands::mrq_read_sample_index,
+            mrq::commands::mrq_extract_sample,
+            mrq::commands::mrq_validate_integrity,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao rodar a aplicação Tauri");

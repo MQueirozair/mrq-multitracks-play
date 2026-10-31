@@ -37,6 +37,14 @@ if-addrs = "0.13"
 # pra uma ação manual e esporádica ("Reconhecer partes"), não tempo real.
 whisper-rs = "0.14"
 reqwest = { version = "0.13", default-features = false, features = ["stream", "rustls"] }
+# MRQ Instrument Converter (formato .mrq, ver src/mrq/ e
+# docs/mrq-converter-architecture.md) — todas puro Rust, sem dependência de
+# C/licenças de codec de terceiros, pra não reproduzir o problema de
+# toolchain que o .npno já teve com wasm-pack/reference-types.
+flacenc = "0.5"      # codificador FLAC (Apache-2.0)
+claxon = "0.4"        # decodificador FLAC (Apache-2.0)
+sha2 = "0.10"         # SHA-256 (MIT OR Apache-2.0)
+tempfile = "3"        # escrita segura (arquivo temporário + rename atômico), MIT OR Apache-2.0
 
 [features]
 # Permite rodar sem o bundle de produção durante o dev, usando o dev-server do Vite.
