@@ -1,0 +1,72 @@
+//! Erros estruturados dos importadores (Fase 3+ do MRQ Instrument
+//! Converter). Mesmo estilo de `crate::mrq::errors::MrqError`: nunca uma
+//! `String` solta pro frontend, sempre um `kind` discriminando o caso.
+
+use serde::Serialize;
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(tag = "kind")]
+pub enum ImportError {
+    #[serde(rename = "io")]
+    Io { message: String },
+
+    /// O arquivo não é um RIFF/SoundFont válido, ou viola a estrutura
+    /// esperada pelo parser (`soundfont` crate) de alguma forma que o
+    /// impede de ser lido.
+    #[serde(rename = "invalidSoundFont")]
+    InvalidSoundFont { message: String },
+
+    /// A amostra está marcada como dado de ROM do sintetizador (não
+    /// embutida no arquivo) — não existe áudio nenhum pra extrair.
+    #[serde(rename = "romSampleNotEmbedded")]
+    RomSampleNotEmbedded { sample_name: String },
+
+    /// Falha ao decodificar o fluxo Ogg/Vorbis de uma amostra comprimida
+    /// (`.sf3`).
+    #[serde(rename = "vorbisDecodeError")]
+    VorbisDecodeError { sample_name: String, message: String },
+
+    /// Faixa de amostra (start/end, já com os offsets de endereço do
+    /// generator aplicados) inválida ou fora dos limites do arquivo —
+    /// nunca lida mesmo assim.
+    #[serde(rename = "sampleRangeOutOfBounds")]
+    SampleRangeOutOfBounds { sample_name: String },
+
+    /// Encaminha um erro vindo do backend `.mrq` (Fase 2) — ex.: durante a
+    /// chamada a `mrq::writer::{begin,add_sample,finish}`.
+    #[serde(rename = "mrqError")]
+    MrqError { inner: crate::mrq::errors::MrqError },
+}
+
+impl std::fmt::Display for ImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImportError::Io { message } => write!(f, "erro de E/S: {message}"),
+            ImportError::InvalidSoundFont { message } => write!(f, "SoundFont inválido: {message}"),
+            ImportError::RomSampleNotEmbedded { sample_name } => {
+                write!(f, "amostra '{sample_name}' é dado de ROM do sintetizador, não está embutida no arquivo")
+            }
+            ImportError::VorbisDecodeError { sample_name, message } => {
+                write!(f, "falha ao decodificar a amostra Vorbis '{sample_name}': {message}")
+            }
+            ImportError::SampleRangeOutOfBounds { sample_name } => {
+                write!(f, "faixa de amostra inválida/fora dos limites para '{sample_name}'")
+            }
+            ImportError::MrqError { inner } => write!(f, "{inner}"),
+        }
+    }
+}
+
+impl std::error::Error for ImportError {}
+
+impl From<std::io::Error> for ImportError {
+    fn from(e: std::io::Error) -> Self {
+        ImportError::Io { message: e.to_string() }
+    }
+}
+
+impl From<crate::mrq::errors::MrqError> for ImportError {
+    fn from(e: crate::mrq::errors::MrqError) -> Self {
+        ImportError::MrqError { inner: e }
+    }
+}

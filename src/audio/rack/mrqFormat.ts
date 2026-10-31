@@ -68,6 +68,10 @@ export interface MrqZone {
   loopEnd?: number;
   envelope?: MrqEnvelope;
   filter?: MrqFilter;
+  /** Grupo de exclusividade/"choke" (ex.: ExclusiveClass do SF2/SF3) —
+   *  preservado como dado desde a Fase 3, mas nenhum motor de reprodução
+   *  MRQ ainda aplica esse comportamento (ver MrqCompatibilityReport). */
+  exclusiveGroup?: number;
 }
 
 export interface MrqGroup {
@@ -183,6 +187,24 @@ export function isMrqError(e: unknown): e is MrqError {
 }
 
 // ---------------------------------------------------------------------------
+// Relatório de compatibilidade — ver MrqCompatibilityReport em model.rs e a
+// aba "Compatibility" do MRQ Instrument Analyzer (seção 7.1 do documento de
+// arquitetura). Gerado de verdade por cada importador (a partir da Fase 3),
+// nunca inventado.
+// ---------------------------------------------------------------------------
+
+export interface MrqCompatibilityItem {
+  field: string;
+  detail: string;
+}
+
+export interface MrqCompatibilityReport {
+  preserved: MrqCompatibilityItem[];
+  approximated: MrqCompatibilityItem[];
+  unsupported: MrqCompatibilityItem[];
+}
+
+// ---------------------------------------------------------------------------
 // Wrappers de invoke — nomes dos comandos Tauri em snake_case (ver
 // src-tauri/src/mrq/commands.rs); API JS em camelCase, como o resto do
 // projeto (ver tauriBridge.ts).
@@ -224,4 +246,30 @@ export function mrqExtractSample(path: string, sampleId: string): Promise<MrqDec
 
 export function mrqValidateIntegrity(path: string): Promise<MrqIntegrityReport> {
   return invoke('mrq_validate_integrity', { path });
+}
+
+// ---------------------------------------------------------------------------
+// Importador SF2/SF3 (Fase 3, ver src-tauri/src/importers/sf2.rs). Espelha
+// `Sf2InspectionResult`/`Sf2ConversionResult` de
+// src-tauri/src/importers/commands.rs.
+// ---------------------------------------------------------------------------
+
+export interface Sf2InspectionResult {
+  instrument: MrqInstrumentModel;
+  compatibility: MrqCompatibilityReport;
+}
+
+export interface Sf2ConversionResult {
+  finish: MrqFinishResult;
+  compatibility: MrqCompatibilityReport;
+}
+
+/** Só faz o parsing estrutural (sem decodificar áudio) — rápido, pra inspeção/preview. */
+export function mrqInspectSf2(path: string): Promise<Sf2InspectionResult> {
+  return invoke('mrq_inspect_sf2', { path });
+}
+
+/** Converte um SF2/SF3 inteiro (estrutura + áudio) pra um `.mrq` em `destPath`. */
+export function mrqConvertSf2ToMrq(sourcePath: string, destPath: string): Promise<Sf2ConversionResult> {
+  return invoke('mrq_convert_sf2_to_mrq', { sourcePath, destPath });
 }

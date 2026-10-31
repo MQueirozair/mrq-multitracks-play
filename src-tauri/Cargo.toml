@@ -45,6 +45,13 @@ flacenc = "0.5"      # codificador FLAC (Apache-2.0)
 claxon = "0.4"        # decodificador FLAC (Apache-2.0)
 sha2 = "0.10"         # SHA-256 (MIT OR Apache-2.0)
 tempfile = "3"        # escrita segura (arquivo temporário + rename atômico), MIT OR Apache-2.0
+# Fase 3 — importador SF2/SF3 (src/importers/sf2.rs), ambas puro Rust:
+soundfont = "0.1"    # parser binário SF2/SF3 completo (presets/instrumentos/
+                      # zonas/os 60 generators do spec/modulators/detecção de
+                      # amostra Vorbis), projeto OxiSynth. MIT.
+lewton = "0.10"       # decodificador Ogg/Vorbis puro Rust, sem `unsafe`, pra
+                      # decodificar as amostras comprimidas de um .sf3 (cada
+                      # amostra SF3 é um stream Ogg/Vorbis autocontido). MIT OR Apache-2.0.
 
 [features]
 # Permite rodar sem o bundle de produção durante o dev, usando o dev-server do Vite.

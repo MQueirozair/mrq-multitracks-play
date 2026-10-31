@@ -117,6 +117,15 @@ pub struct MrqZone {
     /// Sobrescreve o envelope do grupo, se houver.
     pub envelope: Option<MrqEnvelope>,
     pub filter: Option<MrqFilter>,
+    /// Grupo de exclusividade/"choke" (ex.: generator `ExclusiveClass` do
+    /// SF2/SF3 — notas com o mesmo valor se cortam mutuamente, como os
+    /// pratos aberto/fechado de uma bateria). Guardado como DADO desde já
+    /// (campo aditivo, acrescentado na Fase 3 por pedido explícito), mas
+    /// nenhum motor de reprodução MRQ aplica esse comportamento ainda —
+    /// por isso ele entra como "Approximated" (preservado, efeito sonoro
+    /// ainda não reproduzido) no relatório de compatibilidade de quem o
+    /// gerar, nunca como "Preserved" pleno.
+    pub exclusive_group: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,6 +276,44 @@ pub struct MrqSampleIntegrity {
 pub struct MrqIntegrityReport {
     pub global_ok: bool,
     pub per_sample: Vec<MrqSampleIntegrity>,
+}
+
+/// Um item do relatório de compatibilidade (seção 7.1/Compatibility do
+/// documento de arquitetura): todo importador real (a partir da Fase 3)
+/// preenche um `MrqCompatibilityReport`, nunca inventando dado nenhum —
+/// cada campo do formato de origem cai em exatamente uma das 3 categorias.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MrqCompatibilityItem {
+    /// Nome curto do campo/recurso (ex.: "InitialFilterQ", "ExclusiveClass").
+    pub field: String,
+    /// Explicação legível do porquê caiu nessa categoria.
+    pub detail: String,
+}
+
+/// Preserved = preservado integralmente; Approximated = convertido com
+/// alguma aproximação/arredondamento documentado, ou dado preservado mas
+/// ainda sem efeito sonoro no motor MRQ; Unsupported = não tem campo
+/// equivalente no `MrqInstrumentModel` hoje, não foi gravado em lugar
+/// nenhum.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MrqCompatibilityReport {
+    pub preserved: Vec<MrqCompatibilityItem>,
+    pub approximated: Vec<MrqCompatibilityItem>,
+    pub unsupported: Vec<MrqCompatibilityItem>,
+}
+
+impl MrqCompatibilityReport {
+    pub fn add_preserved(&mut self, field: impl Into<String>, detail: impl Into<String>) {
+        self.preserved.push(MrqCompatibilityItem { field: field.into(), detail: detail.into() });
+    }
+    pub fn add_approximated(&mut self, field: impl Into<String>, detail: impl Into<String>) {
+        self.approximated.push(MrqCompatibilityItem { field: field.into(), detail: detail.into() });
+    }
+    pub fn add_unsupported(&mut self, field: impl Into<String>, detail: impl Into<String>) {
+        self.unsupported.push(MrqCompatibilityItem { field: field.into(), detail: detail.into() });
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

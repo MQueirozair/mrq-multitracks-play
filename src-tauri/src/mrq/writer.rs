@@ -369,6 +369,7 @@ mod tests {
                 loop_end: None,
                 envelope: None,
                 filter: None,
+                exclusive_group: None,
             })
             .collect::<Vec<_>>();
         MrqInstrumentModel {
