@@ -200,12 +200,41 @@ pub(crate) struct PendingSample {
     pub eff_end: u64,
 }
 
+/// Carrega e faz o parsing de um SF2/SF3, de um jeito defensivo contra a
+/// imaturidade da crate `soundfont` v0.1.0: ela valida o magic RIFF (e
+/// possivelmente outros invariantes internos) com `assert_eq!`/`unwrap()`
+/// em vez de devolver um `Result` — ou seja, um arquivo que não é um
+/// SoundFont de verdade literalmente **entra em panic** dentro da
+/// dependência ao invés de simplesmente falhar. Por isso: (1) checamos a
+/// assinatura RIFF manualmente ANTES de chamar o parser (cobre o caso mais
+/// comum — arquivo errado — sem nem acionar a crate), e (2) isolamos a
+/// chamada ao parser com `catch_unwind` como cinto de segurança contra
+/// qualquer outro panic interno em arquivos malformados-mas-com-RIFF-válido
+/// — nunca derrubamos a thread do comando Tauri por causa de um arquivo de
+/// entrada ruim.
+fn load_soundfont(file: &mut File) -> Result<SoundFont2, ImportError> {
+    let mut magic = [0u8; 4];
+    let looks_like_riff = file.read_exact(&mut magic).is_ok() && &magic == b"RIFF";
+    file.seek(SeekFrom::Start(0))?;
+    if !looks_like_riff {
+        return Err(ImportError::InvalidSoundFont {
+            message: "arquivo não começa com a assinatura RIFF — não é um SoundFont (.sf2/.sf3) válido".to_string(),
+        });
+    }
+
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| SoundFont2::load(file)))
+        .map_err(|_| ImportError::InvalidSoundFont {
+            message: "o parser SF2 encontrou dados malformados (falha interna irrecuperável na dependência) — arquivo provavelmente corrompido".to_string(),
+        })?
+        .map_err(|e| ImportError::InvalidSoundFont { message: format!("{e:?}") })
+}
+
 /// Faz só o parsing estrutural (presets/grupos/zonas/generators →
 /// `MrqInstrumentModel` + relatório de compatibilidade), sem decodificar
 /// nenhum áudio — rápido, pensado pra inspeção/preview antes de converter.
 pub fn inspect(path: &Path) -> Result<Sf2Inspection, ImportError> {
     let mut file = File::open(path)?;
-    let sf2 = SoundFont2::load(&mut file).map_err(|e| ImportError::InvalidSoundFont { message: format!("{e:?}") })?;
+    let sf2 = load_soundfont(&mut file)?;
 
     let mut report = MrqCompatibilityReport::default();
 
@@ -720,7 +749,7 @@ pub fn convert_to_mrq(
     dest_path: PathBuf,
 ) -> Result<(MrqFinishResult, MrqCompatibilityReport), ImportError> {
     let mut file = File::open(source_path)?;
-    let sf2 = SoundFont2::load(&mut file).map_err(|e| ImportError::InvalidSoundFont { message: format!("{e:?}") })?;
+    let sf2 = load_soundfont(&mut file)?;
 
     let inspection = inspect(source_path)?;
     let mut report = inspection.compatibility;
@@ -840,6 +869,32 @@ mod tests {
 
         let result = inspect(&path);
         assert!(matches!(result, Err(ImportError::InvalidSoundFont { .. })));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A crate `soundfont` v0.1.0 valida boa parte da estrutura interna com
+    /// `assert_eq!`/`unwrap()` em vez de devolver `Result` — um arquivo que
+    /// passa pela checagem rápida de magic RIFF mas é truncado/corrompido
+    /// logo em seguida pode disparar um panic *dentro da dependência*. Este
+    /// teste garante que `load_soundfont` (via `catch_unwind`) sempre
+    /// devolve um `Err` estruturado nesse caso, nunca derruba a thread.
+    #[test]
+    fn never_panics_on_a_riff_file_that_is_corrupted_past_the_magic_bytes() {
+        let dir = std::env::temp_dir().join(format!("mrq_sf2_corrupt_riff_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("corrupt.sf2");
+        // "RIFF" + tamanho (4 bytes) + "sfbk" (form type correto) + nada
+        // mais — passa a checagem de magic, mas não tem nenhum chunk LIST
+        // esperado pela crate em seguida.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&4u32.to_le_bytes());
+        bytes.extend_from_slice(b"sfbk");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let result = inspect(&path);
+        assert!(result.is_err(), "um RIFF/sfbk truncado deveria falhar de forma estruturada, nunca entrar em panic sem controle");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

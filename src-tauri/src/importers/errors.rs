@@ -16,11 +16,6 @@ pub enum ImportError {
     #[serde(rename = "invalidSoundFont")]
     InvalidSoundFont { message: String },
 
-    /// A amostra está marcada como dado de ROM do sintetizador (não
-    /// embutida no arquivo) — não existe áudio nenhum pra extrair.
-    #[serde(rename = "romSampleNotEmbedded")]
-    RomSampleNotEmbedded { sample_name: String },
-
     /// Falha ao decodificar o fluxo Ogg/Vorbis de uma amostra comprimida
     /// (`.sf3`).
     #[serde(rename = "vorbisDecodeError")]
@@ -43,9 +38,6 @@ impl std::fmt::Display for ImportError {
         match self {
             ImportError::Io { message } => write!(f, "erro de E/S: {message}"),
             ImportError::InvalidSoundFont { message } => write!(f, "SoundFont inválido: {message}"),
-            ImportError::RomSampleNotEmbedded { sample_name } => {
-                write!(f, "amostra '{sample_name}' é dado de ROM do sintetizador, não está embutida no arquivo")
-            }
             ImportError::VorbisDecodeError { sample_name, message } => {
                 write!(f, "falha ao decodificar a amostra Vorbis '{sample_name}': {message}")
             }
