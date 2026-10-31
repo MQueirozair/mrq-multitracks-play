@@ -109,7 +109,11 @@ fn entity_kind_name(entity: &Entity) -> &'static str {
         Entity::Song(_) => "música",
         Entity::Synth(_) => "patch de sintetizador",
         Entity::Sysex(_) => "SysEx",
-        Entity::Bundle(_) => "pacote (bundle)",
+        // `Entity::Bundle` só existe com a feature `bundle` do crate (ZIP de
+        // vários arquivos), que não habilitamos (não precisamos de bancos em
+        // ZIP pra NPNO/NSMP avulsos) — por isso o wildcard a seguir também
+        // cobre esse caso, sem precisar nomeá-lo.
+        _ => "outro tipo de arquivo Nord não listado aqui",
     }
 }
 
