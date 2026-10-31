@@ -19,7 +19,8 @@
     "dist:win:publish": "npm run build && electron-builder --win --x64 --publish always",
     "dist:mac:publish": "npm run build && electron-builder --mac --publish always",
     "lint": "tsc -b --noEmit",
-    "test:parts": "node scripts/test-part-recognition.mjs && node scripts/test-speech-part-recognition.mjs"
+    "test:parts": "node scripts/test-part-recognition.mjs && node scripts/test-speech-part-recognition.mjs",
+    "test:syx": "node scripts/test-syx-import.mjs"
   },
   "dependencies": {
     "@audio/synth-dx7": "^0.1.0",
