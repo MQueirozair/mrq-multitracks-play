@@ -52,6 +52,13 @@ soundfont = "0.1"    # parser binário SF2/SF3 completo (presets/instrumentos/
 lewton = "0.10"       # decodificador Ogg/Vorbis puro Rust, sem `unsafe`, pra
                       # decodificar as amostras comprimidas de um .sf3 (cada
                       # amostra SF3 é um stream Ogg/Vorbis autocontido). MIT OR Apache-2.0.
+# Fase 4 — importador NPNO/NSMP (src/importers/npno.rs). Dependência NATIVA
+# independente da que já existe em native/npno-wasm (wasm, usada só pela
+# reprodução ao vivo no Rack) — mesma versão, mesmo crate, dois alvos de
+# compilação separados, de propósito (importadores ficam só no backend,
+# nunca atravessam o WebView). Licença verificada em docs.rs: BSD-3-Clause,
+# projeto comunitário não afiliado à Clavia.
+nord-format = "0.8"
 
 [features]
 # Permite rodar sem o bundle de produção durante o dev, usando o dev-server do Vite.

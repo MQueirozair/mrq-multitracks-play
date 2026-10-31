@@ -615,7 +615,7 @@ fn apply_preset_offsets(
 /// Usa o algoritmo de calendário civil de Howard Hinnant (domínio público,
 /// https://howardhinnant.github.io/date_algorithms.html) pra converter dias
 /// desde a época em ano/mês/dia proléptico-gregoriano.
-fn now_iso8601() -> String {
+pub(crate) fn now_iso8601() -> String {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())

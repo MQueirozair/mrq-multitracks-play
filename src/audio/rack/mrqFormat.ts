@@ -273,3 +273,30 @@ export function mrqInspectSf2(path: string): Promise<Sf2InspectionResult> {
 export function mrqConvertSf2ToMrq(sourcePath: string, destPath: string): Promise<Sf2ConversionResult> {
   return invoke('mrq_convert_sf2_to_mrq', { sourcePath, destPath });
 }
+
+// ---------------------------------------------------------------------------
+// Importador NPNO/NSMP (Fase 4, ver src-tauri/src/importers/npno.rs). Um
+// único comando cobre tanto biblioteca de piano (.npno) quanto amostra
+// (.nsmp/.nsmp3/.nsmp4) — espelha `NpnoInspectionResult`/`NpnoConversionResult`
+// de src-tauri/src/importers/commands.rs.
+// ---------------------------------------------------------------------------
+
+export interface NpnoInspectionResult {
+  instrument: MrqInstrumentModel;
+  compatibility: MrqCompatibilityReport;
+}
+
+export interface NpnoConversionResult {
+  finish: MrqFinishResult;
+  compatibility: MrqCompatibilityReport;
+}
+
+/** Só faz o parsing estrutural (sem decodificar o áudio pesado do .npno) — rápido, pra inspeção/preview. */
+export function mrqInspectNpno(path: string): Promise<NpnoInspectionResult> {
+  return invoke('mrq_inspect_npno', { path });
+}
+
+/** Converte um .npno/.nsmp/.nsmp3/.nsmp4 inteiro (estrutura + áudio) pra um `.mrq` em `destPath`. */
+export function mrqConvertNpnoToMrq(sourcePath: string, destPath: string): Promise<NpnoConversionResult> {
+  return invoke('mrq_convert_npno_to_mrq', { sourcePath, destPath });
+}

@@ -16,6 +16,13 @@ pub enum ImportError {
     #[serde(rename = "invalidSoundFont")]
     InvalidSoundFont { message: String },
 
+    /// O arquivo não é um contêiner Nord (CBIN) válido, não é uma biblioteca
+    /// de piano (`.npno`) nem uma amostra (`.nsmp`/`.nsmp3`/`.nsmp4`), ou é
+    /// um tipo de arquivo Nord reconhecido mas fora do escopo deste
+    /// importador (ex.: um programa/song/sysex).
+    #[serde(rename = "invalidNordFile")]
+    InvalidNordFile { message: String },
+
     /// Falha ao decodificar o fluxo Ogg/Vorbis de uma amostra comprimida
     /// (`.sf3`).
     #[serde(rename = "vorbisDecodeError")]
@@ -38,6 +45,7 @@ impl std::fmt::Display for ImportError {
         match self {
             ImportError::Io { message } => write!(f, "erro de E/S: {message}"),
             ImportError::InvalidSoundFont { message } => write!(f, "SoundFont inválido: {message}"),
+            ImportError::InvalidNordFile { message } => write!(f, "arquivo Nord inválido ou fora do escopo: {message}"),
             ImportError::VorbisDecodeError { sample_name, message } => {
                 write!(f, "falha ao decodificar a amostra Vorbis '{sample_name}': {message}")
             }

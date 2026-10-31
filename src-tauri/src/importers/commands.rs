@@ -14,6 +14,7 @@ use crate::mrq::model::{MrqCompatibilityReport, MrqFinishResult, MrqInstrumentMo
 use crate::mrq::writer::MrqBuilderState;
 
 use super::errors::ImportError;
+use super::npno;
 use super::sf2;
 
 #[derive(Debug, Clone, Serialize)]
@@ -53,4 +54,44 @@ pub fn mrq_convert_sf2_to_mrq(
 ) -> Result<Sf2ConversionResult, ImportError> {
     let (finish, compatibility) = sf2::convert_to_mrq(&state, &PathBuf::from(source_path), PathBuf::from(dest_path))?;
     Ok(Sf2ConversionResult { finish, compatibility })
+}
+
+/// Fase 4 — importador NPNO/NSMP (biblioteca de piano / amostra Nord). Um
+/// único comando cobre os dois formatos: `npno::inspect` faz o "sniff" do
+/// contêiner e despacha internamente conforme o tipo real do arquivo.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NpnoInspectionResult {
+    pub instrument: MrqInstrumentModel,
+    pub compatibility: MrqCompatibilityReport,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NpnoConversionResult {
+    pub finish: MrqFinishResult,
+    pub compatibility: MrqCompatibilityReport,
+}
+
+/// Só faz o parsing estrutural (sem decodificar o áudio pesado do `.npno`;
+/// ver nota em `npno.rs` sobre a exceção do `.nsmp`) — pensado pra alimentar
+/// uma futura tela de inspeção/preview antes do usuário confirmar a
+/// conversão completa.
+#[tauri::command]
+pub fn mrq_inspect_npno(path: String) -> Result<NpnoInspectionResult, ImportError> {
+    let inspection = npno::inspect(&PathBuf::from(path))?;
+    Ok(NpnoInspectionResult { instrument: inspection.instrument, compatibility: inspection.compatibility })
+}
+
+/// Converte um arquivo `.npno`/`.nsmp`/`.nsmp3`/`.nsmp4` inteiro (estrutura +
+/// áudio) pra um `.mrq` gravado em `dest_path`, reaproveitando o backend
+/// `.mrq` da Fase 2. Roda inteiramente no processo Rust.
+#[tauri::command]
+pub fn mrq_convert_npno_to_mrq(
+    state: State<'_, MrqBuilderState>,
+    source_path: String,
+    dest_path: String,
+) -> Result<NpnoConversionResult, ImportError> {
+    let (finish, compatibility) = npno::convert_to_mrq(&state, &PathBuf::from(source_path), PathBuf::from(dest_path))?;
+    Ok(NpnoConversionResult { finish, compatibility })
 }

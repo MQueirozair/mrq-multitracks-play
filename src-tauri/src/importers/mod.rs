@@ -10,4 +10,5 @@
 
 pub mod commands;
 pub mod errors;
+pub mod npno;
 pub mod sf2;

@@ -210,6 +210,8 @@ pub fn run() {
             mrq::commands::mrq_validate_integrity,
             importers::commands::mrq_inspect_sf2,
             importers::commands::mrq_convert_sf2_to_mrq,
+            importers::commands::mrq_inspect_npno,
+            importers::commands::mrq_convert_npno_to_mrq,
         ])
         .run(tauri::generate_context!())
         .expect("erro ao rodar a aplicação Tauri");
