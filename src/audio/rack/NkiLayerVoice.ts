@@ -15,6 +15,20 @@ const RELEASE_SEC = 0.12;
  */
 const NKI_HEADER_SIZE = 170;
 
+/** Por que uma amostra referenciada pelo .nki não virou áudio tocável —
+ *  exposto via `NkiLayerVoice.unresolvedSamples` pra quem converte/inspeciona
+ *  o instrumento (ver nkiImport.ts, Fase 6 do MRQ Instrument Converter)
+ *  poder relatar o motivo de verdade, em vez de só "não encontrada" (ver §6
+ *  do documento de arquitetura: nunca fingir sucesso parcial sem dizer por
+ *  quê). `unsupported-codec` é o caso de uma zona referenciar `.ncw`
+ *  (NI Compressed Wave, formato proprietário sem decoder nativo no
+ *  navegador/WebView) — isso NÃO é "arquivo não encontrado", é uma
+ *  limitação de formato que nenhuma quantidade de busca em disco resolve. */
+export interface NkiUnresolvedSample {
+  samplePath: string;
+  reason: 'not-found' | 'unsupported-codec';
+}
+
 interface NkiZone {
   samplePath: string;
   rootNote: number;
@@ -287,6 +301,7 @@ export class NkiLayerVoice {
    *  um separadamente pra permitir trocar via selectPreset() sem recarregar
    *  o arquivo do disco de novo (todas as amostras já ficam resolvidas). */
   private programGroups: { name: string; zones: NkiZone[] }[] = [];
+  private unresolved: NkiUnresolvedSample[] = [];
   readonly output: GainNode;
 
   constructor(ctx: AudioContext) {
@@ -296,6 +311,14 @@ export class NkiLayerVoice {
 
   get name(): string {
     return this.instrumentName;
+  }
+
+  /** Amostras referenciadas pelo .nki que NÃO viraram áudio tocável, com o
+   *  motivo de cada uma — populado por `load()`, usado pelo relatório de
+   *  limites do importador (ver nkiImport.ts). Vazio enquanto nada foi
+   *  carregado ou quando tudo resolveu. */
+  get unresolvedSamples(): NkiUnresolvedSample[] {
+    return this.unresolved;
   }
 
   async load(buffer: ArrayBuffer, sourcePath?: string): Promise<RackPresetOption[]> {
@@ -327,13 +350,25 @@ export class NkiLayerVoice {
     const baseDir = sourcePath ? sourcePath.replace(/[\\/][^\\/]*$/, '') : '';
     let resolved = 0;
     const failures: string[] = [];
+    this.unresolved = [];
     for (const group of rawGroups) {
       for (const zone of group.zones) {
+        // .ncw (NI Compressed Wave) e um codec proprietario sem decoder no
+        // navegador/WebView - nem vale tentar resolver o arquivo em disco,
+        // o problema nao e achar o arquivo, e nao dar pra decodificar ele
+        // (ver secao 6 do documento de arquitetura e o comentario de
+        // NkiUnresolvedSample acima).
+        if (/\.ncw$/i.test(zone.samplePath.trim())) {
+          this.unresolved.push({ samplePath: zone.samplePath, reason: 'unsupported-codec' });
+          failures.push(zone.samplePath.split(/[\\/]/).pop() ?? zone.samplePath);
+          continue;
+        }
         const audioBuffer = await this.resolveSample(zone.samplePath, baseDir);
         if (audioBuffer) {
           this.buffers.set(zone, audioBuffer);
           resolved++;
         } else {
+          this.unresolved.push({ samplePath: zone.samplePath, reason: 'not-found' });
           failures.push(zone.samplePath.split(/[\\/]/).pop() ?? zone.samplePath);
         }
       }
@@ -533,5 +568,6 @@ export class NkiLayerVoice {
     this.allNotesOff();
     this.zones = [];
     this.buffers.clear();
+    this.unresolved = [];
   }
 }
