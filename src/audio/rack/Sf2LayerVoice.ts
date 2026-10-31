@@ -7,6 +7,13 @@ import type { RackPresetOption } from '../../../shared/types';
 const LIBFLUIDSYNTH_URL = './vendor/js-synthesizer/libfluidsynth-2.4.6-with-libsndfile.js';
 const WORKLET_URL = './vendor/js-synthesizer/js-synthesizer.worklet.min.js';
 
+// Tamanho do buffer do ScriptProcessorNode usado no modo de compatibilidade
+// (ver ensureScriptProcessorReady abaixo). 4096 amostras é o
+// valor historicamente usado antes da migração pro AudioWorklet — maior
+// buffer = mais estável em hardware/WebKit antigo, ao custo de mais atraso
+// perceptível ao tocar (até ~185ms no pior caso).
+const SCRIPT_PROCESSOR_BUFFER_SIZE = 4096;
+
 // Os dois módulos de AudioWorklet (libfluidsynth + js-synthesizer) só podem ser
 // adicionados uma vez por AudioContext. Como as 4 camadas do rack compartilham
 // um único AudioContext (ver RackEngine), guardamos a promessa por instância de
@@ -14,16 +21,6 @@ const WORKLET_URL = './vendor/js-synthesizer/js-synthesizer.worklet.min.js';
 const workletReadyByContext = new WeakMap<AudioContext, Promise<void>>();
 
 function ensureWorkletReady(ctx: AudioContext): Promise<void> {
-  // Sem isso, num WebKit sem suporte a AudioWorklet (recurso chegou só no
-  // Safari 14.1/2021), `ctx.audioWorklet` é `undefined` e a linha abaixo
-  // lançaria um TypeError genérico e confuso ("undefined is not an object
-  // (evaluating 'ctx.audioWorklet.addModule')") — com essa checagem, o
-  // usuário vê uma mensagem clara explicando exatamente o que falta.
-  if (!ctx.audioWorklet) {
-    throw new Error(
-      'este navegador/WebView não tem suporte a AudioWorklet, necessário pra tocar SoundFonts (.sf2/.sf3). Tente um formato diferente (ex.: .npno) ou atualize o sistema.'
-    );
-  }
   let ready = workletReadyByContext.get(ctx);
   if (!ready) {
     ready = ctx.audioWorklet
@@ -34,21 +31,55 @@ function ensureWorkletReady(ctx: AudioContext): Promise<void> {
   return ready;
 }
 
+// Modo de compatibilidade pra WebKit/navegadores sem AudioWorklet (recurso
+// que só chegou no Safari 14.1/2021, então falta em macOS mais antigos):
+// carrega o mesmo FluidSynth WebAssembly, mas na thread principal (via tag
+// <script>, exatamente como o próprio js-synthesizer documenta como "From
+// main thread"), e usa a classe `JSSynth.Synthesizer` — que roda num
+// ScriptProcessorNode (API mais antiga e depreciada do Web Audio, mas
+// suportada desde as primeiras versões com Web Audio, bem antes do
+// AudioWorklet) — em vez de `JSSynth.AudioWorkletNodeSynthesizer`. O binário
+// .wasm é o mesmo nos dois casos (compilado via Emscripten/C, sem os
+// recursos pós-MVP tipo reference-types/multivalue que afetaram o .npno).
+// `Module` (variável global que o script define) é compartilhada por todas
+// as camadas, então o carregamento só acontece uma vez.
+let scriptProcessorReady: Promise<void> | null = null;
+
+function ensureScriptProcessorReady(): Promise<void> {
+  if (!scriptProcessorReady) {
+    scriptProcessorReady = new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = LIBFLUIDSYNTH_URL;
+      script.onload = () => {
+        JSSynth.waitForReady().then(resolve, reject);
+      };
+      script.onerror = () => {
+        reject(
+          new Error(
+            'não foi possível carregar o motor de SoundFont (FluidSynth) neste navegador/WebView.'
+          )
+        );
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return scriptProcessorReady;
+}
+
 /**
  * Uma camada que toca um SoundFont (.sf2/.sf3) real, via FluidSynth compilado
- * pra WebAssembly (js-synthesizer), rodando dentro de um AudioWorklet — e não
- * mais num ScriptProcessorNode. Isso é o que elimina o atraso perceptível ao
- * tocar: o ScriptProcessorNode antigo usava um buffer de 4096 amostras (até
- * ~185ms de atraso no pior caso, por causa do duplo buffer), enquanto o
- * AudioWorklet roda no "render quantum" nativo do Web Audio (128 amostras,
- * ~3ms) e recebe os eventos de nota via uma porta de mensagens de altíssima
- * prioridade, sem depender da thread principal (que pode estar ocupada com
- * React/UI) para gerar áudio.
+ * pra WebAssembly (js-synthesizer). Preferencialmente roda dentro de um
+ * AudioWorklet (baixa latência: "render quantum" nativo do Web Audio, 128
+ * amostras / ~3ms, eventos de nota via porta de mensagens de altíssima
+ * prioridade sem depender da thread principal). Em navegadores/WebKit sem
+ * suporte a AudioWorklet (ver ensureScriptProcessorReady acima), cai pra um
+ * ScriptProcessorNode (mais atraso perceptível, até ~185ms no pior caso, mas
+ * pelo menos toca em vez de simplesmente recusar o arquivo).
  */
 export class Sf2LayerVoice {
   private ctx: AudioContext;
-  private synth: JSSynth.AudioWorkletNodeSynthesizer | null = null;
-  private node: AudioWorkletNode | null = null;
+  private synth: JSSynth.ISynthesizer | null = null;
+  private node: AudioNode | null = null;
   readonly output: GainNode;
 
   constructor(ctx: AudioContext) {
@@ -57,13 +88,26 @@ export class Sf2LayerVoice {
   }
 
   async load(buffer: ArrayBuffer): Promise<RackPresetOption[]> {
-    await ensureWorkletReady(this.ctx);
     this.dispose();
-    const synth = new JSSynth.AudioWorkletNodeSynthesizer();
-    synth.init(this.ctx.sampleRate);
-    // createAudioNode precisa ser chamado antes de qualquer outro método (é o
-    // que estabelece a porta de mensagens com o worklet).
-    this.node = synth.createAudioNode(this.ctx);
+    let synth: JSSynth.ISynthesizer;
+    if (this.ctx.audioWorklet) {
+      await ensureWorkletReady(this.ctx);
+      const workletSynth = new JSSynth.AudioWorkletNodeSynthesizer();
+      workletSynth.init(this.ctx.sampleRate);
+      // createAudioNode precisa ser chamado antes de qualquer outro método (é
+      // o que estabelece a porta de mensagens com o worklet).
+      this.node = workletSynth.createAudioNode(this.ctx);
+      synth = workletSynth;
+    } else {
+      console.info(
+        '[rack] este navegador/WebView não suporta AudioWorklet — usando modo de compatibilidade (ScriptProcessorNode) pra tocar SoundFont.'
+      );
+      await ensureScriptProcessorReady();
+      const fallbackSynth = new JSSynth.Synthesizer();
+      fallbackSynth.init(this.ctx.sampleRate);
+      this.node = fallbackSynth.createAudioNode(this.ctx, SCRIPT_PROCESSOR_BUFFER_SIZE);
+      synth = fallbackSynth;
+    }
     this.node.connect(this.output);
     this.synth = synth;
     await synth.loadSFont(buffer);
