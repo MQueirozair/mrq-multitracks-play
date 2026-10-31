@@ -65,6 +65,13 @@ pub enum MrqError {
         sample_id: String,
     },
 
+    // `HashMismatchGlobal` e `Other` (abaixo) fazem parte do contrato
+    // estruturado exposto ao frontend (TS já trata esses `kind`), mas hoje
+    // nenhum caminho de código os constrói diretamente: o hash global
+    // incorreto é reportado como dado em `MrqIntegrityReport.global_ok`
+    // (não como erro), e `Other` é reservado pra uso futuro. Mantidos de
+    // propósito — não é código morto a remover.
+    #[allow(dead_code)]
     #[serde(rename = "hashMismatchGlobal")]
     HashMismatchGlobal,
 
@@ -86,6 +93,7 @@ pub enum MrqError {
     #[serde(rename = "selfValidationFailed")]
     SelfValidationFailed { message: String },
 
+    #[allow(dead_code)]
     #[serde(rename = "other")]
     Other { message: String },
 }

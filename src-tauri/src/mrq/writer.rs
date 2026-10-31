@@ -110,7 +110,9 @@ fn encode_flac(interleaved: &[i32], channels: u16, bits_per_sample: u16, sample_
         .map_err(|e| MrqError::EncodeError { message: format!("{e:?}") })?;
 
     let mut sink = flacenc::bitsink::ByteSink::new();
-    stream.write(&mut sink);
+    stream
+        .write(&mut sink)
+        .map_err(|e| MrqError::EncodeError { message: format!("falha ao serializar o stream FLAC: {e:?}") })?;
     Ok(sink.as_slice().to_vec())
 }
 
